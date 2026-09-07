@@ -97,6 +97,28 @@ describe("the two address spaces are disjoint, so parsing needs no guess", () =>
     assert.equal(isSolanaAddress(SOL), true);
     assert.equal(isEvmAddress(SOL), false);
   });
+
+  test("a long base58 string is refused on length before it is decoded", () => {
+    // The decoder is O(n²) — every digit multiplies the accumulated byte array — and it parses
+    // strings from places nobody here controls: an agent's request field, a policy document
+    // fetched from Privy. Unbounded, a few hundred KB of `z` costs minutes of a single-threaded
+    // process, which stalls `revoke()` along with everything else. So the bound is a refusal
+    // rather than a slow `null`, and this asserts the cost, not just the answer.
+    const enormous = "z".repeat(50_000);
+    const started = process.hrtime.bigint();
+    assert.equal(trySolanaAddress(enormous), null);
+    assert.equal(tryAddress(enormous), null);
+    const elapsedMs = Number(process.hrtime.bigint() - started) / 1e6;
+    assert.ok(elapsedMs < 250, `refusing a ${enormous.length}-character string took ${elapsedMs}ms`);
+  });
+
+  test("the bound is well clear of every address it must still accept", () => {
+    // A 32-byte key is 32–44 base58 characters. The bound is 64, so nothing legitimate is near it —
+    // a bound that clipped real addresses would be a refusal that looks like a typo.
+    assert.notEqual(trySolanaAddress(SOL), null);
+    assert.notEqual(trySolanaAddress("1".repeat(32)), null); // the all-zero key, the shortest there is
+    assert.equal(trySolanaAddress("1".repeat(65)), null);
+  });
 });
 
 describe("an allowlist entry is a (chain, address) pair", () => {
