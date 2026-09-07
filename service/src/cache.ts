@@ -23,15 +23,21 @@ export class Cache {
   #db: DatabaseSync;
 
   constructor(path?: string) {
-    const dir = dataDir();
-    mkdirSync(dir, { recursive: true });
-    this.#db = new DatabaseSync(path ?? join(dir, "cache.sqlite"));
+    // Only create the shared data dir when we are actually using it. Tests pass an explicit path
+    // and should not touch the developer's ~/.local/share/anchor.
+    let file = path;
+    if (file === undefined) {
+      const dir = dataDir();
+      mkdirSync(dir, { recursive: true });
+      file = join(dir, "cache.sqlite");
+    }
+    this.#db = new DatabaseSync(file);
     this.#db.exec(`
       CREATE TABLE IF NOT EXISTS responses (
         key        TEXT PRIMARY KEY,
         body       TEXT NOT NULL,
-        fetched_at INTEGER NOT NULL,
-        ttl        INTEGER NOT NULL
+        fetched_at INTEGER NOT NULL,  -- milliseconds; seconds lost up to 1s of precision
+        ttl        INTEGER NOT NULL   -- milliseconds
       ) STRICT;
     `);
   }
@@ -42,14 +48,28 @@ export class Cache {
       .get(key) as { body: string; fetched_at: number; ttl: number } | undefined;
     if (!row) return null;
 
-    const now = Math.floor(Date.now() / 1000);
-    const ageSeconds = now - row.fetched_at;
+    // Stored in milliseconds. With second precision a put at t=100.9 read at t=101.0 reported an
+    // age of 1s after 100ms of real time, so a "60s" ttl was really somewhere in [59, 60).
+    const ageMs = Date.now() - row.fetched_at;
+
+    // A backwards clock (NTP correction, suspend/resume) produced a negative age, which pinned
+    // every entry as fresh for as long as the jump. Treat it as unknown-age and therefore stale —
+    // "a stale floor price shown as current is a bug" (docs/security.md).
+    if (ageMs < 0) {
+      return {
+        data: JSON.parse(row.body) as T,
+        fetchedAt: Math.floor(row.fetched_at / 1000),
+        ageSeconds: 0,
+        stale: true,
+      };
+    }
+
     return {
       data: JSON.parse(row.body) as T,
-      fetchedAt: row.fetched_at,
-      ageSeconds,
+      fetchedAt: Math.floor(row.fetched_at / 1000),
+      ageSeconds: Math.floor(ageMs / 1000),
       // >= not >: a ttl of N means fresh for N seconds, and a ttl of 0 is immediately stale.
-      stale: ageSeconds >= row.ttl,
+      stale: ageMs >= row.ttl,
     };
   }
 
@@ -61,7 +81,7 @@ export class Cache {
                                         fetched_at = excluded.fetched_at,
                                         ttl = excluded.ttl`,
       )
-      .run(key, JSON.stringify(data), Math.floor(Date.now() / 1000), ttlSeconds);
+      .run(key, JSON.stringify(data), Date.now(), Math.round(ttlSeconds * 1000));
   }
 
   close(): void {

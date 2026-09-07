@@ -5,7 +5,7 @@
   "description": "Anchor's local read-only data service. Everything else reads from here.",
   "type": "module",
   "engines": {
-    "node": ">=22.6.0"
+    "node": ">=24.0.0"
   },
   "bin": {
     "anchor-service": "./src/index.ts"
@@ -14,7 +14,7 @@
     "start": "node src/index.ts",
     "set-api-key": "node src/index.ts --set-api-key",
     "typecheck": "tsc --noEmit",
-    "test": "node --test src/"
+    "test": "node --test src/*.test.ts"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

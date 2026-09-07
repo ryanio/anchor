@@ -11,7 +11,8 @@ permissions:
 
 concurrency:
   group: deploy-site
-  cancel-in-progress: true
+  # Never cancel a publish in flight — a half-cancelled deploy is worse than a queued one.
+  cancel-in-progress: false
 
 jobs:
   deploy:
