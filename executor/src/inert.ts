@@ -7,7 +7,7 @@
  */
 import { type ApprovedAction, isUsableApproval } from "./decision.ts";
 import type { Signer, Simulator, SubmissionReceipt } from "./executor.ts";
-import { type ActionRequest, type AssetDelta, money, type Simulation } from "./types.ts";
+import { type ActionRequest, type AssetDelta, chainAddress, money, type Simulation } from "./types.ts";
 
 /**
  * A simulator that simply believes the request.
@@ -37,20 +37,27 @@ export class DeclaredIntentSimulator implements Simulator {
 }
 
 function declaredDeltas(request: ActionRequest): AssetDelta[] {
+  // Every counterparty is on the request's own chain, because this simulator invents nothing — a
+  // real one that watched a bridge would report a counterparty on the far chain, and the withdrawal
+  // allowlist would then have to hold an entry for it.
+  const here = (value: string) => chainAddress(request.chain, value);
+  const fungible = request.chain === "solana" ? "spl" : "erc20";
+  const collectible = request.chain === "solana" ? "spl-nft" : "erc721";
+
   switch (request.kind) {
     case "buy":
       return [
         {
           direction: "out",
           value: request.maxPrice,
-          counterparty: request.marketplace,
-          assetType: "erc20",
+          counterparty: here(request.marketplace),
+          assetType: fungible,
         },
         {
           direction: "in",
           value: money(0n, request.maxPrice.denomination),
-          counterparty: request.marketplace,
-          assetType: "erc721",
+          counterparty: here(request.marketplace),
+          assetType: collectible,
         },
       ];
     case "accept-offer":
@@ -58,14 +65,14 @@ function declaredDeltas(request: ActionRequest): AssetDelta[] {
         {
           direction: "in",
           value: request.minProceeds,
-          counterparty: request.marketplace,
-          assetType: "erc20",
+          counterparty: here(request.marketplace),
+          assetType: fungible,
         },
         {
           direction: "out",
           value: money(0n, request.minProceeds.denomination),
-          counterparty: request.marketplace,
-          assetType: "erc721",
+          counterparty: here(request.marketplace),
+          assetType: collectible,
         },
       ];
     case "cancel-own-listing":
@@ -75,13 +82,15 @@ function declaredDeltas(request: ActionRequest): AssetDelta[] {
         {
           direction: "out",
           value: request.valuation,
-          counterparty: request.to,
-          assetType: "erc721",
+          counterparty: here(request.to),
+          assetType: request.subject.asset === "fungible" ? fungible : collectible,
         },
       ];
     case "set-approval-for-all":
-      // Modelled as moving nothing, which is exactly why a spend cap cannot see it and why it is
-      // refused as its own action class rather than judged on value.
+    case "approve-delegate":
+    case "set-authority":
+      // Modelled as moving nothing, which is exactly why a spend cap cannot see them and why they
+      // are refused as their own action class rather than judged on value.
       return [];
   }
 }

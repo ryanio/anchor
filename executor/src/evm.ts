@@ -6,7 +6,7 @@
  * static encoding — no dynamic types, no arrays, no tuples — which is exactly the subset that can be
  * written by hand without a decoder to check it.
  */
-import type { Address } from "./types.ts";
+import type { EvmAddress } from "./types.ts";
 
 /** Left-pad a hex quantity to a 32-byte ABI word. Throws rather than truncating. */
 export function word(value: bigint): string {
@@ -17,7 +17,7 @@ export function word(value: bigint): string {
 }
 
 /** An address as an ABI word. */
-export function addressWord(value: Address): string {
+export function addressWord(value: EvmAddress): string {
   return word(BigInt(value));
 }
 
@@ -35,7 +35,7 @@ export function addressWord(value: Address): string {
  */
 export const SAFE_TRANSFER_FROM_SELECTOR = "0x42842e0e";
 
-export function encodeSafeTransferFrom(from: Address, to: Address, tokenId: bigint): string {
+export function encodeSafeTransferFrom(from: EvmAddress, to: EvmAddress, tokenId: bigint): string {
   return SAFE_TRANSFER_FROM_SELECTOR + addressWord(from) + addressWord(to) + word(tokenId);
 }
 

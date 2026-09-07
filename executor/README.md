@@ -30,7 +30,7 @@ the next.
 | `Executor` | `PolicyBoundExecutor` (composition) | the agent |
 | `Simulator` | Tenderly, an `eth_call` fork, a bundler | the executor |
 | `PolicyAuthority` | Privy (`privy.ts`) / Turnkey / Safe module — `PolicyEngine` for reference | the executor, remotely |
-| `Signer` | the enclave or the smart account — `PrivySigner` (`privy.ts`) | the executor, remotely |
+| `Signer` | the enclave or the smart account — `PrivySigner` / `PrivySolanaSigner` (`privy.ts`) | the executor, remotely |
 
 ## Why the agent cannot approve its own request
 
@@ -75,6 +75,8 @@ Straight from docs/autonomy.md:
   fires a hundred of them.
 - **Contract allowlist.** Including against a freshly deployed "helpful" contract.
 - **Action allowlist.** `buy`, `accept-offer`, `cancel-own-listing`, `transfer`.
+- **Chain scoping.** Every allowlist entry is a `(chain, address)` pair; an entry for one chain never
+  matches an address on another.
 - **Withdrawal destination allowlist.** Only pre-registered addresses. The list is constructor state;
   nothing on any interface can widen it at run time.
 - **Mandatory simulation.** A request is the agent's claim; the simulation is the evidence. Where
@@ -90,21 +92,80 @@ Two accounting decisions worth knowing about:
   would hold unlimited live approvals — the many-small-transactions evasion wearing a different hat.
   `settle(approval, "failed")` releases the reservation.
 
-## `setApprovalForAll`
+## Human-only action classes
 
-A human-only action class, never delegated (docs/security.md). It is enforced at three levels:
+Actions that **move no value but grant an authority outliving the transaction** are never delegated
+(docs/security.md). There are three, and they are one list — `HUMAN_ONLY_ACTION_KINDS` in `types.ts`:
+
+| Kind | Chain | What it hands over |
+|---|---|---|
+| `set-approval-for-all` | EVM | blanket operator rights over a whole collection |
+| `approve-delegate` | Solana | an SPL delegate over a token account's balance (`u64::MAX` is unlimited) |
+| `set-authority` | Solana | the token account, the mint, or a program's upgrade authority — outright |
+
+Enforced at four levels:
 
 - **Type level.** `PolicyLimits.allowedActions` is typed `DelegableActionKind`, which is
-  `Exclude<ActionKind, "set-approval-for-all">`. It cannot be configured onto an allowlist — the
-  compiler refuses.
-- **Run time.** `PolicyEngine` throws at construction if limits loaded from JSON contain it anyway.
-- **Decision.** It is denied with its own reason code, `"human-only-action"`, checked before the
-  action allowlist so the refusal is countable rather than lost among ordinary denials.
+  `Exclude<ActionKind, HumanOnlyActionKind>`. None can be configured onto an allowlist — the
+  compiler refuses. The exclusion is *derived* from the constant, so the list has one definition.
+- **Run time.** `PolicyEngine` throws at construction if limits loaded from JSON contain one anyway,
+  reading the same constant the type does.
+- **Decision.** Denied with its own reason code, `"human-only-action"`, checked before every other
+  rule so the refusal is countable rather than lost among ordinary denials.
+- **Transaction.** On Solana the signer parses the transaction it is about to sign and refuses an
+  SPL `Approve`, `ApproveChecked`, `Revoke` or `SetAuthority` instruction whatever the request said —
+  see "Reading a Solana transaction" below.
 
-It is *representable* in `ActionRequest` on purpose. An agent that cannot name the action it wants
+They are *representable* in `ActionRequest` on purpose. An agent that cannot name the action it wants
 will encode it as something else, and the denial becomes an accident of parsing rather than a rule.
-There is no fixture for it: the request is built inline in the tests that prove it is refused, so it
-cannot be lifted into working code.
+There is no fixture for any of them: each request is built inline in the tests that prove it is
+refused, so it cannot be lifted into working code.
+
+**Two hazards are deliberately not on the list.** Closing an account *moves value* — a wrapped-SOL
+close sends the whole lamport balance to a destination the instruction names — so it fails the test
+that defines the class and belongs under the withdrawal allowlist instead. Arbitrary program
+invocation is not an action kind at all; the type-level answer to it is that `ActionRequest` carries
+intent and has no member that can hold instructions or bytes.
+
+## Chains, and why an allowlist entry is a pair
+
+`Address` is a union of two nominally distinct branded types, `EvmAddress | SolanaAddress`, and every
+allowlist holds `ChainAddress` — an address *and the chain it lives on*. Comparison is on the pair.
+
+That is not tidiness. The same 20 hex bytes are a different contract on every EVM chain, and
+`CREATE2` puts chosen code at a chosen address on a chain the user never configured, so an allowlist
+compared on the address alone allows a contract nobody approved. `chainAddress()` refuses to
+construct a pair whose address cannot belong to its chain, so a mismatched entry does not exist to be
+compared.
+
+The asymmetry to know about: **EVM addresses are lowercased, Solana addresses are never touched.**
+EIP-55 casing is a checksum, so normalising EVM hex makes comparison exact. Base58 casing is *part of
+the value* — `A` and `a` are different digits — so lowercasing a Solana address produces a different
+account or an invalid one. `types.test.ts` asserts both halves, plus that no string parses as both
+(base58 omits `0`, so `0x…` is never base58).
+
+## Reading a Solana transaction
+
+`solana.ts` is the counterpart of `evm.ts`, and the difference is worth stating rather than implying.
+EVM calldata gives you a four-byte selector; a Solana v0 message gives you account *indices*, some of
+which resolve through on-chain **address lookup tables** that the transaction does not contain and
+that can be extended between signing and execution.
+
+**What the guard establishes soundly, lookup tables or not**, because all of it is inline in the
+message: every instruction's program id (read from the static keys — a program index outside them is
+a refusal, not a resolution); the instruction data, so an SPL `Approve` or `SetAuthority` is as
+recognisable as an EVM selector; and the fee payer, which is always static key 0.
+
+**What it cannot establish at all:** where the value goes. Not a recipient, not a delegate, not a
+close destination, when those operands come from a lookup table. It also cannot tell you what an
+allowlisted program *does* — an upgradeable program's code can be replaced without its address
+changing — or what it invokes via CPI.
+
+So it is a **refusal filter, not a simulation**: it can prove a transaction contains something
+forbidden, never that one is safe. `guardSolanaTransaction` returns `findings` (non-empty means
+refuse) alongside `unverified`, and a clean run with a non-empty `unverified` is the normal outcome
+for a real swap. Token instructions are an **allowlist of tags**, not a denylist of the bad ones,
+because Token-2022 multiplexes extensions behind tags this file does not enumerate.
 
 ## Kill switch
 
@@ -134,16 +195,18 @@ Zero runtime dependencies, as everywhere else here: `fetch` and `node:crypto`, n
 
 ### Who enforces what
 
-| Control | Enforced by | Holds against a compromised desktop? |
-|---|---|---|
-| Contract allowlist | Privy policy (`to` condition) | **Yes** |
-| Per-transaction value cap | Privy policy (`value` condition) | **Yes** |
-| Withdrawal destination allowlist | Privy policy (`ethereum_calldata` condition on the decoded `to`) | **Yes**, once you add that condition |
-| `setApprovalForAll` refusal | Type system, local mirror, signer, *and* the startup audit of the remote policy | **Yes** |
-| Kill switch | Privy policy emptied over the API | **Yes** |
-| Rolling 24h / 7d caps | Local mirror only | **No** — see below |
-| Mandatory simulation | Local mirror only | No |
-| Replay refusal (duplicate request id) | Local mirror only | No |
+| Control | Enforced by (EVM) | Enforced by (Solana) | Holds against a compromised desktop? |
+|---|---|---|---|
+| Contract / mint allowlist | Privy policy (`to` condition) | Privy policy (`TransferChecked.mint`) | **Yes** |
+| Chain scoping of that allowlist | Privy policy (`chain_id` condition) | implicit — one policy is one chain type | **Yes**, once you add that condition |
+| Per-transaction value cap | Privy policy (`value` condition) | Privy policy (`Transfer.lamports`) | **Yes** |
+| Which program may be invoked | n/a | Privy policy (`programId`) | **Yes** |
+| Withdrawal destination allowlist | Privy policy (`ethereum_calldata` on the decoded `to`) | Privy policy (`TransferChecked.destination`) — **but see the ALT caveat** | **Yes** on EVM; on Solana only when the destination is a static account key |
+| Delegation / authority refusal | Type system, local mirror, signer, *and* the startup audit | Type system, local mirror, signer's **transaction parse**, *and* the startup audit | **Yes** |
+| Kill switch | Privy policy emptied over the API | same | **Yes** |
+| Rolling 24h / 7d caps | Local mirror only | Local mirror only | **No** — see below |
+| Mandatory simulation | Local mirror only | Local mirror only | No |
+| Replay refusal (duplicate request id) | Local mirror only | Local mirror only | No |
 
 The local mirror is a `PolicyEngine` running in the agent's process. It exists to produce
 machine-readable `DenyReason`s, to keep the rolling ledger, and to refuse the obvious cases without a
@@ -161,9 +224,37 @@ slightly *wider* policy than Privy enforces. That direction is the safe one — 
 Privy would have caught anyway, never miss one Privy would allow — and a single `ALLOW` rule makes
 the two descriptions identical.
 
-### The gap you should know about
+### The gaps you should know about
 
-**Privy cannot express Anchor's cumulative caps.** Their spend-limit primitive (*aggregations*) has a
+Three, and the Solana ones are worse than the EVM one. All verified against Privy's published policy
+and API documentation; none of it has been exercised against a live Privy account.
+
+**1 · Privy's Solana policy cannot name `Approve` or `SetAuthority`.** Their Solana condition sources
+are `solana_program_instruction` (`programId` only), `solana_system_program_instruction`, and
+`solana_token_program_instruction` — whose decoder covers exactly `Transfer`, `TransferChecked`,
+`Burn`, `MintTo`, `CloseAccount` and `InitializeAccount3`. The two instructions Anchor treats as
+human-only are not in that set, and nothing else reaches them. There is **no Solana equivalent of the
+`ethereum_calldata` + `function_name` condition** that lets an EVM policy refuse `setApprovalForAll`
+by name.
+
+The only remote control is inversion: an ALLOW rule that pins `instructionName` to the instructions
+you *do* send, so Privy's default-deny refuses everything else. That works — and it disappears
+silently if that one condition is omitted, with no error anywhere. So `connectPrivyAuthority` treats
+a rule that permits a token program by `programId` alone as a **finding, and refuses to start.**
+
+**2 · Solana has no aggregation primitive at all.** On EVM the cumulative caps are merely limited (a
+72-hour ceiling, and only on `eth_signTransaction`/`eth_signUserOperation`). On Solana, Privy's
+stateful policies support *no* Solana method, so there is no remote cumulative cap of any window. Both
+the 24h and 7d caps are local-mirror-only there.
+
+**3 · Address lookup tables defeat address conditions, by rejection.** Privy document it plainly: if a
+condition needs an address a v0 transaction loads from an ALT, evaluation fails and the transaction is
+rejected. That is fail-closed and therefore safe, but it means a remote destination allowlist and a
+marketplace-built swap (which references ALTs by design — see docs/chains.md) are close to mutually
+exclusive today. Keep policy-relevant addresses in the static account keys, or accept that the
+destination check is local only.
+
+**And the original one: Privy cannot express Anchor's cumulative caps.** Their spend-limit primitive (*aggregations*) has a
 rolling window capped at 72 hours, so the 7-day cap in [autonomy.md](../docs/autonomy.md) has no
 remote equivalent at all. Aggregations also only observe `eth_signTransaction` and
 `eth_signUserOperation` — Privy's own docs note that `eth_sendTransaction` spend is invisible to
@@ -184,8 +275,14 @@ Nothing below can be done from this repository, and none of it has been done for
 1. **Create a Privy app** at `dashboard.privy.io`. Note the **app ID** and generate an **app
    secret**. Anchor never puts either in a file.
 
-2. **Create a server wallet**, `chain_type: "ethereum"`. Note its **wallet ID** (not its address —
-   the API is addressed by id).
+2. **Create a server wallet**, `chain_type: "ethereum"` or `"solana"`. Note its **wallet ID** (not
+   its address — the API is addressed by id).
+
+   **A policy has one `chain_type`, and a wallet supports one policy.** So an Anchor setup that wants
+   both EVM and Solana is two wallets, two policies, and two `PrivyPolicyAuthority` instances. That
+   is not a limitation to work around; it is why `PrivyPolicyAuthorityOptions.chain` is required, and
+   why the audit reports an allowlist entry for a different chain as a finding rather than letting it
+   go quietly unenforced.
 
 3. **Write a policy and attach it.** One policy per wallet; Privy's API accepts at most one. There is
    no `default_action` field — Privy denies anything no rule resolves for, *including any RPC method
@@ -223,6 +320,66 @@ Nothing below can be done from this repository, and none of it has been done for
    is enforced only by the local mirror, and `connectPrivyAuthority` will refuse to start and tell
    you so. **Verify the policy in Privy's dashboard after creating it** — a policy bug is now the
    vulnerability class that a key leak used to be (autonomy.md, "named risks").
+
+   The `chain_id` condition is the other one that has to be there. Privy's `chain_type` is
+   `ethereum` — an *architecture*, not a chain — so without it the `to` allowlist applies on every EVM
+   chain the wallet can be asked to broadcast on, and a `CREATE2` deployment puts an attacker's code
+   at that address on one you never configured.
+
+   **A Solana policy Anchor's audit accepts** looks like this. Note that the `instructionName`
+   condition is not decoration: it is the *only* thing keeping `Approve` and `SetAuthority` out, and
+   the audit refuses to start without it.
+
+   ```json
+   {
+     "version": "1.0",
+     "name": "anchor solana tier 1",
+     "chain_type": "solana",
+     "rules": [
+       {
+         "name": "checked SPL transfers to the vault only",
+         "method": "signAndSendTransaction",
+         "action": "ALLOW",
+         "conditions": [
+           { "field_source": "solana_program_instruction", "field": "programId",
+             "operator": "in",
+             "value": ["TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+                       "ComputeBudget111111111111111111111111111111"] },
+           { "field_source": "solana_token_program_instruction", "field": "instructionName",
+             "operator": "in", "value": ["TransferChecked"] },
+           { "field_source": "solana_token_program_instruction", "field": "TransferChecked.mint",
+             "operator": "in", "value": ["YourMint..."] },
+           { "field_source": "solana_token_program_instruction",
+             "field": "TransferChecked.destination",
+             "operator": "in", "value": ["YourColdVault..."] }
+         ]
+       }
+     ]
+   }
+   ```
+
+   Use `TransferChecked`, never plain `Transfer`: the unchecked instruction carries no mint, so a
+   `TransferChecked.mint` condition beside it constrains only the checked variant and the policy looks
+   bounded while permitting any token to leave. The audit reports that as a finding too.
+
+   **The Compute Budget entry in that `programId` list is the one you cannot bound.** Almost every
+   real Solana transaction sets a compute unit limit, so the program has to be permitted — and Privy
+   has no Compute Budget condition source, so no rule can say anything about what it is invoked with.
+   `SetComputeUnitPrice` names a price in micro-lamports *per compute unit*, and at the maximum unit
+   limit of 1,400,000 that commits the account's entire native balance to a validator tip. A priority
+   fee produces no asset delta, so no value condition sees it either.
+
+   Anchor refuses it locally instead, against a ceiling of **0.01 SOL** by default
+   (`priorityFeeCeiling` on the guard, roughly a thousand times an ordinary busy-network fee). The
+   audit states the gap on every startup rather than treating it as a finding, because there is no
+   policy edit that would fix it. This is the one Solana control that is local-only *by necessity*
+   rather than by choice — size the balance with that in mind, and see `docs/upstream.md` entry 10.
+
+   If you also permit the System Program, add a `solana_system_program_instruction` `instructionName`
+   condition beside it. That source *does* support the field, unlike the token program's coverage of
+   `Approve`/`SetAuthority` — so this hole, at least, is closable in the policy as well as locally.
+   Without it the rule permits `Assign`, which reassigns the account's owner program, and an owner
+   program may debit its lamports with no signature from anyone.
 
 4. **Optionally set an owner** on the wallet or the policy, and generate a P-256 authorization key.
    With an owner, Privy requires a `privy-authorization-signature` on every write, so the app secret
@@ -272,17 +429,39 @@ const executor = new PolicyBoundExecutor({
 ### Implemented, and not
 
 **Implemented and tested** (with a stubbed `fetch` — the suite needs no Privy account and touches no
-network): startup audit of the remote policy; local pre-filtering with reasons; ERC-721 withdrawals
-end to end, from request through `safeTransferFrom` calldata to `eth_sendTransaction`; the kill
-switch, including the case where Privy does not confirm it; authorization-signature signing; and the
-guarantee that no error carries the app secret.
+network): startup audit of the remote policy on both architectures; local pre-filtering with reasons;
+ERC-721 withdrawals end to end, from request through `safeTransferFrom` calldata to
+`eth_sendTransaction`; Solana submission end to end from an approved request through the transaction
+guard to `signAndSendTransaction`; the kill switch, including the case where Privy does not confirm
+it; authorization-signature signing; and the guarantee that no error carries the app secret.
 
 **Not implemented.**
+
+- **Building a Solana transaction.** This is the one place the Solana half genuinely could not be
+  finished without a runtime dependency, so it is worth being precise rather than vague.
+
+  Compiling an SPL transfer needs three things this workspace cannot produce. The associated token
+  accounts for both sides are **program-derived addresses**, and deriving one means hashing candidate
+  seeds until the result is a point *not* on the ed25519 curve — that on-curve test is field
+  arithmetic which is either correct or silently yields a plausible address nobody holds the key to.
+  It also needs a **recent blockhash**, which is a live RPC read, and the **lookup tables** a
+  marketplace-built transaction expects to reference.
+
+  Note the asymmetry with the *read* path: parsing and guarding a transaction is compact-u16 plus
+  fixed offsets and needed no dependency at all. Refusing is cheap; constructing is not.
+
+  So `UnimplementedSolanaBuilder` refuses and explains itself, and `PrivySolanaSigner` is wired,
+  tested and ready for a builder that does not exist yet. The options, in preference order, are (a)
+  take the compiled transaction from OpenSea's `/swap/execute`, which already returns Solana
+  instructions and lookup tables, or (b) add `@solana/kit` scoped to address derivation and message
+  compilation. **(b) is a runtime dependency and AGENTS.md says a human decides that**, so nothing
+  here adds one.
 
 - **Marketplace actions.** `buy`, `accept-offer` and `cancel-own-listing` are approved by policy and
   then refused by `Erc721TransferBuilder`, because `ActionRequest` models *intent* — a contract, a
   token, a ceiling — and not the signed Seaport order payload a fulfilment needs. That payload has to
   come from the marketplace API, and wiring it in is the next piece of work, not a missing line.
+  Seaport is EVM-only in any case (docs/chains.md), so there is no Solana version of this gap.
 - **A real simulator.** `DeclaredIntentSimulator` believes the request. Everything policy concludes
   about value is therefore only as good as what the agent claimed, until a real simulator lands.
 - **Wallet and policy creation.** Anchor reads a policy and empties it. It never creates or widens
