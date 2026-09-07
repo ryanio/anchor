@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { randomUUID } from "node:crypto";
 /**
  * Anchor data service entry point.
  *
@@ -63,15 +64,24 @@ async function checkCredentials(): Promise<void> {
   }
 
   // Vitalik's address: a large public account that is guaranteed to exist.
+  //
+  // The cache-busting parameter is the whole point. Cloudflare fronts api.opensea.io with a cache
+  // key that does not include the API key, so a warmed GET is served to anyone — which is exactly
+  // how a shell command passed as a valid credential here for a day. A unique parameter forces a
+  // miss, so the origin is the thing judging the key. `cf-cache-status` is then checked rather than
+  // assumed: a HIT means this probe proved nothing and must not be reported as success.
   const probe =
-    "https://api.opensea.io/api/v2/account/0xd8da6bf26964af9d7eed9e03e53415d37aa96045/tokens?limit=1";
+    "https://api.opensea.io/api/v2/account/0xd8da6bf26964af9d7eed9e03e53415d37aa96045/tokens" +
+    `?limit=1&_cb=${randomUUID()}`;
   let status: number;
+  let cacheStatus: string | null;
   try {
     const res = await fetch(probe, {
       headers: { "x-api-key": apiKey, accept: "application/json" },
       signal: AbortSignal.timeout(15_000),
     });
     status = res.status;
+    cacheStatus = res.headers.get("cf-cache-status");
   } catch (err) {
     const name = err instanceof Error ? err.name : "Error";
     console.error(`Could not reach the OpenSea API (${name}). Check your connection.`);
@@ -89,7 +99,16 @@ async function checkCredentials(): Promise<void> {
     console.error(`OpenSea returned ${status}. The key looks fine; the API is having trouble.`);
     process.exit(1);
   }
-  console.error(`API key authenticates (${status}).`);
+  if (cacheStatus !== null && cacheStatus.toUpperCase() === "HIT") {
+    console.error(
+      `Inconclusive: the response was served from cache (cf-cache-status: ${cacheStatus}), so the ` +
+        "API never judged the key. Try again in a moment.",
+    );
+    process.exit(1);
+  }
+  console.error(
+    `API key authenticates (${status}${cacheStatus === null ? "" : `, cf-cache-status: ${cacheStatus}`}).`,
+  );
 
   const pat = await getPat();
   console.error(

@@ -26,7 +26,19 @@ already exists in the same package — `lib/api/walletAuth.js:4` defines
 **What we wrote.** `segment()` in `service/src/opensea.ts:166`, applied at eleven call sites before
 any value is handed to the SDK.
 
-**When it's fixed — read this carefully.** Do **not** simply delete `segment()` the moment the SDK
+**Status: fixed upstream, unreleased.** OpenSea exported `segment()` from `apiPaths.ts` and applied
+it to all 100 interpolation sites (61 of 88 builders took a parameter), and dropped the duplicate
+helper in `walletAuth.ts` plus the now-double-encoding wrapper at the one call site in `accounts.ts`.
+It reaches npm on the next SDK release. **Do not bump and delete in separate commits** — see below.
+
+**Encoding alone was not enough, on either side.** `encodeURIComponent` leaves `.` and `..` untouched,
+so they survive encoding and still traverse, and percent-encoding them does not help because the
+WHATWG URL parser strips escapes *before* removing dot segments. Both `segment()` implementations now
+reject the two bare forms rather than encoding them. Rejection is sufficient as well as necessary:
+after encoding, nothing else is still a dot segment. Ours is in `service/src/opensea.ts` with tests
+covering both the refusal and the near-misses (`"..."`, `"%2e%2e"`, `".%2e"`).
+
+**When the bump lands — read this carefully.** Do **not** simply delete `segment()` the moment the SDK
 starts encoding. We would then encode twice, and a slug containing a space would go out as `%2520`
 rather than `%20`. In practice this is narrow: for ordinary slugs and for hex or base58 addresses
 `encodeURIComponent` is the identity, so double-encoding is a no-op — it bites only on exactly the
