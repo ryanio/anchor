@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { looksLikeCredential } from "./keyring.ts";
+
 describe("looksLikeCredential", () => {
   it("accepts opaque tokens", () => {
     assert.ok(looksLikeCredential("0123456789abcdef0123456789abcdef"));
