@@ -10,6 +10,17 @@ has the facts.
 ## [Unreleased]
 
 ### Added
+- `site/links.ts` — every external URL in one place. Renaming the game repository broke four links at
+  once, because GitHub redirects repository URLs but not GitHub Pages; one constant makes the next
+  rename a single edit.
+
+### Changed
+- The counterpoint accent is `--ember`, not `--coral`. The name collided with another project.
+- Mobile navigation drops to icons below 560px, and the wordmark below 380px. Four labelled links plus
+  the wordmark wrapped to a second line on a phone and clipped "Source" off the right edge entirely.
+  Accessible names move to `aria-label`, so nothing is lost to a screen reader.
+
+### Added
 - `docs/tokens.md` — OpenSea is both marketplaces, and Anchor was designed around one. Sets out the
   five places where fungible tokens are genuinely a different product rather than NFTs with a quantity
   field, the token half of the API, and what each changes.

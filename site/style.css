@@ -130,9 +130,9 @@ article li { margin: 7px 0; }
 article li::marker { color: var(--accent); }
 
 a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 3px; }
-/* Coral is the counterpoint for prose links only. Card titles are not links to be coloured —
+/* Ember is the counterpoint for prose links only. Card titles are not links to be coloured —
    the card itself lifts and its border brightens, which is the whole hover affordance. */
-article a:hover, footer a:hover { color: var(--coral); }
+article a:hover, footer a:hover { color: var(--ember); }
 
 code {
   font: 500 13.5px/1.5 var(--font-mono);
@@ -256,7 +256,28 @@ footer {
 
 @media (max-width: 640px) {
   .wrap { padding: var(--space-4) var(--space-4) var(--space-7); }
-  header { position: static; }
+  header { position: static; gap: var(--space-3); }
+}
+
+/*
+ * Narrow screens: labels off, icons only.
+ *
+ * Four labelled links plus the wordmark do not fit a phone — they wrapped to a second line and
+ * "Source" was clipped off the right edge entirely. Dropping to icons keeps all four reachable on one
+ * row, which matters more than the words: these are four destinations a returning reader already
+ * knows. The accessible name survives in aria-label, so this costs nothing to a screen reader.
+ */
+@media (max-width: 560px) {
+  header { flex-wrap: nowrap; }
+  header nav { gap: 2px; }
+  header nav a { padding: 8px 10px; }
+  header nav a span { display: none; }
+  .brand span { font-size: 16px; }
+}
+
+/* Very narrow: the wordmark goes too, leaving the mark and the four icons. */
+@media (max-width: 380px) {
+  .brand span { display: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {
