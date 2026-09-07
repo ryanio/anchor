@@ -260,43 +260,39 @@ ${CSS}</style>
   ${opts.subtitle ? `<p class="tagline">${opts.subtitle}</p>` : ""}
   <main>${body}</main>
   <footer class="glass">
-    <div class="foot-grid">
+    <div class="foot-top">
       <div class="foot-brand">
         <span class="foot-mark">${MARK}<span>Anchor</span></span>
         <p>A wallet-aware Linux desktop. Your art becomes the theme, your watchlist lives in the bar,
            and an agent acts within limits it cannot change.</p>
+        <a class="foot-cta" href="https://github.com/ryanio/anchor">
+          ${icon("github", 15)}<span>Read the source</span>${icon("arrow-up-right", 13)}
+        </a>
       </div>
-      <nav>
-        <span class="foot-head">Read</span>
-        <a href="/">Diary</a>
-        <a href="/changelog.html">Changelog</a>
-        <a href="/llms.txt">llms.txt</a>
-      </nav>
-      <nav>
-        <span class="foot-head">Build</span>
-        <a href="https://github.com/ryanio/anchor">Source ${icon("arrow-up-right", 11)}</a>
-        <a href="https://github.com/ryanio/anchor/blob/main/AGENTS.md">Agent rules ${icon("arrow-up-right", 11)}</a>
-        <a href="https://github.com/ryanio/anchor/blob/main/docs/autonomy.md">Autonomy ${icon("arrow-up-right", 11)}</a>
-      </nav>
-      <nav>
-        <span class="foot-head">Elsewhere</span>
-        <a href="https://ryanio.github.io/battle-for-the-ford/">Battle for the Ford ${icon("arrow-up-right", 11)}</a>
-        <a href="https://omarchy.org">Omarchy ${icon("arrow-up-right", 11)}</a>
-        <a href="https://opensea.io">OpenSea ${icon("arrow-up-right", 11)}</a>
-      </nav>
-      <nav>
-        <span class="foot-head">Ryan</span>
-        <a href="https://ryanio.com">ryanio.com ${icon("arrow-up-right", 11)}</a>
-        <a href="https://x.com/r_alx_z">X ${icon("arrow-up-right", 11)}</a>
-        <a href="https://github.com/ryanio">GitHub ${icon("arrow-up-right", 11)}</a>
-      </nav>
+      <div class="foot-links">
+        <nav>
+          <span class="foot-head">Project</span>
+          <a href="/">Diary</a>
+          <a href="/changelog.html">Changelog</a>
+          <a href="https://github.com/ryanio/anchor/blob/main/AGENTS.md">Agent rules</a>
+          <a href="https://github.com/ryanio/anchor/blob/main/docs/autonomy.md">Autonomy</a>
+        </nav>
+        <nav>
+          <span class="foot-head">Ryan</span>
+          <a href="https://ryanio.com">ryanio.com</a>
+          <a href="https://x.com/r_alx_z">X</a>
+          <a href="https://github.com/ryanio">GitHub</a>
+          <a href="https://ryanio.github.io/battle-for-the-ford/">Battle</a>
+        </nav>
+      </div>
     </div>
     <div class="foot-base">
       <span>MIT</span>
       <span class="dot">·</span>
-      <span>Built in the open on Omarchy</span>
+      <span>Built in the open on <a href="https://omarchy.org">Omarchy</a></span>
       <span class="dot">·</span>
       <span>Deployed from <code>main</code></span>
+      <a class="foot-llms" href="/llms.txt">llms.txt</a>
     </div>
   </footer>
 </div>

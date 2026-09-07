@@ -10,6 +10,16 @@ has the facts.
 ## [Unreleased]
 
 ### Added
+- Video generation in `scripts/generate-asset.ts` (`--video`), against xAI's async endpoint: the POST
+  returns a `request_id`, the job is polled to `done`, and the finished video is downloaded rather
+  than left as a temporary URL that will rot. Supports text-to-video and image-to-video
+  (`--image-url`), with a ten-minute ceiling so it cannot hang a job.
+
+### Changed
+- The footer was five columns of equally muted links, which read as a wall of grey with nothing to
+  draw the eye. Now the brand and one call to action carry the weight, with two supporting columns.
+
+### Added
 - Local read-only data service: cache-first OpenSea API v2 client, SQLite response cache with explicit
   freshness, keyring-backed credentials, loopback-only HTTP API.
 - Autonomy and spend-control model — bounded authority, value tiers from $100 to $100k+, vendor versus
