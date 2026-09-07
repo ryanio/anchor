@@ -56,6 +56,24 @@ for (const wf of ["ci.yml", "deploy.yml"]) {
   }
 }
 
+// Every third-party action must be pinned to a commit, with the human-readable version in a
+// comment. A mutable tag can be repointed by anyone with push access to that action's repo, and
+// the deploy action holds our Cloudflare token.
+for (const wf of ["ci.yml", "deploy.yml"]) {
+  const text = read(join(".github/workflows", wf));
+  for (const line of text.split("\n")) {
+    const m = /^\s*(?:-\s*)?uses:\s*(\S+)/.exec(line);
+    if (!m) continue;
+    const ref = m[1]!;
+    const [, version] = ref.split("@");
+    if (version === undefined || !/^[0-9a-f]{40}$/.test(version)) {
+      problems.push(`.github/workflows/${wf}: ${ref} is not pinned to a 40-character commit SHA`);
+    } else if (!/#\s*v\d/.test(line)) {
+      problems.push(`.github/workflows/${wf}: ${ref} is pinned but has no "# vX.Y.Z" comment`);
+    }
+  }
+}
+
 if (problems.length > 0) {
   console.error("Node version drift detected:\n" + problems.map((p) => `  - ${p}`).join("\n"));
   process.exit(1);
