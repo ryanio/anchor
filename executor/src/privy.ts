@@ -100,6 +100,7 @@ import {
   type SolanaCluster,
   SPL_TOKEN_2022_PROGRAM,
   SPL_TOKEN_PROGRAM,
+  SYSTEM_PROGRAM,
   type TransactionGuardResult,
   toBase64,
 } from "./solana.ts";
@@ -468,6 +469,12 @@ function auditEvmRule(rule: PrivyPolicyRule, label: string, chain: string, pass:
  * the SPL Token program by `programId` alone permits *every* instruction to it — including the two
  * that Anchor treats as human-only, and including the one that hands over the account.
  *
+ * The same reasoning reaches one program over. The **System Program's `Assign`** hands over an
+ * account's owner program, and an owner program may debit its lamports unsigned — so a rule
+ * permitting the System Program by `programId` alone permits giving the wallet's whole native
+ * balance away. It is the widest member of the human-only class and the one an SPL-only reading
+ * misses entirely; it gets its own finding below.
+ *
  * The only lever left is Privy's default-deny: an ALLOW rule that also pins `instructionName` to a
  * permitted set refuses anything outside it, because no rule then resolves and the engine denies.
  * That inverts the control — it is an allowlist of instructions rather than a denial of three — and
@@ -479,6 +486,7 @@ function auditSolanaRule(rule: PrivyPolicyRule, label: string, chain: string, pa
   const instructionNames = new Set<string>();
   let boundsProgram = false;
   let boundsInstruction = false;
+  let boundsSystemInstruction = false;
 
   for (const condition of rule.conditions) {
     const field = condition.field.toLowerCase();
@@ -548,6 +556,10 @@ function auditSolanaRule(rule: PrivyPolicyRule, label: string, chain: string, pa
     }
 
     if (condition.field_source === "solana_system_program_instruction") {
+      if (field === "instructionname" && bounds(condition)) {
+        boundsSystemInstruction = true;
+        continue;
+      }
       if (field === "transfer.to" && bounds(condition)) {
         for (const value of values) {
           const parsed = trySolanaAddress(value);
@@ -581,6 +593,23 @@ function auditSolanaRule(rule: PrivyPolicyRule, label: string, chain: string, pa
         "you send — that is the only remote control there is.",
     );
   }
+  // The System Program is the same hole one program over, and a worse one. `Assign` reassigns the
+  // account's *owner program*, and an owner program may debit its lamports with no signature — so a
+  // rule permitting the System Program by program id alone permits handing the wallet's entire
+  // native balance to a program of the agent's choosing, having moved nothing a spend cap can see.
+  // `SetAuthority` is at least bounded to one token account; this is not.
+  if (programs.includes(SYSTEM_PROGRAM) && !boundsSystemInstruction) {
+    pass.findings.push(
+      `rule ${label} permits the System Program by program id alone, which permits its Assign ` +
+        "instruction — reassigning the account's owner program, and an owner program may debit " +
+        "the account's lamports without a signature from anyone. Privy's " +
+        "solana_system_program_instruction source is documented for Transfer's fields; whether it " +
+        "can pin an instruction name is not established here, so bound this rule to the " +
+        "destinations and lamport ceilings you mean, and treat the local guard in solana.ts as the " +
+        "refusal you actually rely on.",
+    );
+  }
+
   // Unconditional, and not weakened by `TransferChecked` also being on the list. The unchecked
   // `Transfer` instruction has no mint parameter at all, so a `TransferChecked.mint` condition
   // beside it constrains only the checked variant — the policy looks like it bounds which token can

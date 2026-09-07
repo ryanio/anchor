@@ -807,6 +807,57 @@ describe("auditing a Solana policy", () => {
     assert.ok(audit.unverified.some((u) => /cannot resolve address lookup tables/.test(u)));
   });
 
+  test("permitting the System Program by program id alone is a finding too", () => {
+    // The same hole one program over, and a wider one. `Assign` reassigns the account's owner
+    // program, and an owner program may debit its lamports with no signature — so this rule permits
+    // handing the wallet's whole native balance away, having moved nothing a spend cap can see.
+    // `SetAuthority` is at least bounded to one token account.
+    const base = solanaPolicyDocument().rules[0];
+    assert.ok(base);
+    const document = solanaPolicyDocument({
+      rules: [
+        {
+          ...base,
+          conditions: base.conditions.map((condition) =>
+            condition.field.toLowerCase() === "programid"
+              ? { ...condition, value: [SPL_TOKEN_PROGRAM, SYSTEM_PROGRAM] }
+              : condition,
+          ),
+        },
+      ],
+    });
+    const audit = solanaAudit(document);
+    assert.ok(audit.findings.some((finding) => /System Program by program id alone/.test(finding)));
+    assert.ok(audit.findings.some((finding) => /Assign/.test(finding)));
+  });
+
+  test("a system rule that pins an instruction name clears that finding", () => {
+    const base = solanaPolicyDocument().rules[0];
+    assert.ok(base);
+    const document = solanaPolicyDocument({
+      rules: [
+        {
+          ...base,
+          conditions: [
+            ...base.conditions.map((condition) =>
+              condition.field.toLowerCase() === "programid"
+                ? { ...condition, value: [SPL_TOKEN_PROGRAM, SYSTEM_PROGRAM] }
+                : condition,
+            ),
+            {
+              field_source: "solana_system_program_instruction",
+              field: "instructionName",
+              operator: "in",
+              value: ["Transfer"],
+            },
+          ],
+        },
+      ],
+    });
+    const audit = solanaAudit(document);
+    assert.ok(!audit.findings.some((finding) => /System Program by program id alone/.test(finding)));
+  });
+
   test("permitting the token program without an instructionName condition is a finding", () => {
     // The single most important audit rule on this side. Privy's Solana engine cannot express a
     // condition naming Approve, ApproveChecked or SetAuthority — its token decoder does not cover
