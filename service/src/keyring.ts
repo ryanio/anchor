@@ -17,6 +17,18 @@ import { promisify } from "node:util";
 
 const run = promisify(execFile);
 
+/**
+ * True when `value` could be a credential: one opaque token, no whitespace, no control characters.
+ *
+ * This exists because a credential reader that accepts "whatever line arrived" will cheerfully
+ * store a shell command. Running `--set-pat` through a wrapper that gave it a non-TTY stdin fed the
+ * reader its own command line, stored that, and reported success — and `/health` then said the
+ * credential was present. The failure surfaced much later as a 401 that looked like an API problem.
+ */
+export function looksLikeCredential(value: string): boolean {
+  return /^[\x21-\x7e]+$/.test(value);
+}
+
 /** The credentials Anchor stores, and how they are labelled in the keyring. */
 const ITEMS = {
   apiKey: { attr: "opensea-api-key", label: "Anchor OpenSea API key" },

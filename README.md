@@ -76,7 +76,7 @@ These are not negotiable, and they shape the architecture:
 | `widget/` | Quickshell top-bar widget |
 | `theme/` | Gallery wallpaper and palette extraction |
 | `packaging/` | Arch packaging, targeting the `[omarchy]` repo |
-| `docs/` | Security model, autonomy and spend controls, NFTs vs tokens, chains, roadmap |
+| `docs/` | Security model, autonomy and spend controls, NFTs vs tokens, chains, upstream workarounds, roadmap |
 | `.node-version` | The Node version, for local `mise` and CI alike. Single source of truth |
 
 ## Installing

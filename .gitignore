@@ -39,3 +39,6 @@ packaging/pkg/
 
 # site build output
 site/dist/
+
+# Agent worktrees live here; they are checkouts, never content.
+.claude/worktrees/

@@ -181,6 +181,11 @@ works on these packages: a gap is worth reporting to him, because a fix upstream
 local workaround helps once and then drifts. Note the gap in the PR body, and prefer a small
 documented fallback over a parallel implementation.
 
+Then **record it in [docs/upstream.md](docs/upstream.md)** — what you wrote, why, and what to delete
+when upstream fixes it. A workaround nobody wrote down becomes architecture: the fix lands and no one
+notices it made our code redundant, or worse, wrong. (Encoding path segments twice is exactly that
+hazard, and that entry says so.)
+
 Pin versions. Update deliberately, not incidentally.
 
 ## Formatting and linting
