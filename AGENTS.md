@@ -73,6 +73,21 @@ Two artefacts, both part of the work rather than an afterthought:
 Be honest in both. "This approach failed and here's why" is more useful to a reader than a clean
 narrative, and this project is public precisely so people can learn from the real process.
 
+## Node version
+
+**`.node-version` at the repo root is the single source of truth.** It currently pins 26.8.1.
+
+- `mise` reads it automatically for local work.
+- CI reads it via `node-version-file:` in every workflow — no workflow may hardcode a version.
+- The two places that cannot read it — `service/package.json` `engines` and `packaging/PKGBUILD`
+  `depends` — are checked against it by `scripts/check-versions.ts`, which runs first in CI.
+
+To upgrade Node, change `.node-version`, run `node scripts/check-versions.ts`, and fix whatever it
+names. Never bump a version in a workflow or in `engines` directly.
+
+This exists because the drift was real: local Node 26 against CI's Node 24 produced two
+green-locally, red-in-CI failures in one day.
+
 ## Testing
 
 `node --test` — the built-in runner, no framework. Tests live next to what they test as `*.test.ts`.

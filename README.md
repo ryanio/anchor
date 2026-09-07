@@ -64,6 +64,7 @@ These are not negotiable, and they shape the architecture:
 | `theme/` | Gallery wallpaper and palette extraction |
 | `packaging/` | Arch packaging, targeting the `[omarchy]` repo |
 | `docs/` | Security model, autonomy and spend controls, roadmap |
+| `.node-version` | The Node version, for local `mise` and CI alike. Single source of truth |
 
 ## Installing
 
