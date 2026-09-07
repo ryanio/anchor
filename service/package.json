@@ -14,7 +14,9 @@
     "start": "node src/index.ts",
     "set-api-key": "node src/index.ts --set-api-key",
     "typecheck": "tsc --noEmit",
-    "test": "node --test src/*.test.ts"
+    "test": "node --test src/*.test.ts",
+    "set-pat": "node src/index.ts --set-pat",
+    "check-credentials": "node src/index.ts --check-credentials"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

@@ -36,7 +36,7 @@ jobs:
         run: node scripts/check-contrast.ts
 
       - name: Lint and format
-        run: npx biome ci .
+        run: npm run lint
 
       - name: Service — typecheck and test
         run: |

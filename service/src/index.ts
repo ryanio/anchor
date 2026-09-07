@@ -5,6 +5,7 @@
  *   anchor-service                 start the local API
  *   anchor-service --set-api-key   store the OpenSea API key in the OS keyring
  *   anchor-service --set-pat       store the OpenSea PAT, used to mint wallet tokens (auth.ts)
+ *   anchor-service --check-credentials  prove the stored credentials actually authenticate
  */
 import { readSecret } from "../../scripts/read-secret.ts";
 import { WalletTokenProvider } from "./auth.ts";
@@ -45,6 +46,59 @@ async function promptForSecret(which: "apiKey" | "pat"): Promise<void> {
   console.error("Stored in the OS keyring.");
 }
 
+/**
+ * Prove the stored credentials actually authenticate, rather than merely existing.
+ *
+ * `/health` reports a credential "present" when the keyring returns a non-empty string, which is how
+ * a shell command once passed as an API key for a day. This makes a real request against a route
+ * that is **known to 401 without a key** — verified by removing the key and watching it fail, which
+ * is the only thing that makes it a control. Deliberately not `/collections/{slug}/stats`: that
+ * endpoint is public and returns 200 for anyone, so it proves nothing.
+ */
+async function checkCredentials(): Promise<void> {
+  const apiKey = await getApiKey();
+  if (apiKey === null) {
+    console.error("No API key stored. Run: anchor-service --set-api-key");
+    process.exit(1);
+  }
+
+  // Vitalik's address: a large public account that is guaranteed to exist.
+  const probe =
+    "https://api.opensea.io/api/v2/account/0xd8da6bf26964af9d7eed9e03e53415d37aa96045/tokens?limit=1";
+  let status: number;
+  try {
+    const res = await fetch(probe, {
+      headers: { "x-api-key": apiKey, accept: "application/json" },
+      signal: AbortSignal.timeout(15_000),
+    });
+    status = res.status;
+  } catch (err) {
+    const name = err instanceof Error ? err.name : "Error";
+    console.error(`Could not reach the OpenSea API (${name}). Check your connection.`);
+    process.exit(1);
+  }
+
+  if (status === 401 || status === 403) {
+    console.error(
+      `API key rejected (${status}). The key is stored but does not authenticate — it may be ` +
+        "revoked, or the wrong value. Re-run: anchor-service --set-api-key",
+    );
+    process.exit(1);
+  }
+  if (status >= 500) {
+    console.error(`OpenSea returned ${status}. The key looks fine; the API is having trouble.`);
+    process.exit(1);
+  }
+  console.error(`API key authenticates (${status}).`);
+
+  const pat = await getPat();
+  console.error(
+    pat === null
+      ? "No wallet PAT stored. Nothing Anchor reads needs one; see the header of auth.ts."
+      : "Wallet PAT stored. Unused by current reads, kept for writes and wallet-scoped routes.",
+  );
+}
+
 function memoize<T>(fn: () => Promise<T>, ms: number): () => Promise<T> {
   let at = 0;
   let value: Promise<T> | null = null;
@@ -64,6 +118,10 @@ async function main(): Promise<void> {
   }
   if (process.argv.includes("--set-pat")) {
     await promptForSecret("pat");
+    return;
+  }
+  if (process.argv.includes("--check-credentials")) {
+    await checkCredentials();
     return;
   }
 
