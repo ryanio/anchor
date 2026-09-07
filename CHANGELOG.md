@@ -10,6 +10,49 @@ has the facts.
 ## [Unreleased]
 
 ### Added
+- **The executor speaks Solana.** `Address` is now a union of two nominally distinct branded types,
+  `EvmAddress | SolanaAddress`, and both are parsed rather than pattern-matched — EVM hex is
+  lowercased because EIP-55 casing is a checksum, and base58 is preserved verbatim because its casing
+  is part of the value. A Solana wallet is configured exactly like an EVM one.
+- **Every allowlist entry is a `(chain, address)` pair.** The same 20 hex bytes are a different
+  contract on every EVM chain, and `CREATE2` puts chosen code at a chosen address on a chain nobody
+  configured, so an entry compared on the address alone vouched for contracts nobody approved. An
+  entry for one chain now never matches an address on another, a mismatched pair cannot be
+  constructed at all, and a request whose addresses contradict its chain is denied `malformed-request`
+  with the offending field named.
+- **Solana's human-only action classes.** `HUMAN_ONLY_ACTION_KINDS` has three members now:
+  `set-approval-for-all`, `approve-delegate` (SPL `Approve`/`ApproveChecked`/`Revoke`) and
+  `set-authority` (SPL `SetAuthority`, and a program's upgrade authority). `DelegableActionKind` is
+  derived by excluding them, so no policy can allowlist one and the run-time check reads the same
+  constant the type does. Closing an account is deliberately *not* in the class — it moves value, so
+  it belongs under the withdrawal allowlist — and arbitrary program invocation is not an action kind
+  at all: `ActionRequest` has no member that can carry instructions or bytes.
+- **A Solana transaction guard**, hand-rolled and dependency-free. It parses legacy and v0 messages
+  and refuses an SPL delegation or authority transfer, an unallowlisted program id, or an
+  unrecognised token instruction tag — soundly, *including* in the presence of address lookup tables,
+  because it reads program ids and instruction data rather than resolved accounts. It is explicit
+  that it cannot check where value goes when operands resolve through a lookup table: a refusal
+  filter, never a simulation.
+- **Privy Solana wiring** — `signAndSendTransaction`, the documented CAIP-2 ids, and a startup audit
+  of the remote Solana policy alongside the EVM one. The EVM audit also gained a finding for a rule
+  that does not bound `chain_id`, since `chain_type: "ethereum"` is an architecture rather than a
+  chain.
+
+### Known gaps
+- **Privy's Solana policy engine cannot express Anchor's approval refusal.** Its condition sources
+  reach six SPL instructions and `Approve`, `ApproveChecked` and `SetAuthority` are not among them —
+  there is no Solana equivalent of the `ethereum_calldata` + `function_name` condition. The only
+  remote control is an ALLOW rule that positively lists the instructions Anchor sends, so default-deny
+  refuses the rest; omitting that one condition removes the control with no error anywhere, so the
+  startup audit refuses to run against a policy missing it. Solana also has *no* aggregation
+  primitive, so both cumulative caps are local-only there, and Privy reject any transaction whose
+  policy conditions need an address loaded from an address lookup table.
+- **Anchor cannot build a Solana transaction.** Compiling an SPL transfer needs associated-token-
+  account derivation (ed25519 on-curve arithmetic) and a live blockhash. `UnimplementedSolanaBuilder`
+  refuses and says so; the signer around it is complete and tested. Closing this needs either the
+  compiled transaction from OpenSea's `/swap/execute` or a runtime dependency, which is a human's call.
+- **`ProjectOpenSea/wallet-adapters` has no Solana adapter** — Privy, Turnkey, Fireblocks, Bankr and
+  local keys, with ethers and viem bridges, all EVM. Worth closing upstream.
 - **The data service is built on `@opensea/sdk` and `@opensea/api-types`.** The SDK makes every
   OpenSea call and the generated types replace `unknown` everywhere. Anchor keeps the parts the SDK
   does not provide — one shared cache, one shared outbound rate limit, the freshness envelope, and

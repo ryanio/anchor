@@ -15,8 +15,23 @@ unbounded authority.**
   log file. Keys live in a secure enclave or a smart account — never in Anchor.
 - **Withdrawals go only to pre-registered addresses.** Changing that list is a human action with a
   time-lock. This is the single control that makes a large balance survivable.
-- **Token approvals are their own action class.** `setApprovalForAll` moves no funds and slips past a
-  spend cap, yet hands over everything. It is never delegated to the agent.
+- **Delegating standing authority is its own action class.** `setApprovalForAll` moves no funds and
+  slips past a spend cap, yet hands over everything. It is never delegated to the agent — and neither
+  are its Solana counterparts, which are not the same call and in one case are worse. The test for
+  membership is that an action *moves no value*, *grants an authority that outlives the transaction*,
+  and *needs a second action to revoke that nobody can guarantee happens*:
+
+  | Chain | Action | Why |
+  |---|---|---|
+  | EVM | `setApprovalForAll` | blanket operator rights over a whole collection |
+  | Solana | SPL `Approve` / `ApproveChecked` / `Revoke` | names a delegate over a token account's balance; `u64::MAX` is unlimited, and a bounded amount is still a delegation |
+  | Solana | SPL `SetAuthority` | not a limit on spending the account — it *is* the account, or the mint, or a program's upgrade authority |
+
+  Closing an account is deliberately **not** in the class: it moves value (a wrapped-SOL close sends
+  the whole lamport balance to a destination the instruction names), so it belongs under the
+  withdrawal allowlist rather than under a blanket refusal. Arbitrary program invocation is not in
+  the class either, because it is not an action — the answer to it is that a request carries intent
+  and never instructions or bytes.
 - **A kill switch must work from the phone, without the desktop.**
 
 The full model — control surface, value tiers from $100 to $100k+, vendor versus onchain enforcement,

@@ -20,7 +20,25 @@ import { generateKeyPairSync, verify } from "node:crypto";
 import { describe, test } from "node:test";
 import type { ApprovedAction, Denied, PolicyDecision } from "./decision.ts";
 import { PolicyBoundExecutor } from "./executor.ts";
-import { ACCOUNT, ATTACKER, buy, COLD_VAULT, COLLECTION, clock, limits, transfer } from "./fixtures.ts";
+import {
+  ACCOUNT,
+  ATTACKER,
+  buy,
+  CHAIN,
+  COLD_VAULT,
+  COLLECTION,
+  clock,
+  limits,
+  on,
+  SOL_ACCOUNT,
+  SOL_ATTACKER,
+  SOL_CHAIN,
+  SOL_COLD_VAULT,
+  SOL_MINT,
+  solanaLimits,
+  solanaTransfer,
+  transfer,
+} from "./fixtures.ts";
 import { DeclaredIntentSimulator } from "./inert.ts";
 import type { PolicyLimits } from "./policy.ts";
 import {
@@ -29,10 +47,20 @@ import {
   Erc721TransferBuilder,
   PrivyPolicyAuthority,
   PrivySigner,
+  PrivySolanaSigner,
   RemotePolicyRejected,
+  type SolanaTransactionBuilder,
+  UnimplementedSolanaBuilder,
 } from "./privy.ts";
 import { canonicalize, PrivyClient, type PrivyPolicyDocument } from "./privy-api.ts";
-import { address } from "./types.ts";
+import {
+  COMPUTE_BUDGET_PROGRAM,
+  SOLANA_CAIP2,
+  SPL_TOKEN_INSTRUCTION,
+  SPL_TOKEN_PROGRAM,
+  toBase64,
+} from "./solana.ts";
+import { evmAddress, type SolanaAddress, solanaAddressBytes } from "./types.ts";
 
 const APP_ID = "placeholder-app-id-not-real";
 const APP_SECRET = "placeholder-app-secret-0123456789-not-real";
@@ -101,6 +129,9 @@ function policyDocument(over: Partial<PrivyPolicyDocument> = {}): PrivyPolicyDoc
         action: "ALLOW",
         conditions: [
           { field_source: "ethereum_transaction", field: "to", operator: "in", value: [COLLECTION] },
+          // Without this, the `to` allowlist above applies on every EVM chain Privy will broadcast
+          // to — `chain_type: "ethereum"` is an architecture, not a chain. The audit says so.
+          { field_source: "ethereum_transaction", field: "chain_id", operator: "eq", value: "1" },
           {
             field_source: "ethereum_transaction",
             field: "value",
@@ -153,6 +184,7 @@ async function harness(
     api,
     policyId: POLICY_ID,
     limits: engineLimits,
+    chain: CHAIN,
     now: c.now,
   });
   const signer = new PrivySigner({
@@ -261,7 +293,7 @@ describe("a request outside policy is denied with a reason", () => {
   test("a contract that is not on the allowlist", async () => {
     const { executor } = await harness();
     const request = transfer("r1", 100n, COLD_VAULT, 0, {
-      contract: address("0xbadc0de00000000000000000000000000000beef"),
+      contract: evmAddress("0xbadc0de00000000000000000000000000000beef"),
     });
     const result = await executor.execute(request);
 
@@ -400,7 +432,7 @@ describe("setApprovalForAll is refused", () => {
         },
       ],
     });
-    const audit = auditRemotePolicy(document, limits());
+    const audit = auditRemotePolicy(document, { limits: limits(), chain: CHAIN });
     assert.ok(audit.findings.some((f) => /setApprovalForAll/.test(f)));
   });
 });
@@ -489,7 +521,7 @@ describe("errors never leak the credential", () => {
     const { impl } = stubFetch(() => json({ error: `secret ${APP_SECRET}` }, 401));
     const api = new PrivyClient({ appId: APP_ID, appSecret: APP_SECRET, fetchImpl: impl });
     await assert.rejects(
-      () => connectPrivyAuthority({ api, policyId: POLICY_ID, limits: limits(), now: c.now }),
+      () => connectPrivyAuthority({ api, policyId: POLICY_ID, limits: limits(), chain: CHAIN, now: c.now }),
       (error: unknown) => {
         assertClean(error);
         return /Privy API 401/.test(String(error));
@@ -502,9 +534,9 @@ describe("the remote policy is audited before anything runs", () => {
   test("a policy matching the local limits passes, and reports what it could not check", async () => {
     const { audit } = await harness();
     assert.deepEqual(audit.findings, []);
-    assert.deepEqual(audit.allowlistedContracts, [COLLECTION]);
-    assert.deepEqual(audit.allowlistedCalldataDestinations, [COLD_VAULT]);
-    assert.equal(audit.nativeValueCeilingWei, 10_000_000_000_000_000n);
+    assert.deepEqual(audit.allowlistedContracts, [on(CHAIN, COLLECTION)]);
+    assert.deepEqual(audit.allowlistedCalldataDestinations, [on(CHAIN, COLD_VAULT)]);
+    assert.deepEqual(audit.nativeValueCeiling, { amount: 10_000_000_000_000_000n, unit: "wei" });
     // The gaps are stated rather than assumed away: cumulative caps have no remote equivalent.
     assert.ok(audit.unverified.some((u) => /rolling/.test(u)));
   });
@@ -513,7 +545,7 @@ describe("the remote policy is audited before anything runs", () => {
     const document = policyDocument({
       rules: [{ name: "everything", method: "eth_sendTransaction", action: "ALLOW", conditions: [] }],
     });
-    const audit = auditRemotePolicy(document, limits());
+    const audit = auditRemotePolicy(document, { limits: limits(), chain: CHAIN });
     assert.ok(audit.findings.some((f) => /no conditions at all/.test(f)));
   });
 
@@ -524,16 +556,22 @@ describe("the remote policy is audited before anything runs", () => {
         { name: "sign anything", method: "personal_sign", action: "ALLOW", conditions: [] },
       ],
     });
-    const audit = auditRemotePolicy(document, limits());
+    const audit = auditRemotePolicy(document, { limits: limits(), chain: CHAIN });
     assert.ok(audit.findings.some((f) => /personal_sign/.test(f)));
     // …unless the operator widened it deliberately, in code.
-    const widened = auditRemotePolicy(document, limits(), ["personal_sign"]);
+    const widened = auditRemotePolicy(document, {
+      limits: limits(),
+      chain: CHAIN,
+      additionalAllowedMethods: ["personal_sign"],
+    });
     assert.ok(!widened.findings.some((f) => /which Anchor does not send/.test(f)));
   });
 
   test("a local allowlist wider than the remote policy is refused", async () => {
-    const wider = limits({ contractAllowlist: [COLLECTION, address(`0x${"5".repeat(40)}`)] });
-    const audit = auditRemotePolicy(policyDocument(), wider);
+    const wider = limits({
+      contractAllowlist: [on(CHAIN, COLLECTION), on(CHAIN, evmAddress(`0x${"5".repeat(40)}`))],
+    });
+    const audit = auditRemotePolicy(policyDocument(), { limits: wider, chain: CHAIN });
     assert.ok(audit.findings.some((f) => /which the Privy policy does not allow/.test(f)));
   });
 
@@ -551,7 +589,7 @@ describe("the remote policy is audited before anything runs", () => {
         },
       ],
     });
-    const audit = auditRemotePolicy(document, limits());
+    const audit = auditRemotePolicy(document, { limits: limits(), chain: CHAIN });
     assert.ok(audit.findings.some((f) => /withdrawal destinations are enforced only by the local/.test(f)));
   });
 
@@ -573,7 +611,7 @@ describe("the remote policy is audited before anything runs", () => {
         },
       ],
     });
-    const audit = auditRemotePolicy(document, limits());
+    const audit = auditRemotePolicy(document, { limits: limits(), chain: CHAIN });
     assert.ok(audit.findings.some((f) => /cannot read/.test(f)));
     assert.ok(audit.findings.some((f) => /native value/.test(f)));
   });
@@ -588,7 +626,7 @@ describe("the remote policy is audited before anything runs", () => {
     );
     const api = new PrivyClient({ appId: APP_ID, appSecret: APP_SECRET, fetchImpl: impl });
     await assert.rejects(
-      () => connectPrivyAuthority({ api, policyId: POLICY_ID, limits: limits() }),
+      () => connectPrivyAuthority({ api, policyId: POLICY_ID, limits: limits(), chain: CHAIN }),
       RemotePolicyRejected,
     );
   });
@@ -675,9 +713,361 @@ describe("constructing the authority directly skips the audit", () => {
     const c = clock();
     const { impl, calls } = stubFetch(() => json({}));
     const api = new PrivyClient({ appId: APP_ID, appSecret: APP_SECRET, fetchImpl: impl });
-    const authority = new PrivyPolicyAuthority({ api, policyId: POLICY_ID, limits: limits(), now: c.now });
+    const authority = new PrivyPolicyAuthority({
+      api,
+      policyId: POLICY_ID,
+      limits: limits(),
+      chain: CHAIN,
+      now: c.now,
+    });
     assert.equal(calls.length, 0, "no policy was read");
     const status = await authority.status();
     assert.equal(status.revoked, false);
+  });
+});
+
+// --- Solana ------------------------------------------------------------------------------------
+
+const SOL_WALLET_ID = "wallet-solana-placeholder";
+/** 64 bytes of base58, the shape Privy returns at `data.hash` for a Solana submission. */
+const SOL_SIGNATURE = "5".repeat(87);
+
+/** A Solana policy the audit accepts: program allowlist, instruction allowlist, mint, destination. */
+function solanaPolicyDocument(over: Partial<PrivyPolicyDocument> = {}): PrivyPolicyDocument {
+  return {
+    version: "1.0",
+    name: "anchor solana",
+    chain_type: "solana",
+    rules: [
+      {
+        name: "spl transfers only",
+        method: "signAndSendTransaction",
+        action: "ALLOW",
+        conditions: [
+          {
+            field_source: "solana_program_instruction",
+            field: "programId",
+            operator: "in",
+            value: [SPL_TOKEN_PROGRAM, COMPUTE_BUDGET_PROGRAM],
+          },
+          // The load-bearing condition. Privy has no way to name Approve or SetAuthority in a DENY,
+          // so keeping them out depends entirely on this positive list plus default-deny.
+          {
+            field_source: "solana_token_program_instruction",
+            field: "instructionName",
+            operator: "in",
+            value: ["TransferChecked"],
+          },
+          {
+            field_source: "solana_token_program_instruction",
+            field: "TransferChecked.mint",
+            operator: "in",
+            value: [SOL_MINT],
+          },
+          {
+            field_source: "solana_token_program_instruction",
+            field: "TransferChecked.destination",
+            operator: "in",
+            value: [SOL_COLD_VAULT],
+          },
+          {
+            field_source: "solana_system_program_instruction",
+            field: "Transfer.lamports",
+            operator: "lte",
+            value: "1000000",
+          },
+        ],
+      },
+    ],
+    ...over,
+  };
+}
+
+const solanaAudit = (document: PrivyPolicyDocument, over: Partial<PolicyLimits> = {}) =>
+  auditRemotePolicy(document, { limits: solanaLimits(over), chain: SOL_CHAIN });
+
+describe("auditing a Solana policy", () => {
+  test("a policy matching the local limits passes, and reports what it could not check", () => {
+    const audit = solanaAudit(solanaPolicyDocument());
+    assert.deepEqual(audit.findings, []);
+    assert.equal(audit.arch, "svm");
+    assert.deepEqual(audit.allowlistedContracts, [on(SOL_CHAIN, SOL_MINT)]);
+    assert.deepEqual(audit.allowlistedCalldataDestinations, [on(SOL_CHAIN, SOL_COLD_VAULT)]);
+    assert.deepEqual([...audit.allowlistedPrograms], [SPL_TOKEN_PROGRAM, COMPUTE_BUDGET_PROGRAM]);
+    assert.deepEqual(audit.nativeValueCeiling, { amount: 1_000_000n, unit: "lamports" });
+  });
+
+  test("the two gaps Ryan needs to know about are stated every single time", () => {
+    const audit = solanaAudit(solanaPolicyDocument());
+    // Worse than the EVM case: there is no aggregation primitive for Solana at all, not merely one
+    // with too short a window.
+    assert.ok(audit.unverified.some((u) => /no remote cumulative cap of any kind on Solana/.test(u)));
+    // Privy's own documented limitation, and the reason a destination allowlist and a real v0 swap
+    // transaction are close to mutually exclusive today.
+    assert.ok(audit.unverified.some((u) => /cannot resolve address lookup tables/.test(u)));
+  });
+
+  test("permitting the token program without an instructionName condition is a finding", () => {
+    // The single most important audit rule on this side. Privy's Solana engine cannot express a
+    // condition naming Approve, ApproveChecked or SetAuthority — its token decoder does not cover
+    // them — so a rule that allows the program by id alone allows an agent to delegate the token
+    // account or hand it over. Only the positive instruction list keeps them out.
+    const document = solanaPolicyDocument({
+      rules: [
+        {
+          name: "token program, no instruction bound",
+          method: "signAndSendTransaction",
+          action: "ALLOW",
+          conditions: [
+            {
+              field_source: "solana_program_instruction",
+              field: "programId",
+              operator: "in",
+              value: [SPL_TOKEN_PROGRAM],
+            },
+          ],
+        },
+      ],
+    });
+    const finding = solanaAudit(document).findings.find((f) => /Approve, ApproveChecked/.test(f));
+    assert.ok(finding, "a bare program-id allow on the token program must be a finding");
+    assert.match(finding, /instructionName/);
+  });
+
+  test("a rule with no programId condition at all is a finding", () => {
+    const document = solanaPolicyDocument({
+      rules: [
+        {
+          name: "anything, anywhere",
+          method: "signAndSendTransaction",
+          action: "ALLOW",
+          conditions: [
+            {
+              field_source: "solana_token_program_instruction",
+              field: "instructionName",
+              operator: "eq",
+              value: "TransferChecked",
+            },
+          ],
+        },
+      ],
+    });
+    assert.ok(solanaAudit(document).findings.some((f) => /any program at all/.test(f)));
+  });
+
+  test("permitting the unchecked Transfer instruction is a finding, because it carries no mint", () => {
+    const base = solanaPolicyDocument().rules[0];
+    assert.ok(base);
+    const document = solanaPolicyDocument({
+      rules: [
+        {
+          ...base,
+          conditions: base.conditions.map((condition) =>
+            condition.field === "instructionName"
+              ? { ...condition, value: ["Transfer", "TransferChecked"] }
+              : condition,
+          ),
+        },
+      ],
+    });
+    // Note the rule also lists TransferChecked and pins its mint, so it *looks* bounded. That is
+    // exactly the trap: plain `Transfer` has no mint parameter, so the mint condition beside it
+    // constrains only the checked variant and the policy silently permits any token to leave.
+    assert.ok(solanaAudit(document).findings.some((f) => /carries no mint/.test(f)));
+  });
+
+  test("an instruction Anchor does not send is a finding", () => {
+    const base = solanaPolicyDocument().rules[0];
+    assert.ok(base);
+    const document = solanaPolicyDocument({
+      rules: [
+        {
+          ...base,
+          conditions: base.conditions.map((condition) =>
+            condition.field === "instructionName"
+              ? { ...condition, value: ["TransferChecked", "MintTo"] }
+              : condition,
+          ),
+        },
+      ],
+    });
+    assert.ok(solanaAudit(document).findings.some((f) => /MintTo/.test(f)));
+  });
+
+  test("signMessage is refused, for the same reason personal_sign is on the EVM side", () => {
+    const document = solanaPolicyDocument({
+      rules: [
+        ...solanaPolicyDocument().rules,
+        { name: "sign anything", method: "signMessage", action: "ALLOW", conditions: [] },
+      ],
+    });
+    assert.ok(solanaAudit(document).findings.some((f) => /signMessage/.test(f)));
+  });
+
+  test("an EVM policy pointed at a Solana chain is refused rather than audited as one", () => {
+    // The architecture comes from the local limits; the policy's own claim is checked against it.
+    // A policy that says `ethereum` while the limits say `solana` is a misconfiguration, not an
+    // instruction to switch auditing modes.
+    assert.ok(solanaAudit(policyDocument()).findings.some((f) => /chain_type/.test(f)));
+  });
+
+  test("an allowlist entry for another chain is a finding, because one policy is one chain type", () => {
+    // Privy: one `chain_type` per policy, and one policy per wallet. So an EVM+Solana Anchor setup
+    // is two wallets and two policies — and an allowlist entry for the other one would otherwise be
+    // enforced by nothing at all.
+    const audit = solanaAudit(solanaPolicyDocument(), {
+      contractAllowlist: [on(SOL_CHAIN, SOL_MINT), on(CHAIN, COLLECTION)],
+    });
+    assert.ok(audit.findings.some((f) => /is not on solana/.test(f)));
+  });
+});
+
+describe("the Solana signer reads the transaction before it signs it", () => {
+  /** A builder that hands over whatever bytes a test wants to see refused. */
+  const builderOf = (serialized: Uint8Array): SolanaTransactionBuilder => ({
+    build: async () => ({ serialized, cluster: "mainnet" as const }),
+  });
+
+  /** Serialize a minimal transaction with `account` as the fee payer. */
+  function solanaTx(programId: SolanaAddress, data: readonly number[], feePayer = SOL_ACCOUNT) {
+    const compact = (n: number) => [n];
+    const bytes = [
+      ...compact(1),
+      ...new Array<number>(64).fill(0),
+      0x80,
+      1,
+      0,
+      1,
+      ...compact(2),
+      ...solanaAddressBytes(feePayer),
+      ...solanaAddressBytes(programId),
+      ...new Array<number>(32).fill(7),
+      ...compact(1),
+      1,
+      ...compact(0),
+      ...compact(data.length),
+      ...data,
+      ...compact(0),
+    ];
+    return Uint8Array.from(bytes);
+  }
+
+  async function solanaHarness(serialized: Uint8Array) {
+    const c = clock();
+    const document = solanaPolicyDocument();
+    const { impl, calls } = stubFetch((call) => {
+      if (call.method === "GET") return json(document);
+      return json({ method: "signAndSendTransaction", data: { hash: SOL_SIGNATURE } });
+    });
+    const api = new PrivyClient({
+      appId: APP_ID,
+      appSecret: APP_SECRET,
+      fetchImpl: impl,
+      newIdempotencyKey: () => "idempotency-placeholder",
+    });
+    const { authority } = await connectPrivyAuthority({
+      api,
+      policyId: POLICY_ID,
+      limits: solanaLimits(),
+      chain: SOL_CHAIN,
+      now: c.now,
+    });
+    const signer = new PrivySolanaSigner({
+      api,
+      walletId: SOL_WALLET_ID,
+      builder: builderOf(serialized),
+      cluster: "mainnet",
+      now: c.now,
+    });
+    const executor = new PolicyBoundExecutor({
+      simulator: new DeclaredIntentSimulator(c.now),
+      policy: authority,
+      signer,
+      now: c.now,
+    });
+    return { executor, signer, calls, clock: c };
+  }
+
+  test("a clean SPL transfer reaches Privy as base64, at the documented CAIP-2", async () => {
+    const serialized = solanaTx(SPL_TOKEN_PROGRAM, [SPL_TOKEN_INSTRUCTION.transferChecked, 1]);
+    const { executor, calls } = await solanaHarness(serialized);
+    const result = await executor.execute(solanaTransfer("r1", 1_000n));
+
+    assert.equal(result.status, "submitted");
+    if (result.status !== "submitted") return;
+    assert.equal(result.receipt.transactionHash, SOL_SIGNATURE);
+
+    const rpc = calls.at(-1);
+    assert.ok(rpc);
+    assert.deepEqual(rpc.body, {
+      method: "signAndSendTransaction",
+      caip2: SOLANA_CAIP2.mainnet,
+      params: { transaction: toBase64(serialized), encoding: "base64" },
+    });
+  });
+
+  test("a delegation smuggled into the transaction is refused, and nothing is sent", async () => {
+    // Policy approved a transfer. The builder produced something else. This is the last line, and
+    // it is the one that does not depend on the request being honest.
+    const serialized = solanaTx(SPL_TOKEN_PROGRAM, [SPL_TOKEN_INSTRUCTION.approve, 255, 255]);
+    const { executor, calls } = await solanaHarness(serialized);
+    const before = calls.length;
+    const result = await executor.execute(solanaTransfer("r1", 1_000n));
+
+    assert.equal(result.status, "failed");
+    if (result.status !== "failed") return;
+    assert.match(result.error, /human-only action class/);
+    assert.equal(calls.length, before, "nothing was sent to Privy");
+  });
+
+  test("a transaction from an account policy did not approve is refused", async () => {
+    // The fee payer is static account key 0 and is never loaded from a lookup table, so this is one
+    // of the few account-level facts the guard can actually establish.
+    const serialized = solanaTx(SPL_TOKEN_PROGRAM, [SPL_TOKEN_INSTRUCTION.transferChecked, 1], SOL_ATTACKER);
+    const { executor } = await solanaHarness(serialized);
+    const result = await executor.execute(solanaTransfer("r1", 1_000n));
+    assert.equal(result.status, "failed");
+    if (result.status !== "failed") return;
+    assert.match(result.error, /fee payer is not the approved account/);
+  });
+
+  test("every guard result is kept for the audit log, including the clean ones", async () => {
+    const serialized = solanaTx(SPL_TOKEN_PROGRAM, [SPL_TOKEN_INSTRUCTION.transferChecked, 1]);
+    const { executor, signer } = await solanaHarness(serialized);
+    await executor.execute(solanaTransfer("r1", 1_000n));
+    assert.equal(signer.guarded.length, 1);
+    // "Nothing forbidden was found" is not "safe", and the record says which one it was.
+    assert.deepEqual(signer.guarded[0]?.findings, []);
+    assert.ok((signer.guarded[0]?.unverified.length ?? 0) > 0);
+  });
+
+  test("a human-only request never reaches the builder at all", async () => {
+    const { executor, signer } = await solanaHarness(solanaTx(SPL_TOKEN_PROGRAM, [3]));
+    // Built inline, never as a fixture (AGENTS.md invariant 3).
+    const result = await executor.execute({
+      id: "r1",
+      requestedAt: 0,
+      chain: "solana",
+      account: SOL_ACCOUNT,
+      kind: "approve-delegate",
+      contract: SOL_MINT,
+      tokenAccount: SOL_ACCOUNT,
+      delegate: SOL_ATTACKER,
+      amount: (1n << 64n) - 1n,
+    });
+    assert.equal(result.status, "rejected");
+    if (result.status !== "rejected") return;
+    assert.equal(result.decision.reason, "human-only-action");
+    assert.equal(signer.guarded.length, 0, "no transaction was even built");
+  });
+});
+
+describe("building a Solana transaction is honestly unimplemented", () => {
+  test("the shipped builder refuses and says what is missing", async () => {
+    const builder = new UnimplementedSolanaBuilder();
+    await assert.rejects(
+      () => builder.build({ request: { chain: "solana" } } as unknown as ApprovedAction),
+      /associated token account derivation/,
+    );
   });
 });

@@ -28,15 +28,22 @@ import {
 import type { ExecutorStatus, PolicyAuthority, RevocationReceipt, Settlement } from "./executor.ts";
 import {
   type ActionRequest,
-  type Address,
   allowlistHas,
+  type ChainAddress,
+  chainAddress,
   type DelegableActionKind,
+  describeMalformation,
+  formatChainAddress,
+  type HumanOnlyActionKind,
   incomingValue,
+  isHumanOnlyActionKind,
   money,
   outgoingDenominations,
   outgoingDestinations,
   outgoingValue,
   type Simulation,
+  sameChainAddress,
+  subjectContract,
 } from "./types.ts";
 
 const HOUR_MS = 3_600_000;
@@ -62,20 +69,25 @@ export interface PolicyLimits {
   /**
    * Which actions may be delegated at all.
    *
-   * Typed as {@link DelegableActionKind}, which excludes `set-approval-for-all`. You cannot put a
-   * blanket token approval on this list — the compiler refuses. Token approvals are a human-only
-   * action class (docs/security.md), and this is that rule expressed where it cannot be forgotten.
+   * Typed as {@link DelegableActionKind}, which excludes every human-only kind — EVM's
+   * `set-approval-for-all` and Solana's `approve-delegate` and `set-authority`. You cannot put one
+   * on this list; the compiler refuses (docs/security.md, and `HUMAN_ONLY_ACTION_KINDS` in
+   * types.ts). This is that rule expressed where it cannot be forgotten.
    */
   readonly allowedActions: readonly DelegableActionKind[];
-  /** Contracts the agent may touch. Anything else, including a new "helpful" contract, is denied. */
-  readonly contractAllowlist: readonly Address[];
   /**
-   * Pre-registered withdrawal destinations. The single control that makes a large balance
-   * survivable: almost every catastrophic outcome routes through "funds left to an attacker's
-   * address". Changing this list is a human action with a time-lock — never something the agent or
-   * this class can do at run time.
+   * Contracts the agent may touch, each scoped to its chain. Anything else, including a new
+   * "helpful" contract, is denied — and including the *same* address on a chain that is not the one
+   * it was allowlisted for, which a bare-string allowlist would have permitted.
    */
-  readonly withdrawalAllowlist: readonly Address[];
+  readonly contractAllowlist: readonly ChainAddress[];
+  /**
+   * Pre-registered withdrawal destinations, each scoped to its chain. The single control that makes
+   * a large balance survivable: almost every catastrophic outcome routes through "funds left to an
+   * attacker's address". Changing this list is a human action with a time-lock — never something the
+   * agent or this class can do at run time.
+   */
+  readonly withdrawalAllowlist: readonly ChainAddress[];
   /** Floor on offer proceeds the agent may accept. `0n` disables the check. */
   readonly minAcceptOfferProceeds: bigint;
   /** How long a minted approval stays usable. Short by design. */
@@ -114,14 +126,13 @@ export class PolicyEngine implements PolicyAuthority {
   constructor(options: PolicyEngineOptions) {
     const limits = options.limits;
 
-    // Defensive runtime check to match the type-level one. `allowedActions` is typed so that
-    // `set-approval-for-all` cannot appear, but limits loaded from JSON at run time have not been
-    // through the compiler, and this is the one mistake we will not accept as a possibility.
+    // Defensive runtime check to match the type-level one. `allowedActions` is typed so that no
+    // human-only kind can appear, but limits loaded from JSON at run time have not been through the
+    // compiler, and this is the one mistake we will not accept as a possibility. Both checks read
+    // the same `HUMAN_ONLY_ACTION_KINDS` constant, so neither can be tightened without the other.
     for (const action of limits.allowedActions as readonly string[]) {
-      if (action === "set-approval-for-all") {
-        throw new Error(
-          "setApprovalForAll is a human-only action class and can never be on an action allowlist",
-        );
+      if (isHumanOnlyActionKind(action)) {
+        throw new Error(`${action} is a human-only action class and can never be on an action allowlist`);
       }
     }
     if (limits.perTransaction < 0n || limits.rolling24h < 0n || limits.rolling7d < 0n) {
@@ -150,31 +161,41 @@ export class PolicyEngine implements PolicyAuthority {
       return no("duplicate-request", `request id ${request.id} has already been decided`);
     }
 
-    // 3. Token approvals. Checked before the action allowlist so the refusal has its own reason
-    //    code and its own alert, rather than being lost among ordinary "not allowed" noise.
-    if (request.kind === "set-approval-for-all") {
+    // 3. Human-only action classes. Checked before everything else that could refuse them so the
+    //    denial has its own reason code and its own alert, rather than being lost among ordinary
+    //    "not allowed" noise — a request for one of these is a signal about the agent, not about
+    //    the request. Checked ahead of the well-formedness check too: a malformed request for a
+    //    delegation is still a request for a delegation, and that is the more useful thing to know.
+    if (isHumanOnlyActionKind(request.kind)) {
       this.#seenRequestIds.add(request.id);
-      return no(
-        "human-only-action",
-        "setApprovalForAll is never delegated to an agent. It moves no funds, slips past every " +
-          "spend cap, and hands over the whole collection. A human performs this action directly " +
-          "or it does not happen.",
-      );
+      return no("human-only-action", humanOnlyDetail(request.kind));
     }
 
     this.#seenRequestIds.add(request.id);
 
-    // 4. Action allowlist.
+    // 4. Well-formedness. Every address a request names must belong to the chain it declares.
+    //    A Solana account on `chain: "ethereum"` is either a typo or an attempt to have an EVM
+    //    allowlist entry vouch for a Solana address; either way it is not a policy question.
+    const malformation = describeMalformation(request);
+    if (malformation !== null) return no("malformed-request", malformation);
+
+    // 5. Action allowlist.
     if (!this.#limits.allowedActions.includes(request.kind)) {
       return no("action-not-allowed", `action ${request.kind} is not on the action allowlist`);
     }
 
-    // 5. Contract allowlist.
-    if (!allowlistHas(this.#limits.contractAllowlist, request.contract)) {
-      return no("contract-not-allowlisted", `contract ${request.contract} is not on the contract allowlist`);
+    // 6. Contract allowlist, compared on the (chain, address) pair. The same 20 hex bytes name a
+    //    different contract on every EVM chain, so an allowlist entry for one chain must never
+    //    match an address on another.
+    const subject = subjectContract(request);
+    if (!allowlistHas(this.#limits.contractAllowlist, subject)) {
+      return no(
+        "contract-not-allowlisted",
+        `contract ${formatChainAddress(subject)} is not on the contract allowlist`,
+      );
     }
 
-    // 6. Simulation is mandatory. Never judge a payload whose effects have not been computed.
+    // 7. Simulation is mandatory. Never judge a payload whose effects have not been computed.
     if (!simulation.ok) {
       return no("simulation-failed", simulation.failure ?? "simulation did not succeed");
     }
@@ -185,7 +206,7 @@ export class PolicyEngine implements PolicyAuthority {
       );
     }
 
-    // 7. Units. Refuse to judge value the caps cannot be compared against.
+    // 8. Units. Refuse to judge value the caps cannot be compared against.
     const denom = this.#limits.denomination;
     for (const seen of outgoingDenominations(simulation)) {
       if (seen !== denom) {
@@ -200,11 +221,11 @@ export class PolicyEngine implements PolicyAuthority {
       return no("denomination-mismatch", `request is denominated in ${declaredDenom}, policy in ${denom}`);
     }
 
-    // 8. Does the simulation agree with what the agent claimed it was doing?
+    // 9. Does the simulation agree with what the agent claimed it was doing?
     const mismatch = this.#checkSimulationAgreement(request, simulation, denom);
     if (mismatch !== null) return no("simulation-mismatch", mismatch);
 
-    // 9. Offer floor. Selling far below what the policy considers worth transacting is either a
+    // 10. Offer floor. Selling far below what the policy considers worth transacting is either a
     //     mispriced offer or a manipulated one; either way it is not the agent's call.
     if (request.kind === "accept-offer") {
       const proceeds = incomingValue(simulation, denom).amount;
@@ -217,23 +238,32 @@ export class PolicyEngine implements PolicyAuthority {
       }
     }
 
-    // 10. Withdrawal destinations. Only for actions that actually move an asset to a third party
+    // 11. Withdrawal destinations. Only for actions that actually move an asset to a third party
     //    the user chose — a marketplace sale is not a withdrawal, a transfer out is.
+    //
+    //    Both checks compare (chain, address) pairs. The simulation's destinations especially: a
+    //    bridge or a cross-chain swap can land value on a chain the request never named, and an
+    //    allowlist entry for the cold vault on one chain must not vouch for the same bytes on
+    //    another — nobody controls the private key of an address they were merely given.
     if (request.kind === "transfer") {
-      if (!allowlistHas(this.#limits.withdrawalAllowlist, request.to)) {
-        return no("destination-not-allowlisted", `${request.to} is not a pre-registered withdrawal address`);
+      const declared = chainAddress(request.chain, request.to);
+      if (!allowlistHas(this.#limits.withdrawalAllowlist, declared)) {
+        return no(
+          "destination-not-allowlisted",
+          `${formatChainAddress(declared)} is not a pre-registered withdrawal address`,
+        );
       }
       for (const destination of outgoingDestinations(simulation)) {
         if (!allowlistHas(this.#limits.withdrawalAllowlist, destination)) {
           return no(
             "destination-not-allowlisted",
-            `simulation sends value to ${destination}, which is not pre-registered`,
+            `simulation sends value to ${formatChainAddress(destination)}, which is not pre-registered`,
           );
         }
       }
     }
 
-    // 11. Caps, charged on GROSS value leaving the account.
+    // 12. Caps, charged on GROSS value leaving the account.
     //
     // Not net. Netting would let an attacker send $10k out and book an incoming asset they
     // valued themselves, arriving at a charge of zero — a wash trade is the standard way to drain
@@ -421,19 +451,57 @@ export class PolicyEngine implements PolicyAuthority {
         if (out > request.valuation.amount) {
           return `simulation moves ${out} ${denom}, above the declared valuation of ${request.valuation.amount}`;
         }
+        const declared = chainAddress(request.chain, request.to);
         for (const destination of outgoingDestinations(simulation)) {
-          if (destination !== request.to) {
-            return `simulation sends to ${destination}, but the request declared ${request.to}`;
+          if (!sameChainAddress(destination, declared)) {
+            return (
+              `simulation sends to ${formatChainAddress(destination)}, but the request declared ` +
+              formatChainAddress(declared)
+            );
           }
         }
         return null;
       }
-      case "set-approval-for-all": {
+      case "set-approval-for-all":
+      case "approve-delegate":
+      case "set-authority": {
         // Unreachable: rejected far earlier. Present so the switch stays exhaustive, and so adding
         // a new action kind is a compile error here rather than a silent pass.
-        return "token approvals are never evaluated";
+        return "human-only actions are never evaluated";
       }
     }
+  }
+}
+
+/**
+ * Why a human-only action was refused, in words a notification can carry.
+ *
+ * One arm per kind rather than one shared sentence: these are different hazards, the operator
+ * reading the alert needs to know which one arrived, and an exhaustive switch means a new member of
+ * `HUMAN_ONLY_ACTION_KINDS` cannot be added without someone writing down why it is on the list.
+ */
+function humanOnlyDetail(kind: HumanOnlyActionKind): string {
+  switch (kind) {
+    case "set-approval-for-all":
+      return (
+        "setApprovalForAll is never delegated to an agent. It moves no funds, slips past every " +
+        "spend cap, and hands over the whole collection. A human performs this action directly or " +
+        "it does not happen."
+      );
+    case "approve-delegate":
+      return (
+        "an SPL token delegate is never named by an agent. Approve moves no funds, so no spend cap " +
+        "sees it, and it grants standing authority over the token account's balance that outlives " +
+        "this transaction — u64::MAX is unlimited, and a smaller amount is still a delegation. " +
+        "Revoking is a separate action nobody can guarantee happens."
+      );
+    case "set-authority":
+      return (
+        "SetAuthority is never delegated to an agent. It does not bound what someone may spend " +
+        "from the account — it hands over the account, the mint, or the power to replace a " +
+        "program's code at an unchanged address. A human performs this directly or it does not " +
+        "happen."
+      );
   }
 }
 
@@ -448,6 +516,8 @@ function declaredDenomination(request: ActionRequest): string | null {
       return request.valuation.denomination;
     case "cancel-own-listing":
     case "set-approval-for-all":
+    case "approve-delegate":
+    case "set-authority":
       return null;
   }
 }
@@ -456,8 +526,8 @@ function declaredDenomination(request: ActionRequest): string | null {
 export function tierLimits(
   tier: 1 | 2 | 3,
   lists: {
-    contractAllowlist: readonly Address[];
-    withdrawalAllowlist: readonly Address[];
+    contractAllowlist: readonly ChainAddress[];
+    withdrawalAllowlist: readonly ChainAddress[];
   },
 ): PolicyLimits {
   const shared = {

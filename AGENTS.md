@@ -20,8 +20,12 @@ before touching anything near keys, signing, or the network.
    that belongs in the executor backend, not here.
 2. **Withdrawals go only to pre-registered addresses.** Never add a path that transfers to an arbitrary
    destination, however convenient for testing.
-3. **`setApprovalForAll` is human-only.** It is never delegated, never scripted, never in a fixture that
-   could be copy-pasted into production.
+3. **Delegating standing authority is human-only.** An action that moves no value but grants an
+   authority outliving the transaction is never delegated, never scripted, and never in a fixture that
+   could be copy-pasted into production. On EVM that is `setApprovalForAll`; on Solana it is the SPL
+   `Approve`/`ApproveChecked`/`Revoke` delegate and `SetAuthority`, which hands over the account
+   outright. The list lives in one place — `HUMAN_ONLY_ACTION_KINDS` in `executor/src/types.ts` — and
+   both the type-level and run-time refusals read it. Adding a member is a security change; ask first.
 4. **The data service stays read-only.** Non-GET is refused before routing. Keep it that way.
 5. **Secrets live in the OS keyring or CI secrets.** Never in config, argv, logs, tests, fixtures, or a
    commit. If you need a credential to test, mock it.

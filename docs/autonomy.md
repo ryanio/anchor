@@ -46,9 +46,17 @@ per-transaction ones — a hundred small transfers is the obvious way around a s
 **Contract allowlist.** The agent may only touch the marketplace contracts it actually needs. Anything
 else, including a freshly deployed "helpful" contract, is refused.
 
+**An allowlist entry is a (chain, address) pair, never an address.** The same 20 hex bytes are a
+different contract on every EVM chain, and `CREATE2` lets someone put chosen code at a chosen address
+on a chain the user never configured — so an entry carrying no chain vouches for contracts nobody
+approved. This matters most on the withdrawal list: nobody holds the key to "the same address on
+another chain" unless they chose to.
+
 **Action allowlist.** Buying below a threshold, accepting an offer above one, cancelling *its own*
-listings. `setApprovalForAll` is not on this list, ever — token approvals are how NFT wallets actually
-get drained, and they are worth treating as a separate, human-only action class.
+listings. Nothing that delegates standing authority is on this list, ever — on EVM that is
+`setApprovalForAll`, on Solana the SPL delegate and `SetAuthority`. Approvals are how wallets actually
+get drained, and they are worth treating as a separate, human-only action class. See
+[security.md](security.md) for the membership test and the full list.
 
 **Withdrawal allowlist — the important one.** The agent may transfer assets *only* to addresses the
 user pre-registered, ideally a single cold vault. Changing that list is a human action with a
@@ -121,6 +129,11 @@ Being honest about what this model does *not* solve:
   it must live outside the agent, and why untrusted marketplace content must never be able to widen it.
 - **Approvals are not transfers.** A token approval moves no funds and looks harmless in a spend cap,
   yet hands over everything. They must be modelled as their own action class with their own limits.
+- **A vendor's rule language is not the same on every chain.** Privy's EVM policies can name a
+  function and refuse it; their Solana policies cannot name `Approve` or `SetAuthority` at all, and
+  have no cumulative-spend primitive of any window. "The vendor supports Solana" and "the vendor
+  enforces the same policy on Solana" are different claims, and the second one is the one that
+  matters. See [chains.md](chains.md).
 - **Tokens are permissionless, so allowlists invert.** An NFT contract allowlist is a short list of
   marketplaces. Anything can deploy a token, so trading them needs default-deny plus a sellability
   check — honeypots and vanishing liquidity are a risk class with no NFT counterpart. See
