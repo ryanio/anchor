@@ -91,6 +91,18 @@ const EVM_ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
 const BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 
 /**
+ * Longest string {@link decodeBase58} will look at.
+ *
+ * The decoder is O(n²) — each digit multiplies the accumulated byte array — and everything it parses
+ * arrives from somewhere untrusted: an agent's request field, a policy document fetched from Privy.
+ * Without a bound, a 120 KB string costs seconds and a 500 KB one costs minutes, and Node is
+ * single-threaded, so that stalls the whole process *including `revoke()`* — the one control
+ * docs/autonomy.md says must always work. 64 is generous: a 32-byte key is 32–44 characters, so
+ * nothing this function is meant to accept comes near it.
+ */
+const MAX_BASE58_LENGTH = 64;
+
+/**
  * Decode base58 to bytes, or `null` when the string is not base58 at all.
  *
  * The same twenty lines as `service/src/chains.ts`, restated rather than imported because the
@@ -99,7 +111,7 @@ const BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvw
  * is, and that disagreement is one an attacker gets to choose between.
  */
 function decodeBase58(value: string): Uint8Array | null {
-  if (value.length === 0) return null;
+  if (value.length === 0 || value.length > MAX_BASE58_LENGTH) return null;
   const bytes: number[] = [];
   for (const char of value) {
     const digit = BASE58_ALPHABET.indexOf(char);
