@@ -58,6 +58,7 @@ import {
   SOLANA_CAIP2,
   SPL_TOKEN_INSTRUCTION,
   SPL_TOKEN_PROGRAM,
+  SYSTEM_PROGRAM,
   toBase64,
 } from "./solana.ts";
 import { evmAddress, type SolanaAddress, solanaAddressBytes } from "./types.ts";
