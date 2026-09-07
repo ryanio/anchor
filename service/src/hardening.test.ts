@@ -12,6 +12,7 @@ import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
 import { Cache } from "./cache.ts";
 import { type Config, validate } from "./config.ts";
+import { keyringAvailable } from "./keyring.ts";
 import { OpenSeaClient } from "./opensea.ts";
 import { createApp } from "./server.ts";
 
@@ -152,5 +153,22 @@ describe("config validation", () => {
     assert.equal(c.wallet, "0xabc");
     assert.equal(c.requestsPerSecond, 2);
     assert.equal(c.ttl.nfts, 300);
+  });
+});
+
+describe("keyring availability", () => {
+  // Probing with `--version` reported "not installed" on a machine where secret-tool was installed
+  // and working: libsecret's secret-tool has no version flag, prints usage, and exits 2.
+  test("detects secret-tool when it is on PATH", async (t) => {
+    const { execFile } = await import("node:child_process");
+    const { promisify } = await import("node:util");
+    let present = true;
+    try {
+      await promisify(execFile)("sh", ["-c", "command -v secret-tool"]);
+    } catch {
+      present = false;
+    }
+    if (!present) return t.skip("secret-tool is genuinely absent here");
+    assert.equal(await keyringAvailable(), true);
   });
 });
