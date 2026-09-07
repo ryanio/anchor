@@ -38,10 +38,18 @@ export async function setApiKey(value: string): Promise<void> {
   });
 }
 
-/** True when libsecret is available at all. */
+/**
+ * True when libsecret's `secret-tool` is available.
+ *
+ * Probing with `--version` was wrong: `secret-tool` has no such flag, prints its usage and exits 2,
+ * so this reported "not installed" on machines where it was installed and working. There is no
+ * version or help flag to probe, so resolve the binary on PATH instead of running it — the only
+ * question here is whether it exists.
+ */
 export async function keyringAvailable(): Promise<boolean> {
   try {
-    await run("secret-tool", ["--version"]);
+    // `command -v` is a shell builtin present in any POSIX sh, and exits non-zero when not found.
+    await run("sh", ["-c", "command -v secret-tool"]);
     return true;
   } catch {
     return false;
