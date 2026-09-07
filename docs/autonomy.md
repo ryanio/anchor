@@ -62,6 +62,19 @@ driven; treat a cluster of them as an incident, not as noise.
 **Simulation before signing.** Simulate, show the expected asset delta, and refuse on mismatch. Never
 sign a payload whose effects haven't been computed.
 
+**Slippage is a spend control.** Easy to miss, because it looks like a trading parameter. A limit of
+"$500 per transaction" means nothing if a swap executes at 90% price impact — the agent spent $500,
+received $50, and every dollar cap was respected. A maximum slippage and a minimum liquidity floor
+belong in the policy beside the dollar limits, enforced in the same place.
+
+**Cap exposure per asset, not only per transaction.** Ten separate $50 buys of one token is a $500
+position. Per-item caps work for NFTs because each purchase is a distinct thing; fungible assets
+need the policy to hold state across transactions.
+
+**A quote is not a price.** Swap quotes expire. An approval must be bound to the quote it approved and
+refused if that quote has moved beyond tolerance, or the decision was made against a number that no
+longer exists.
+
 **Time-locks above a threshold.** Large transactions queue with a delay and a notification. The delay
 is what converts "I'm asleep" into "I had four hours to hit cancel."
 
@@ -108,6 +121,10 @@ Being honest about what this model does *not* solve:
   it must live outside the agent, and why untrusted marketplace content must never be able to widen it.
 - **Approvals are not transfers.** A token approval moves no funds and looks harmless in a spend cap,
   yet hands over everything. They must be modelled as their own action class with their own limits.
+- **Tokens are permissionless, so allowlists invert.** An NFT contract allowlist is a short list of
+  marketplaces. Anything can deploy a token, so trading them needs default-deny plus a sellability
+  check — honeypots and vanishing liquidity are a risk class with no NFT counterpart. See
+  [tokens.md](tokens.md).
 
 ## Open questions
 

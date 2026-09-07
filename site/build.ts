@@ -253,7 +253,7 @@ ${CSS}</style>
     <nav>
       <a href="/">${icon("book-open", 16)}<span>Diary</span></a>
       <a href="/changelog.html">${icon("scroll-text", 16)}<span>Changelog</span></a>
-      <a href="https://ryanio.github.io/battle-for-the-ford/">${icon("gamepad-2", 16)}<span>Battle</span></a>
+      <a href="https://ryanio.github.io/tidebreak/">${icon("gamepad-2", 16)}<span>Battle</span></a>
       <a href="https://github.com/ryanio/anchor">${icon("github", 15)}<span>Source</span></a>
     </nav>
   </header>
@@ -282,7 +282,7 @@ ${CSS}</style>
           <a href="https://ryanio.com">ryanio.com</a>
           <a href="https://x.com/r_alx_z">X</a>
           <a href="https://github.com/ryanio">GitHub</a>
-          <a href="https://ryanio.github.io/battle-for-the-ford/">Battle</a>
+          <a href="https://ryanio.github.io/tidebreak/">Battle</a>
         </nav>
       </div>
     </div>
@@ -418,7 +418,7 @@ const llms = [
   "",
   "## Related",
   "",
-  "- [Battle for the Ford](https://ryanio.github.io/battle-for-the-ford/): a side project — a Roman battle in the browser, no dependencies.",
+  "- [Tidebreak](https://ryanio.github.io/tidebreak/): a side project — a Roman battle in the browser, no dependencies.",
   "",
 ].join("\n");
 writeFileSync(join(OUT, "llms.txt"), `${llms}\n`);

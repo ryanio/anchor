@@ -3,8 +3,12 @@
 **Make your wallet a part of your desktop, not another browser tab.**
 
 Anchor is an ambient OpenSea experience for [Omarchy](https://omarchy.org) — a wallet-aware Linux
-desktop. Your art becomes the theme. Your watchlist lives in the bar. Meaningful offers and auction
-deadlines become notifications. An agent can research and prepare, but never signs.
+desktop. Your art becomes the theme. Your positions and watchlist live in the bar. Meaningful offers,
+auction deadlines and price moves become notifications. An agent acts within limits it cannot change.
+
+**Both halves of OpenSea.** NFTs *and* fungible tokens. They are not the same product with different
+nouns — ownership, buying, time scale, risk and the right desktop surface all differ — so
+[docs/tokens.md](docs/tokens.md) sets out what changes for each.
 
 > **Status: early.** This is a scaffold and a plan, not a working product yet. The roadmap below is
 > the honest order of work. Issues and ideas welcome.
@@ -25,7 +29,9 @@ and it should feel excellent on accessible hardware you actually own, not a $3,0
 
 - A compact **Quickshell top-bar widget**: portfolio pulse, incoming offers, auction countdowns, activity count.
 - **Gallery and theme integration**: owned works rotate as wallpaper, with an optional palette extracted into the current Omarchy theme.
-- **Calm notifications**: sales, offers, transfers, watched auction deadlines. Low-volume by default, per-collection controls.
+- **Calm notifications**: sales, offers, transfers, watched auction deadlines, meaningful price moves.
+  Low-volume by default, per-collection controls, and thresholds relative to each asset's own
+  volatility — a 5% day for a collection and a 5% minute for a token are not the same event.
 - **Agent research briefs**: read-only summaries over local data, always cited and timestamped.
 
 And then the part that makes it more than a dashboard: **an agent that acts on your behalf**, holding a
@@ -63,7 +69,7 @@ These are not negotiable, and they shape the architecture:
 | `widget/` | Quickshell top-bar widget |
 | `theme/` | Gallery wallpaper and palette extraction |
 | `packaging/` | Arch packaging, targeting the `[omarchy]` repo |
-| `docs/` | Security model, autonomy and spend controls, roadmap |
+| `docs/` | Security model, autonomy and spend controls, NFTs vs tokens, roadmap |
 | `.node-version` | The Node version, for local `mise` and CI alike. Single source of truth |
 
 ## Installing
