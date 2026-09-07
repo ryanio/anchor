@@ -2,17 +2,18 @@
  * These test the promises the service makes, not its internals:
  * read-only, freshness in every envelope, and no crash when unconfigured.
  */
-import { test, describe, before, after } from "node:test";
+
 import assert from "node:assert/strict";
-import type { AddressInfo } from "node:net";
-import type { Server } from "node:http";
 import { mkdtempSync } from "node:fs";
+import type { Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createApp } from "./server.ts";
+import { after, before, describe, test } from "node:test";
 import { Cache } from "./cache.ts";
-import { OpenSeaClient } from "./opensea.ts";
 import type { Config } from "./config.ts";
+import { OpenSeaClient } from "./opensea.ts";
+import { createApp } from "./server.ts";
 
 const config: Config = {
   chain: "ethereum",

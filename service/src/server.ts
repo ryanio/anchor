@@ -7,9 +7,9 @@
  * data freshness rather than implying everything is live.
  */
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import type { Config } from "./config.ts";
-import { OpenSeaClient, MissingApiKeyError } from "./opensea.ts";
 import type { CacheEntry } from "./cache.ts";
+import type { Config } from "./config.ts";
+import { MissingApiKeyError, type OpenSeaClient } from "./opensea.ts";
 
 const HOST = "127.0.0.1";
 
@@ -72,36 +72,56 @@ export function createApp(config: Config, client: OpenSeaClient) {
       const path = url.pathname.replace(/\/+$/, "") || "/";
 
       if (path === "/health") {
-        send(res, 200, {
-          ok: true,
-          wallet: config.wallet || null,
-          chain: config.chain,
-          collections: config.collections,
-        }, headOnly);
+        send(
+          res,
+          200,
+          {
+            ok: true,
+            wallet: config.wallet || null,
+            chain: config.chain,
+            collections: config.collections,
+          },
+          headOnly,
+        );
         return;
       }
 
       if (!config.wallet && (path === "/portfolio" || path === "/activity")) {
-        send(res, 428, {
-          error: "No wallet configured. Set `wallet` in the config file.",
-          config: "~/.config/anchor/config.json",
-        }, headOnly);
+        send(
+          res,
+          428,
+          {
+            error: "No wallet configured. Set `wallet` in the config file.",
+            config: "~/.config/anchor/config.json",
+          },
+          headOnly,
+        );
         return;
       }
 
       if (path === "/portfolio") {
         const collection = url.searchParams.get("collection") ?? undefined;
-        send(res, 200, envelope(await client.nftsByAccount(config.wallet, config.ttl.nfts, { collection })), headOnly);
+        send(
+          res,
+          200,
+          envelope(await client.nftsByAccount(config.wallet, config.ttl.nfts, { collection })),
+          headOnly,
+        );
         return;
       }
 
       if (path === "/activity") {
         const types = url.searchParams.getAll("event_type");
-        send(res, 200, envelope(
-          await client.eventsByAccount(config.wallet, config.ttl.events, {
-            eventTypes: types.length ? types : undefined,
-          }),
-        ), headOnly);
+        send(
+          res,
+          200,
+          envelope(
+            await client.eventsByAccount(config.wallet, config.ttl.events, {
+              eventTypes: types.length ? types : undefined,
+            }),
+          ),
+          headOnly,
+        );
         return;
       }
 
@@ -141,11 +161,24 @@ export function createApp(config: Config, client: OpenSeaClient) {
         }
       }
 
-      send(res, 404, {
-        error: "Not found",
-        routes: ["/health", "/portfolio", "/activity", "/collections", "/collections/:slug",
-                 "/collections/:slug/stats", "/collections/:slug/listings", "/collections/:slug/offers"],
-      }, headOnly);
+      send(
+        res,
+        404,
+        {
+          error: "Not found",
+          routes: [
+            "/health",
+            "/portfolio",
+            "/activity",
+            "/collections",
+            "/collections/:slug",
+            "/collections/:slug/stats",
+            "/collections/:slug/listings",
+            "/collections/:slug/offers",
+          ],
+        },
+        headOnly,
+      );
     } catch (err) {
       if (err instanceof MissingApiKeyError) {
         send(res, 401, { error: err.message }, headOnly);

@@ -14,10 +14,10 @@
  * costs a few hundred bytes.
  */
 import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-import { writeFileSync, mkdirSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { createInterface } from "node:readline/promises";
+import { promisify } from "node:util";
 
 const run = promisify(execFile);
 const ATTRS = ["service", "anchor", "key", "xai-api-key"] as const;
@@ -41,10 +41,15 @@ async function setKey(): Promise<void> {
   const key = (await rl.question("")).trim();
   rl.close();
   process.stderr.write("\n");
-  if (!key) { console.error("Nothing entered."); process.exit(1); }
+  if (!key) {
+    console.error("Nothing entered.");
+    process.exit(1);
+  }
   const child = execFile("secret-tool", ["store", "--label=Anchor xAI API key", ...ATTRS]);
   child.stdin?.end(key);
-  await new Promise<void>((res, rej) => child.on("exit", (c) => (c === 0 ? res() : rej(new Error(`secret-tool exited ${c}`)))));
+  await new Promise<void>((res, rej) =>
+    child.on("exit", (c) => (c === 0 ? res() : rej(new Error(`secret-tool exited ${c}`)))),
+  );
   console.error("Stored in the OS keyring.");
 }
 
@@ -59,7 +64,7 @@ async function main(): Promise<void> {
   const prompt = arg("prompt");
   const out = arg("out");
   if (!prompt || !out) {
-    console.error("usage: generate-asset.ts --prompt \"...\" --out site/assets/name.jpg [--model ID]");
+    console.error('usage: generate-asset.ts --prompt "..." --out site/assets/name.jpg [--model ID]');
     process.exit(1);
   }
 
@@ -88,7 +93,10 @@ async function main(): Promise<void> {
 
   const body = (await res.json()) as { data?: Array<{ b64_json?: string; url?: string }> };
   const first = body.data?.[0];
-  if (!first) { console.error("No image in response."); process.exit(1); }
+  if (!first) {
+    console.error("No image in response.");
+    process.exit(1);
+  }
 
   const bytes = first.b64_json
     ? Buffer.from(first.b64_json, "base64")

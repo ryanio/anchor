@@ -6,14 +6,10 @@
  * purpose: that request is built inline, once, in the test that proves it is refused (AGENTS.md
  * invariant 3 — never in a fixture that could be copy-pasted into production).
  */
-import { address, money, type Address, type Money } from "./types.ts";
+
 import type { PolicyLimits } from "./policy.ts";
-import type {
-  AcceptOfferRequest,
-  BuyRequest,
-  CancelOwnListingRequest,
-  TransferRequest,
-} from "./types.ts";
+import type { AcceptOfferRequest, BuyRequest, CancelOwnListingRequest, TransferRequest } from "./types.ts";
+import { type Address, address, type Money, money } from "./types.ts";
 
 /** Obviously-fake, well-formed addresses. */
 const fake = (label: string): Address => address(`0x${label.padEnd(40, "0")}`);

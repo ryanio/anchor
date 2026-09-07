@@ -1,8 +1,8 @@
-import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { describe, test } from "node:test";
 import { Cache } from "./cache.ts";
 
 function tempCache(): Cache {

@@ -34,9 +34,7 @@ export async function setApiKey(value: string): Promise<void> {
   child.stdin?.end(value);
   await new Promise<void>((resolve, reject) => {
     child.on("error", reject);
-    child.on("exit", (code) =>
-      code === 0 ? resolve() : reject(new Error(`secret-tool exited ${code}`)),
-    );
+    child.on("exit", (code) => (code === 0 ? resolve() : reject(new Error(`secret-tool exited ${code}`))));
   });
 }
 

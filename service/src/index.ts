@@ -6,11 +6,11 @@
  *   anchor-service --set-api-key   store the OpenSea API key in the OS keyring
  */
 import { createInterface } from "node:readline/promises";
-import { loadConfig, configPath } from "./config.ts";
 import { Cache } from "./cache.ts";
+import { configPath, loadConfig } from "./config.ts";
+import { getApiKey, keyringAvailable, setApiKey } from "./keyring.ts";
 import { OpenSeaClient } from "./opensea.ts";
 import { createApp, HOST } from "./server.ts";
-import { setApiKey, getApiKey, keyringAvailable } from "./keyring.ts";
 
 async function promptForApiKey(): Promise<void> {
   if (!(await keyringAvailable())) {
@@ -20,7 +20,9 @@ async function promptForApiKey(): Promise<void> {
   // Do not echo: setApiKey goes to lengths to keep the key out of argv, and echoing it into
   // scrollback (and any terminal recording) would undo that.
   const rl = createInterface({ input: process.stdin, output: process.stderr, terminal: true });
-  const onKeypress = () => { /* suppressed while typing the secret */ };
+  const onKeypress = () => {
+    /* suppressed while typing the secret */
+  };
   const prompt = "OpenSea API key: ";
   process.stderr.write(prompt);
   (rl as unknown as { _writeToOutput: (s: string) => void })._writeToOutput = onKeypress;

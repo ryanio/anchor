@@ -4,9 +4,10 @@
  * Deliberately contains no secrets — the OpenSea API key lives in the OS keyring (see keyring.ts).
  * A config file that is safe to paste into an issue is a feature.
  */
+
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 
 export interface Config {
   /** Chain to query. See OpenSea's supported chain list; `ethereum` is the default. */
@@ -49,7 +50,7 @@ export function loadConfig(): Config {
   const path = configPath();
   if (!existsSync(path)) {
     mkdirSync(configDir(), { recursive: true });
-    writeFileSync(path, JSON.stringify(DEFAULTS, null, 2) + "\n", { mode: 0o644 });
+    writeFileSync(path, `${JSON.stringify(DEFAULTS, null, 2)}\n`, { mode: 0o644 });
     return { ...DEFAULTS };
   }
   let parsed: Partial<Config>;
@@ -80,8 +81,10 @@ export function validate(parsed: Partial<Config>): Config {
     return v;
   };
 
-  if (parsed.collections !== undefined &&
-      (!Array.isArray(parsed.collections) || parsed.collections.some((c) => typeof c !== "string"))) {
+  if (
+    parsed.collections !== undefined &&
+    (!Array.isArray(parsed.collections) || parsed.collections.some((c) => typeof c !== "string"))
+  ) {
     throw new Error("config: `collections` must be an array of strings");
   }
 

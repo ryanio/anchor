@@ -7,15 +7,16 @@
  * removes the witness from `ApprovedAction` — making self-approval possible again — `npm run
  * typecheck` fails. The invariant is enforced by CI rather than by a comment asking nicely.
  */
-import { test, describe } from "node:test";
+
 import assert from "node:assert/strict";
+import { describe, test } from "node:test";
 import {
+  type ApprovedAction,
   allow,
   deny,
   isMintedApproval,
   isUsableApproval,
   mintApproval,
-  type ApprovedAction,
 } from "./decision.ts";
 import { buy, usd } from "./fixtures.ts";
 
