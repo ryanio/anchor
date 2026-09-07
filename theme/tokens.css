@@ -1,5 +1,8 @@
 /*
- * Anchor design tokens — one layer, reused by the site and anything else in the project.
+ * Anchor design tokens — the single source of truth for the palette across this project.
+ *
+ * Used by: the site at anchor.ryanio.com, and the standalone reference pages in ~/Documents, which
+ * are synced with `node scripts/apply-theme.ts <files>` rather than keeping their own copies.
  *
  * Import it and use the semantic names. Never a raw hex in a component.
  *
