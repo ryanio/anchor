@@ -27,3 +27,15 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
+
+  site:
+    name: site — build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      # Without this, a PR touching site/ merged green and deploy.yml failed after the fact —
+      # the site would silently stop updating with no signal on the PR.
+      - run: node site/build.ts

@@ -17,9 +17,16 @@ async function promptForApiKey(): Promise<void> {
     console.error("secret-tool not found. Install libsecret and try again.");
     process.exit(1);
   }
-  const rl = createInterface({ input: process.stdin, output: process.stderr });
-  const key = (await rl.question("OpenSea API key: ")).trim();
+  // Do not echo: setApiKey goes to lengths to keep the key out of argv, and echoing it into
+  // scrollback (and any terminal recording) would undo that.
+  const rl = createInterface({ input: process.stdin, output: process.stderr, terminal: true });
+  const onKeypress = () => { /* suppressed while typing the secret */ };
+  const prompt = "OpenSea API key: ";
+  process.stderr.write(prompt);
+  (rl as unknown as { _writeToOutput: (s: string) => void })._writeToOutput = onKeypress;
+  const key = (await rl.question("")).trim();
   rl.close();
+  process.stderr.write("\n");
   if (!key) {
     console.error("Nothing entered; no change made.");
     process.exit(1);
@@ -55,10 +62,18 @@ async function main(): Promise<void> {
   });
 
   const shutdown = () => {
+    // close() alone waits for idle sockets; a polling widget holding keep-alive means the callback
+    // never fires and systemd eventually SIGKILLs us with the cache unclosed.
     server.close(() => {
       cache.close();
       process.exit(0);
     });
+    server.closeIdleConnections();
+    setTimeout(() => {
+      server.closeAllConnections();
+      cache.close();
+      process.exit(0);
+    }, 5000).unref();
   };
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);

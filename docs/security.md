@@ -28,6 +28,10 @@ and the named residual risks — is in [autonomy.md](autonomy.md).
 - Store tokens in the **OS keyring**. Never in a config file, a theme file, an environment file that
   gets committed, or an agent prompt.
 - `.env` is gitignored and must stay that way.
+- One documented exception: `ANCHOR_OPENSEA_API_KEY` is read from the environment for CI and
+  development. A process environment is readable at `/proc/<pid>/environ` and is inherited by child
+  processes, so it is strictly weaker than the keyring. The keyring is the supported path for real
+  use; this is named here so the list above is exhaustive rather than aspirational.
 
 ## Data
 
