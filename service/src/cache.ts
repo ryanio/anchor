@@ -48,7 +48,8 @@ export class Cache {
       data: JSON.parse(row.body) as T,
       fetchedAt: row.fetched_at,
       ageSeconds,
-      stale: ageSeconds > row.ttl,
+      // >= not >: a ttl of N means fresh for N seconds, and a ttl of 0 is immediately stale.
+      stale: ageSeconds >= row.ttl,
     };
   }
 

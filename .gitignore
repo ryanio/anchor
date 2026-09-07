@@ -36,3 +36,6 @@ packaging/pkg/
 *.swp
 .idea/
 .vscode/
+
+# site build output
+site/dist/

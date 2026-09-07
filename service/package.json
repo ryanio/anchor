@@ -13,7 +13,8 @@
   "scripts": {
     "start": "node src/index.ts",
     "set-api-key": "node src/index.ts --set-api-key",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --test src/"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
