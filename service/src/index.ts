@@ -10,7 +10,7 @@ import { readSecret } from "../../scripts/read-secret.ts";
 import { WalletTokenProvider } from "./auth.ts";
 import { Cache } from "./cache.ts";
 import { configPath, loadConfig } from "./config.ts";
-import { getApiKey, getPat, keyringAvailable, setApiKey, setPat } from "./keyring.ts";
+import { getApiKey, getPat, keyringAvailable, looksLikeCredential, setApiKey, setPat } from "./keyring.ts";
 import { OpenSeaClient } from "./opensea.ts";
 import { createApp, HOST } from "./server.ts";
 
@@ -26,6 +26,19 @@ async function promptForSecret(which: "apiKey" | "pat"): Promise<void> {
   const value = await readSecret(prompt);
   if (!value) {
     console.error("Nothing entered; no change made.");
+    process.exit(1);
+  }
+  // A credential is one opaque token: no spaces, no control characters. Anything else is not a
+  // secret that arrived, it is a line that arrived — and storing it would report success while
+  // leaving the real credential unset. This has happened: running the command through a wrapper
+  // that gives it a non-TTY stdin fed the reader its own command line, which was then stored,
+  // and `/health` reported the PAT present until the first 401 said otherwise.
+  if (!looksLikeCredential(value)) {
+    console.error(
+      "That does not look like a credential — it contains whitespace or control characters.\n" +
+        "Nothing was stored. If you piped the value in, check that only the token reached stdin:\n" +
+        `  read -rs -p "token: " T && printf '%s' "$T" | anchor-service ${which === "apiKey" ? "--set-api-key" : "--set-pat"} && unset T`,
+    );
     process.exit(1);
   }
   await (which === "apiKey" ? setApiKey(value) : setPat(value));

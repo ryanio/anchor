@@ -356,7 +356,10 @@ for (const dir of ["brand", "assets"]) {
 const entries = readdirSync(join(ROOT, "diary"))
   .filter((f) => f.endsWith(".md"))
   .map(parseEntry)
-  .sort((a, b) => b.date.localeCompare(a.date));
+  // Newest first. Date alone is not a total order — two entries can land on the same day, and a
+  // stable sort would then leave them in readdir order, i.e. oldest at the top of the page. The
+  // numeric slug prefix is the real sequence, so it breaks the tie.
+  .sort((a, b) => b.date.localeCompare(a.date) || b.slug.localeCompare(a.slug));
 
 for (const e of entries) {
   writeFileSync(
