@@ -9,6 +9,7 @@
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { icon } from "./icons.ts";
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const OUT = join(ROOT, "dist");
@@ -209,6 +210,8 @@ function parseEntry(file: string): Entry {
 }
 
 // ── layout ─────────────────────────────────────────────────────────────────
+// The token layer is shared with the rest of the project; the site stylesheet builds on it.
+const TOKENS = readFileSync(join(ROOT, "..", "theme", "tokens.css"), "utf8");
 const CSS = readFileSync(join(ROOT, "style.css"), "utf8");
 
 /**
@@ -231,35 +234,73 @@ function page(title: string, body: string, opts: { subtitle?: string } = {}): st
 <link rel="icon" href="/brand/favicon.svg" type="image/svg+xml">
 <link rel="mask-icon" href="/brand/anchor.svg" color="#b4531f">
 <meta name="description" content="Anchor — make your wallet a part of your desktop, not another browser tab.">
-<style>${CSS}</style>
+<meta property="og:title" content="${esc(title)}">
+<meta property="og:description" content="An ambient OpenSea experience for Omarchy. Built in the open — dead ends included.">
+<meta property="og:image" content="https://anchor.ryanio.com/assets/og.jpg">
+<meta property="og:url" content="https://anchor.ryanio.com/">
+<meta property="og:type" content="website">
+<meta name="twitter:card" content="summary_large_image">
+<style>${TOKENS}
+${CSS}</style>
 </head>
-<body>
+<body class="ambient">
+<div class="hero-wash" aria-hidden="true"></div>
 <div class="wrap">
-  <header>
+  <header class="glass">
     <a class="brand" href="/">${MARK}<span>Anchor</span></a>
     <nav>
-      <a href="/">Diary</a>
-      <a href="/changelog.html">Changelog</a>
-      <a href="https://github.com/ryanio/anchor">Source</a>
+      <a href="/">${icon("book-open", 16)}<span>Diary</span></a>
+      <a href="/changelog.html">${icon("scroll-text", 16)}<span>Changelog</span></a>
+      <a href="https://ryanio.github.io/battle-for-the-ford/">${icon("gamepad-2", 16)}<span>Battle</span></a>
+      <a href="https://github.com/ryanio/anchor">${icon("github", 15)}<span>Source</span></a>
     </nav>
   </header>
   ${opts.subtitle ? `<p class="tagline">${opts.subtitle}</p>` : ""}
   <main>${body}</main>
-  <footer>
+  <footer class="glass">
     Built in the open on <a href="https://omarchy.org">Omarchy</a> ·
-    <a href="https://github.com/ryanio/anchor">github.com/ryanio/anchor</a> · MIT
+    <a href="https://github.com/ryanio/anchor">github.com/ryanio/anchor ${icon("arrow-up-right", 13)}</a> · MIT
   </footer>
 </div>
 </body>
 </html>`;
 }
 
+/**
+ * Next-entry countdown. The diary runs on a nightly scheduler at 21:00; this counts down to it and
+ * says so plainly when today's entry has landed. The job deliberately skips days that produced
+ * nothing worth reading, so "no entry tonight" is an honest state, not a failure.
+ */
+const COUNTDOWN_JS = `<script>
+(function () {
+  var el = document.getElementById("countdown-text");
+  var box = document.querySelector(".countdown");
+  if (!el || !box) return;
+  var latest = box.getAttribute("data-latest");
+  function tick() {
+    var now = new Date();
+    var next = new Date(now); next.setHours(21, 0, 0, 0);
+    if (next <= now) next.setDate(next.getDate() + 1);
+    if (latest === now.toISOString().slice(0, 10)) {
+      el.innerHTML = "Today's entry is up. Next window <b>tomorrow, 21:00</b>.";
+      return;
+    }
+    var ms = next - now;
+    var h = Math.floor(ms / 3.6e6), m = Math.floor((ms % 3.6e6) / 6e4), sec = Math.floor((ms % 6e4) / 1000);
+    el.innerHTML = "Next entry in <b>" + h + "h " + m + "m" + (h === 0 ? " " + sec + "s" : "") +
+      "</b> <span class='skip'>— skipped if nothing worth reading happened</span>";
+  }
+  tick();
+  setInterval(tick, 1000);
+})();
+</script>`;
+
 // ── build ──────────────────────────────────────────────────────────────────
 rmSync(OUT, { recursive: true, force: true });
 mkdirSync(join(OUT, "diary"), { recursive: true });
 
 // Static assets ship as-is.
-for (const dir of ["brand"]) {
+for (const dir of ["brand", "assets"]) {
   if (existsSync(join(ROOT, dir))) cpSync(join(ROOT, dir), join(OUT, dir), { recursive: true });
 }
 
@@ -281,16 +322,22 @@ for (const e of entries) {
 const index = entries
   .map(
     (e) =>
-      `<li><a href="/diary/${e.slug}.html"><span class="entry-date">${esc(e.date)}</span><span class="entry-title">${esc(e.title)}</span><span class="entry-summary">${esc(e.summary)}</span></a></li>`,
+      `<li><a class="glass" href="/diary/${e.slug}.html"><span class="entry-date">${esc(e.date)}</span><span class="entry-title">${esc(e.title)}</span><span class="entry-summary">${esc(e.summary)}</span></a></li>`,
   )
   .join("");
 
+const latest = entries[0];
+const hero = `<div class="hero">
+  <h1>Make your wallet a part of your desktop, not another browser tab.</h1>
+  <p class="tagline">An ambient OpenSea experience for Omarchy. Built in the open — dead ends included.</p>
+</div>
+<div class="countdown glass" data-latest="${latest?.date ?? ""}">
+  ${icon("clock", 16)}<span id="countdown-text">Next entry: nightly at 21:00</span>
+</div>`;
+
 writeFileSync(
   join(OUT, "index.html"),
-  page("Anchor — build diary", `<ul class="entries">${index}</ul>`, {
-    subtitle:
-      "Make your wallet a part of your desktop, not another browser tab. Built in the open — dead ends included.",
-  }),
+  page("Anchor — build diary", `${hero}<ul class="entries">${index}</ul>${COUNTDOWN_JS}`),
 );
 
 writeFileSync(
@@ -300,5 +347,32 @@ writeFileSync(
     `<article>${markdown(readFileSync(join(ROOT, "..", "CHANGELOG.md"), "utf8"))}</article>`,
   ),
 );
+
+// llms.txt — a plain-text map of the site for language models (llmstxt.org).
+const llms = [
+  "# Anchor",
+  "",
+  "> An ambient OpenSea experience for Omarchy: a wallet-aware Linux desktop. Your art becomes the",
+  "> theme, your watchlist lives in the bar, and an agent can act within spend controls it cannot",
+  "> change. Built in the open at github.com/ryanio/anchor (MIT).",
+  "",
+  "## Build diary",
+  "",
+  ...entries.map((e) => `- [${e.title}](https://anchor.ryanio.com/diary/${e.slug}.html): ${e.summary}`),
+  "",
+  "## Project",
+  "",
+  "- [Changelog](https://anchor.ryanio.com/changelog.html): what shipped, and what broke.",
+  "- [Source](https://github.com/ryanio/anchor): the repository.",
+  "- [Working agreement](https://github.com/ryanio/anchor/blob/main/AGENTS.md): invariants, definition of done, what needs a human.",
+  "- [Autonomy model](https://github.com/ryanio/anchor/blob/main/docs/autonomy.md): how an agent holds a real balance under spend controls enforced outside it.",
+  "- [Security model](https://github.com/ryanio/anchor/blob/main/docs/security.md): keys, policy, and the withdrawal allowlist.",
+  "",
+  "## Related",
+  "",
+  "- [Battle for the Ford](https://ryanio.github.io/battle-for-the-ford/): a side project — a Roman battle in the browser, no dependencies.",
+  "",
+].join("\n");
+writeFileSync(join(OUT, "llms.txt"), `${llms}\n`);
 
 console.log(`built ${entries.length} entries -> ${OUT}`);
