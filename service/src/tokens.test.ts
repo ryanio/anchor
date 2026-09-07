@@ -179,15 +179,31 @@ describe("chains reach the endpoints that take them", () => {
   });
 });
 
-describe("the second credential", () => {
-  test("a wallet-scoped route without a PAT is a 401 naming the fix, with no upstream call", async () => {
+describe("the wallet token", () => {
+  // Regression. These routes used to be refused up front when no PAT was stored, on the strength of
+  // a measurement taken with a credential that was really a shell command, against a control
+  // endpoint that turns out to be public. With a real API key they all return 200. A missing PAT
+  // must never block a read again.
+  test("every read works with the API key alone, and no PAT", async () => {
     const r = await open({ pat: null });
-    const res = await fetch(`${r.base}/balances`);
-    assert.equal(res.status, 401);
-    const { error } = await json<{ error: string }>(res);
-    assert.match(error, /--set-pat/);
-    assert.match(error, /\/balances/);
-    assert.equal(r.calls.length, 0, "a missing credential must be caught before the network");
+    for (const path of ["/balances", "/portfolio/value", "/tokens/trending", "/portfolio"]) {
+      const res = await fetch(`${r.base}${path}`);
+      assert.equal(res.status, 200, `${path} must not require a PAT`);
+    }
+    assert.ok(r.calls.length > 0, "the reads reach upstream rather than being refused locally");
+    for (const call of r.calls.filter((c) => c.method === "GET")) {
+      assert.equal(call.headers["x-api-key"], API_KEY);
+      assert.equal(call.headers.authorization, undefined, "no PAT stored means no bearer token");
+    }
+  });
+
+  test("no read mentions --set-pat, since none of them needs one", async () => {
+    const r = await open({ pat: null });
+    for (const path of ["/balances", "/portfolio/value", "/tokens/trending"]) {
+      const res = await fetch(`${r.base}${path}`);
+      const body = await res.text();
+      assert.equal(body.includes("--set-pat"), false, `${path} must not suggest a PAT`);
+    }
   });
 
   test("the JWT is minted once and reused across calls", async () => {

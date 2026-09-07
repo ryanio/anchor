@@ -110,6 +110,19 @@ text is discarded.
 **When it's fixed.** Add the retry ladder. Note that this is the one entry where the workaround is an
 absence — easy to forget precisely because there is no code to find.
 
+## 7. `/account/{address}/portfolio` 500s on the obvious call
+
+**Upstream problem.** A live server bug, not a package one. The bare route returns
+`500 {"errors":["Internal Server Error"]}` for a large account, and `200` for that same account the
+moment any query parameter is supplied, and `200` for a smaller account with no parameters. Fine
+when filtered, fine when small, fails when large and unfiltered.
+
+**What we wrote.** Nothing yet. Note that finding 5 compounds it: `PortfolioArgs` does not expose
+`chains`, so an SDK consumer cannot easily send the parameter that makes the call succeed.
+
+**When it's fixed.** Nothing to delete. If it persists, the workaround is to always send a
+parameter, and that belongs here as its own entry when we write it.
+
 ---
 
 ## Reporting
