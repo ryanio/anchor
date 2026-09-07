@@ -10,20 +10,15 @@ import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
+import { WalletTokenProvider } from "./auth.ts";
 import { Cache } from "./cache.ts";
-import { type Config, validate } from "./config.ts";
+import { validate } from "./config.ts";
+import { testConfig } from "./fixtures.ts";
 import { keyringAvailable } from "./keyring.ts";
 import { OpenSeaClient } from "./opensea.ts";
 import { createApp } from "./server.ts";
 
-const config: Config = {
-  chain: "ethereum",
-  wallet: "",
-  collections: [],
-  port: 0,
-  ttl: { nfts: 300, events: 60, stats: 120, listings: 120, offers: 60 },
-  requestsPerSecond: 2,
-};
+const config = testConfig();
 
 function tmpDb(): string {
   return join(mkdtempSync(join(tmpdir(), "anchor-h-")), "c.sqlite");
@@ -34,7 +29,12 @@ let port: number;
 
 before(async () => {
   const cache = new Cache(tmpDb());
-  const client = new OpenSeaClient({ chain: "ethereum", requestsPerSecond: 100, cache });
+  const client = new OpenSeaClient({
+    chains: config.chains,
+    requestsPerSecond: 100,
+    cache,
+    walletToken: new WalletTokenProvider(),
+  });
   server = createApp(config, client);
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   port = (server.address() as AddressInfo).port;
@@ -149,10 +149,17 @@ describe("config validation", () => {
   });
 
   test("valid config passes through with defaults filled in", () => {
-    const c = validate({ wallet: "0xabc" });
-    assert.equal(c.wallet, "0xabc");
+    const wallet = "0x1E0049783F008A0085193E00003D00cd54003c71";
+    const c = validate({ wallet });
+    assert.equal(c.wallet, wallet);
+    assert.deepEqual(c.chains, ["ethereum"]);
     assert.equal(c.requestsPerSecond, 2);
     assert.equal(c.ttl.nfts, 300);
+  });
+
+  test("a truncated wallet is refused at load rather than 400ing at the first call", () => {
+    // `"0xabc"` used to be accepted, and only OpenSea knew it was wrong. See chains.test.ts.
+    assert.throws(() => validate({ wallet: "0xabc" }), /`wallet`/);
   });
 });
 

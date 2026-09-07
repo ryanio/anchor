@@ -10,9 +10,44 @@ has the facts.
 ## [Unreleased]
 
 ### Added
+- **The data service is built on `@opensea/sdk` and `@opensea/api-types`.** The SDK makes every
+  OpenSea call and the generated types replace `unknown` everywhere. Anchor keeps the parts the SDK
+  does not provide — one shared cache, one shared outbound rate limit, the freshness envelope, and
+  errors that are built from a status code rather than from a remote body.
+- **Chains are configuration.** `chains` is a list validated against OpenSea's own chain union
+  (29 slugs, Solana included), and a Solana-only setup is as ordinary as an EVM one. The list is
+  derived from the SDK at runtime rather than copied, and a compile-time check fails if the SDK enum
+  and the generated types ever disagree. A single `"chain": "base"` string is still accepted and read
+  as a one-element list; setting both is refused.
+- **Address validation is chain-aware.** EVM is `0x` plus 40 hex; Solana is base58 decoding to
+  exactly 32 bytes. Wallet and token addresses are checked against the configured chains at config
+  load, so a mismatch is a startup error naming the field rather than a 400 at the first API call.
+- **The token half of the API**, chain-aware throughout: `/portfolio/value`, `/balances`,
+  `/tokens`, `/tokens/trending`, `/tokens/top`, `/tokens/:address`, `/tokens/:address/price_history`.
+  Endpoints that take a `chains` list get every configured chain; endpoints whose path carries one
+  chain use the first, and `/health` reports which that is.
+- **A second credential.** Account-scoped OpenSea reads need a wallet JWT in addition to the API key
+  — measured, not assumed. `anchor-service --set-pat` stores a personal access token in the keyring,
+  which is exchanged for a JWT and refreshed before it expires. Without one, account routes fail with
+  a message naming the missing credential before any network call rather than passing a bare 401
+  through. `/health` and a startup line report which credentials are present.
+- `docs/chains.md` — what is free about a new chain on the data side, and where chains genuinely
+  diverge: Seaport order construction is EVM-only and the SDK refuses Solana outright, while
+  `/swap/execute` returns Solana instructions in the same response shape as EVM calldata. Names the
+  Solana hazards that replace `setApprovalForAll` — SPL delegate authority, `SetAuthority`, and
+  upgradeable programs — and flags what is documented rather than verified.
 - `site/links.ts` — every external URL in one place. Renaming the game repository broke four links at
   once, because GitHub redirects repository URLs but not GitHub Pages; one constant makes the next
   rename a single edit.
+
+### Fixed
+- Every OpenSea endpoint path in `docs/tokens.md` was wrong. `token_balances_by_account`,
+  `token_price_history` and `swap_quote` are not endpoints; the real ones are
+  `/account/{address}/tokens`, `/chain/{chain}/token/{address}/price_history` and `/swap/quote`.
+  They now come from the generated OpenAPI types instead of from memory.
+- Untrusted path segments are percent-encoded before they reach the SDK. `@opensea/sdk` builds paths
+  with template literals and no encoding, so a collection slug of `../../events/accounts/0xdead`
+  retargeted the request at a different endpoint and collided its cache key. Worth fixing upstream.
 
 ### Changed
 - The counterpoint accent is `--ember`, not `--coral`. The name collided with another project.

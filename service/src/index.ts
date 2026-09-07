@@ -4,50 +4,83 @@
  *
  *   anchor-service                 start the local API
  *   anchor-service --set-api-key   store the OpenSea API key in the OS keyring
+ *   anchor-service --set-pat       store the OpenSea PAT, used to mint wallet tokens (auth.ts)
  */
 import { readSecret } from "../../scripts/read-secret.ts";
+import { WalletTokenProvider } from "./auth.ts";
 import { Cache } from "./cache.ts";
 import { configPath, loadConfig } from "./config.ts";
-import { getApiKey, keyringAvailable, setApiKey } from "./keyring.ts";
+import { getApiKey, getPat, keyringAvailable, setApiKey, setPat } from "./keyring.ts";
 import { OpenSeaClient } from "./opensea.ts";
 import { createApp, HOST } from "./server.ts";
 
-async function promptForApiKey(): Promise<void> {
+/** `/health` may be polled once a second; spawning secret-tool that often is not free. */
+const CREDENTIAL_CACHE_MS = 30_000;
+
+async function promptForSecret(which: "apiKey" | "pat"): Promise<void> {
   if (!(await keyringAvailable())) {
     console.error("secret-tool not found. Install libsecret and try again.");
     process.exit(1);
   }
-  const key = await readSecret("OpenSea API key: ");
-  if (!key) {
+  const prompt = which === "apiKey" ? "OpenSea API key: " : "OpenSea personal access token: ";
+  const value = await readSecret(prompt);
+  if (!value) {
     console.error("Nothing entered; no change made.");
     process.exit(1);
   }
-  await setApiKey(key);
+  await (which === "apiKey" ? setApiKey(value) : setPat(value));
   console.error("Stored in the OS keyring.");
+}
+
+function memoize<T>(fn: () => Promise<T>, ms: number): () => Promise<T> {
+  let at = 0;
+  let value: Promise<T> | null = null;
+  return () => {
+    if (value === null || Date.now() - at > ms) {
+      at = Date.now();
+      value = fn();
+    }
+    return value;
+  };
 }
 
 async function main(): Promise<void> {
   if (process.argv.includes("--set-api-key")) {
-    await promptForApiKey();
+    await promptForSecret("apiKey");
+    return;
+  }
+  if (process.argv.includes("--set-pat")) {
+    await promptForSecret("pat");
     return;
   }
 
   const config = loadConfig();
   const cache = new Cache();
+  const walletToken = new WalletTokenProvider({ getPat });
   const client = new OpenSeaClient({
-    chain: config.chain,
+    chains: config.chains,
     requestsPerSecond: config.requestsPerSecond,
     cache,
+    walletToken,
   });
 
-  if (!(await getApiKey())) {
-    console.error("Warning: no OpenSea API key found. Run `anchor-service --set-api-key`.");
-  }
+  const credentials = memoize(
+    async () => ({ apiKey: (await getApiKey()) !== null, pat: (await getPat()) !== null }),
+    CREDENTIAL_CACHE_MS,
+  );
+
+  // One line answering "why is everything 401" without reading any code.
+  const present = await credentials();
+  console.error(
+    `anchor-service credentials: api key ${present.apiKey ? "present" : "MISSING (--set-api-key)"}, ` +
+      `wallet PAT ${present.pat ? "present" : "MISSING (--set-pat; account routes will refuse)"}`,
+  );
+  console.error(`anchor-service chains: ${config.chains.join(", ")} (path-scoped reads use the first)`);
   if (!config.wallet) {
     console.error(`Warning: no wallet set. Edit ${configPath()}`);
   }
 
-  const server = createApp(config, client);
+  const server = createApp(config, client, { credentials });
   server.listen(config.port, HOST, () => {
     console.error(`anchor-service listening on http://${HOST}:${config.port}`);
   });

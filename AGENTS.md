@@ -48,8 +48,11 @@ A change is done when all of these hold. Not before:
   be several PRs.
 - **Conventional commit subjects**, imperative mood, explaining *why* in the body. The diff shows what.
 - **Never force-push `main`.** Never rewrite published history.
-- Prefer the standard library. Every dependency is a supply-chain risk and a packaging cost — the data
-  service has zero runtime dependencies on purpose, and that is a feature worth defending.
+- Prefer the standard library, and prefer **OpenSea's own packages** over a hand-rolled copy of its
+  API. Every other dependency is a supply-chain risk and a packaging cost. The data service depends on
+  `@opensea/sdk` and `@opensea/api-types` and nothing else at runtime; the executor still has zero.
+  Hand-writing a client for someone else's evolving API is not thrift, it is a slow bug — every
+  endpoint path in `docs/tokens.md` was wrong until the generated types replaced them.
 
 ## Ask a human first
 

@@ -4,25 +4,15 @@
  */
 
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
-import { Cache } from "./cache.ts";
-import type { Config } from "./config.ts";
+import { WalletTokenProvider } from "./auth.ts";
+import { tempCache, testConfig } from "./fixtures.ts";
 import { OpenSeaClient } from "./opensea.ts";
 import { createApp } from "./server.ts";
 
-const config: Config = {
-  chain: "ethereum",
-  wallet: "",
-  collections: [],
-  port: 0,
-  ttl: { nfts: 300, events: 60, stats: 120, listings: 120, offers: 60 },
-  requestsPerSecond: 2,
-};
+const config = testConfig({ chains: ["ethereum", "solana"] });
 
 let server: Server;
 let base: string;
@@ -33,9 +23,15 @@ async function json<T>(res: Response): Promise<T> {
 }
 
 before(async () => {
-  const cache = new Cache(join(mkdtempSync(join(tmpdir(), "anchor-srv-")), "c.sqlite"));
-  const client = new OpenSeaClient({ chain: config.chain, requestsPerSecond: 100, cache });
-  server = createApp(config, client);
+  const client = new OpenSeaClient({
+    chains: config.chains,
+    requestsPerSecond: 100,
+    cache: tempCache(),
+    walletToken: new WalletTokenProvider(),
+  });
+  server = createApp(config, client, {
+    credentials: async () => ({ apiKey: true, pat: false }),
+  });
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 });
@@ -58,9 +54,18 @@ describe("read-only gate", () => {
 
 describe("routing", () => {
   test("/health reports config without touching the network", async () => {
-    const body = await json<{ ok: boolean; chain: string }>(await fetch(`${base}/health`));
+    const body = await json<{
+      ok: boolean;
+      chains: string[];
+      primaryChain: string;
+      credentials: { apiKey: boolean; pat: boolean };
+    }>(await fetch(`${base}/health`));
     assert.equal(body.ok, true);
-    assert.equal(body.chain, "ethereum");
+    assert.deepEqual(body.chains, ["ethereum", "solana"]);
+    // Path-scoped endpoints take one chain; /health says which, so nobody has to guess.
+    assert.equal(body.primaryChain, "ethereum");
+    // Answers "why is everything 401" in one glance.
+    assert.deepEqual(body.credentials, { apiKey: true, pat: false });
   });
 
   test("unknown routes 404 with the route list", async () => {

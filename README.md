@@ -10,6 +10,11 @@ auction deadlines and price moves become notifications. An agent acts within lim
 nouns — ownership, buying, time scale, risk and the right desktop surface all differ — so
 [docs/tokens.md](docs/tokens.md) sets out what changes for each.
 
+**Every chain, not just Ethereum.** Chains are configuration, not an assumption: `chains` is a list
+validated against OpenSea's own chain union, Solana included, and a Solana-only setup is as ordinary
+as an EVM one. [docs/chains.md](docs/chains.md) covers what that costs — almost nothing on the data
+side, rather more once something signs.
+
 > **Status: early.** This is a scaffold and a plan, not a working product yet. The roadmap below is
 > the honest order of work. Issues and ideas welcome.
 
@@ -48,13 +53,15 @@ These are not negotiable, and they shape the architecture:
 - Withdrawals go only to pre-registered addresses; changing that list is a human action with a time-lock.
 - Token approvals are a separate, human-only action class. They are never delegated.
 - Least-privilege scoped tokens only, stored in the OS keyring — never in a theme file or a prompt.
+- Use OpenSea's own packages rather than hand-rolled copies of its API. The platform moves; a
+  hand-written client rots and lies about it.
 - Cache locally and make data freshness visible.
 - Treat floor prices, mint eligibility, and social signals as hints, not facts.
 - Every visual customization is easy to undo.
 
 ## Roadmap
 
-1. **Local read-only data service** — wallet, selected collections, cached activity, polling limits, token storage.
+1. **Local read-only data service** — wallet, selected collections, watched tokens, cached activity, polling limits, token storage. Built on `@opensea/sdk` and `@opensea/api-types`.
 2. **Quickshell widget** — one wallet, one portfolio summary, a selected collection list.
 3. **Gallery / theme integration** — display art, apply a reversible palette.
 4. **Notification policy** — defaults that avoid spam, with per-collection controls.
@@ -69,7 +76,7 @@ These are not negotiable, and they shape the architecture:
 | `widget/` | Quickshell top-bar widget |
 | `theme/` | Gallery wallpaper and palette extraction |
 | `packaging/` | Arch packaging, targeting the `[omarchy]` repo |
-| `docs/` | Security model, autonomy and spend controls, NFTs vs tokens, roadmap |
+| `docs/` | Security model, autonomy and spend controls, NFTs vs tokens, chains, roadmap |
 | `.node-version` | The Node version, for local `mise` and CI alike. Single source of truth |
 
 ## Installing

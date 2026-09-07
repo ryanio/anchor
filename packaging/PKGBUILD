@@ -22,4 +22,9 @@ package() {
   install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
   install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
   # TODO: install service/, widget/, theme/ once they exist.
+  #
+  # The service is no longer dependency-free: it needs @opensea/sdk and @opensea/api-types at
+  # runtime (and their transitive deps — ethers, seaport-js, @noble/hashes). Packaging therefore
+  # needs `npm ci --omit=dev --prefix service` at build time and the resulting node_modules
+  # installed alongside the source, or those packages vendored. The executor still has none.
 }
