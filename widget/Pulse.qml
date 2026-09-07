@@ -133,6 +133,15 @@ Panel {
     collectionsRead.refresh()
   }
 
+  /** `refreshAll` on every instance of this widget — one per monitor. See the IPC handler below. */
+  function refreshEveryBar() {
+    const items = root.bar && typeof root.bar.moduleWidgets === "function"
+      ? root.bar.moduleWidgets(root.moduleName) : [root]
+    for (let i = 0; i < items.length; i++) {
+      if (items[i] && typeof items[i].refreshAll === "function") items[i].refreshAll()
+    }
+  }
+
   function apply(key, response) {
     root.state = Model.applyRead(root.state, key, response, Date.now())
     root.nowMs = Date.now()
@@ -188,8 +197,18 @@ Panel {
     function show(): void { root.open() }
     function hide(): void { root.close() }
     function toggle(): void { root.toggle() }
-    /** `omarchy-shell anchor.pulse refresh` — useful from a hook after the service restarts. */
-    function refresh(): void { root.refreshAll() }
+    /**
+     * `omarchy-shell anchor.pulse refresh` — useful from a hook after the service restarts.
+     *
+     * Fanned out, because the bar is mounted once per monitor and an IpcHandler routes to exactly
+     * one of those instances. Refreshing one and leaving the others showing the old number is worse
+     * than not refreshing at all: two screens disagree and neither says why.
+     *
+     * `BarWidget` has a `broadcast()` for this, but this widget extends `Panel` — which is a plain
+     * `Item` plus the same injected contract, and does *not* inherit it. So the fan-out is spelled
+     * out here over the same `bar.moduleWidgets` the base helper uses.
+     */
+    function refresh(): void { root.refreshEveryBar() }
   }
 
   /**

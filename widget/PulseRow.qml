@@ -33,7 +33,9 @@ Item {
     anchors.leftMargin: -Style.space(6)
     anchors.rightMargin: -Style.space(6)
     radius: Style.cornerRadius > 0 ? Style.cornerRadius : Style.space(4)
-    color: Style.hoverFillFor(root.foreground, root.foreground)
+    // (foreground, accent, urgent) — all three, because the theme's `hover` token decides which one
+    // it resolves to, and a theme that names `urgent` got `undefined` from the two-argument call.
+    color: Style.hoverFillFor(root.foreground, root.foreground, root.foreground)
     visible: root.interactive && mouse.containsMouse
   }
 
