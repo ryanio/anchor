@@ -112,15 +112,24 @@ are named in [autonomy.md](autonomy.md) and in `executor/README.md`, and the sho
 
 | | EVM | Solana |
 |---|---|---|
-| Refuse a specific instruction by name | `ethereum_calldata` + `function_name` | **not possible** — the token decoder covers six instructions and `Approve`/`SetAuthority` are not among them |
+| Refuse a specific token instruction by name | `ethereum_calldata` + `function_name` | **not possible** — the token decoder covers six instructions and `Approve`/`SetAuthority` are not among them |
+| Refuse a specific *System Program* instruction by name | n/a | possible — `solana_system_program_instruction` does carry `instructionName` |
 | Cumulative spend cap | 72-hour window, two methods | **none at all** — no Solana method is supported by aggregations |
 | Bound an address a v0 transaction loads from a lookup table | n/a | evaluation *fails* and the transaction is rejected |
+| Bound the fee | the gas price is denominated in the asset the value cap counts | **no condition source exists** — `SetComputeUnitPrice` can commit the whole native balance and no rule can see it |
 
-*Verified* against Privy's policy and API documentation, February 2026. The first row is the one that
-changes a design: on Solana the only way to keep a delegation out is an ALLOW rule that positively
-lists the instructions you do send, so Privy's default-deny refuses the rest — an omitted condition
-removes the control with no error anywhere, which is why Anchor's startup audit treats its absence as
-a refusal to start.
+*Verified* against Privy's policy and API documentation; the table was re-read on **2026-09-07** and
+two rows changed as a result. `solana_system_program_instruction` does support `instructionName` —
+an earlier draft said that was unestablished — so the System Program hole, unlike the token program
+one, is closable remotely. And the fee row is new, and is the worst of the set: the other rows are
+controls weaker than their EVM counterparts, that one is a control with no remote expression at all.
+
+The token row is the one that changes a design: on Solana the only way to keep a delegation out is an
+ALLOW rule that positively lists the instructions you do send, so Privy's default-deny refuses the
+rest — an omitted condition removes the control with no error anywhere, which is why Anchor's startup
+audit treats its absence as a refusal to start. The fee row changes a different thing: it is stated
+on every startup rather than refused, because no policy edit would fix it, and the ceiling in
+`executor/src/solana.ts` is the only enforcement there is.
 
 *Verified.* `ProjectOpenSea/wallet-adapters` has adapters for Privy, Turnkey, Fireblocks, Bankr and
 local keys, and bridges for ethers and viem — all EVM. There is no Solana adapter today. That is a

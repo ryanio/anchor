@@ -165,6 +165,39 @@ check for an explicit DENY rule instead of relying on inverted default-deny, and
 a weaker note. Keep the local guard regardless: it is the layer that holds when the vendor is
 compromised or compelled.
 
+**One correction to an earlier draft of this entry.** `solana_system_program_instruction` *does*
+support an `instructionName` field — verified against Privy's Solana policy examples on 2026-09-07,
+where it appears with values `Create` and `Transfer`. An in-flight comment in `privy.ts` said this
+was not established while the code already relied on it; the code was right and the comment was
+stale. So the System Program hole, unlike the token program one, can be closed remotely as well as
+locally.
+
+## 10. Privy has no Compute Budget condition source, so a priority fee cannot be bounded
+
+Same vendor, and the starkest of the set: entry 9 is a control weaker than its EVM counterpart, and
+this is a control with **no remote expression at all**.
+
+**Upstream problem.** Privy's only condition that reaches the Compute Budget program is
+`solana_program_instruction`'s `programId`, which says the program may be invoked and nothing about
+what it is invoked with. There is no `solana_compute_budget_instruction` source, and no example
+bounds a priority fee. `SetComputeUnitPrice` names a price in micro-lamports *per compute unit* as a
+`u64`; multiplied by the unit limit (up to 1,400,000) that is the payer's entire native balance,
+paid to a validator as a tip. A Solana policy therefore cannot refuse a transaction that drains the
+account through fees — and because a fee produces no asset delta, no value condition sees it either.
+The EVM side does not have this problem in the same way: a gas price is denominated in the asset the
+value cap counts.
+
+**What we wrote.** A priority-fee ceiling in `guardSolanaTransaction` (`executor/src/solana.ts`),
+default 0.01 SOL and overridable per call, which reads both operands out of the instruction data.
+This is one of the few checks in that module that is *exact* — the operands are inline `u32`/`u64`
+literals, so no address lookup table can move the answer. `auditSolanaRule` states the gap in
+`unverified` on every startup where a policy permits the program, and deliberately **not** as a
+finding: a finding means "fix this in Privy", and there is nothing to fix.
+
+**When it's fixed.** If Privy add a Compute Budget condition source, move the ceiling into the remote
+policy and downgrade the local one to defence in depth. Keep the local check regardless, for the same
+reason as entry 9.
+
 ---
 
 ## Reporting

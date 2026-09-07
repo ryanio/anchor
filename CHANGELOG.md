@@ -70,19 +70,33 @@ Every allowlist entry is a `(chain, address)` pair, so an entry for one chain ne
 address on another — the same twenty hex bytes name a different contract on every EVM chain, and
 `CREATE2` puts chosen code at a chosen address on a chain nobody configured.
 
-`setApprovalForAll` turned out to have two Solana counterparts rather than none. The membership test
-is written down — an action that *moves no value*, *grants an authority outliving the transaction*,
-and *needs a revocation nobody can guarantee* — and it admits the SPL `Approve` delegate and
-`SetAuthority`, which does not bound what a delegate may spend but hands over the account. Closing an
-account is deliberately outside the class (it moves value, so the withdrawal allowlist covers it),
-and arbitrary program invocation is not an action kind at all: an `ActionRequest` carries intent and
-has no member that can hold instructions or bytes.
+`setApprovalForAll` turned out to have several Solana counterparts rather than none. The membership
+test is written down — an action that *moves no value*, *grants an authority outliving the
+transaction*, and *needs a revocation nobody can guarantee* — and it admits the SPL `Approve`
+delegate and `SetAuthority`, which does not bound what a delegate may spend but hands over the
+account. It also admits the System Program's `Assign`, the widest member of the class and the one an
+SPL-only reading misses: a wallet account is system-owned, an account's owner program may debit its
+lamports with no signature, so one `Assign` hands over the entire native balance having moved
+nothing. Closing an account is deliberately outside the class (it moves value, so the withdrawal
+allowlist covers it), and arbitrary program invocation is not an action kind at all: an
+`ActionRequest` carries intent and has no member that can hold instructions or bytes.
 
 A dependency-free guard parses legacy and v0 Solana transactions and refuses a delegation, an
-unallowlisted program, or an unrecognised token instruction — soundly *in the presence of address
-lookup tables*, because it reads program ids and instruction data rather than resolved accounts. It
-is explicit that it cannot check where value goes when operands resolve through a table: a refusal
+unallowlisted program, or an unrecognised instruction — soundly *in the presence of address lookup
+tables*, because it reads program ids and instruction data rather than resolved accounts. It is
+explicit that it cannot check where value goes when operands resolve through a table: a refusal
 filter, never a simulation.
+
+Being on the program allowlist means *permission to be inspected*, not permission to run. Three of
+the six allowlisted programs have their instructions classified — three discriminant encodings in
+one file, because SPL Token's tag is one byte, the System Program's is a four-byte little-endian
+`u32`, and the Compute Budget program's is a one-byte borsh tag. The Compute Budget program is
+included because it is not inert: `SetComputeUnitPrice` names a price per compute unit, and at the
+maximum unit limit it commits the account's entire native balance to a validator tip. That is a
+spend no cap can see, because a priority fee produces no asset delta and appears in no simulation,
+so it is refused here against a ceiling of 0.01 SOL rather than upstream where the number does not
+exist. Unusually for this module the check is exact: both operands are inline literals, so no
+lookup table can move the answer.
 
 A Privy backend is the first authority where enforcement lives outside Anchor's process: the key is
 in Privy's enclave, and Anchor audits the remote policy at startup and refuses to run when its local
@@ -127,6 +141,11 @@ $100 to $100k+, each tier earned by a clean incident record — is in
   anywhere, so Anchor's startup audit refuses to run against a policy missing it. Solana also has
   *no* aggregation primitive at all, so both cumulative caps are local-only there, and Privy reject
   outright any transaction whose conditions need an address loaded from an address lookup table.
+  Starkest of all: **there is no Compute Budget condition source**, so a Privy policy can permit the
+  program and then say nothing whatever about the priority fee it names. The other gaps are controls
+  weaker than their EVM counterparts; this one has no remote expression at all, and the local ceiling
+  is the only thing standing there. The startup audit states it every time rather than refusing,
+  because there is no policy change that would fix it.
 - **Anchor cannot build a Solana transaction.** Compiling an SPL transfer needs associated token
   account derivation — ed25519 on-curve arithmetic — and a live blockhash. The builder refuses and
   explains itself; the policy, guard and signer around it are complete and tested. Closing this needs

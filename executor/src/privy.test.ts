@@ -798,7 +798,7 @@ describe("auditing a Solana policy", () => {
     assert.deepEqual(audit.nativeValueCeiling, { amount: 1_000_000n, unit: "lamports" });
   });
 
-  test("the two gaps Ryan needs to know about are stated every single time", () => {
+  test("the three gaps Ryan needs to know about are stated every single time", () => {
     const audit = solanaAudit(solanaPolicyDocument());
     // Worse than the EVM case: there is no aggregation primitive for Solana at all, not merely one
     // with too short a window.
@@ -806,6 +806,41 @@ describe("auditing a Solana policy", () => {
     // Privy's own documented limitation, and the reason a destination allowlist and a real v0 swap
     // transaction are close to mutually exclusive today.
     assert.ok(audit.unverified.some((u) => /cannot resolve address lookup tables/.test(u)));
+    // The starkest of the three: not a weaker control than EVM's, but no control at all. Privy
+    // exposes no Compute Budget condition source, so a policy that permits the program cannot say
+    // anything about the priority fee it names.
+    assert.ok(audit.unverified.some((u) => /no Privy condition can bound what it does/.test(u)));
+  });
+
+  test("the priority-fee gap is stated, not raised as a finding — there is nothing to fix remotely", () => {
+    // The distinction between the two lists is the point. A finding means "fix this in Privy" and
+    // refuses to start; the token and System Program findings are both fixable that way, with an
+    // instructionName condition. This one is not fixable at all, and nearly every real Solana
+    // transaction sets a compute unit limit — so raising it as a finding would refuse every honest
+    // policy while offering no remedy.
+    const audit = solanaAudit(solanaPolicyDocument());
+    assert.deepEqual(audit.findings, []);
+    assert.ok(audit.unverified.some((u) => /SetComputeUnitPrice commits/.test(u)));
+  });
+
+  test("a policy that does not permit the Compute Budget program does not carry the note", () => {
+    const base = solanaPolicyDocument().rules[0];
+    assert.ok(base);
+    const audit = solanaAudit(
+      solanaPolicyDocument({
+        rules: [
+          {
+            ...base,
+            conditions: base.conditions.map((condition) =>
+              condition.field.toLowerCase() === "programid"
+                ? { ...condition, value: [SPL_TOKEN_PROGRAM] }
+                : condition,
+            ),
+          },
+        ],
+      }),
+    );
+    assert.ok(!audit.unverified.some((u) => /SetComputeUnitPrice commits/.test(u)));
   });
 
   test("permitting the System Program by program id alone is a finding too", () => {

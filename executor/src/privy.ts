@@ -54,7 +54,8 @@
  * Solana wallet are two wallets, two policies, and two of these authorities. {@link auditRemotePolicy}
  * dispatches on the architecture of the *local* limits and checks the policy's claim against it.
  *
- * Three differences are worth knowing before trusting the Solana side, and none of them is a detail:
+ * Four differences are worth knowing before trusting the Solana side, and none of them is a detail.
+ * All four were read off Privy's own documentation rather than inferred, on 2026-09-07:
  *
  * 1. **Privy cannot name `Approve` or `SetAuthority` in a rule.** Their Solana condition sources are
  *    `solana_program_instruction` (`programId` only), `solana_system_program_instruction`, and
@@ -72,6 +73,13 @@
  *    address a v0 transaction loads from an ALT causes evaluation to *fail*, rejecting the
  *    transaction. Fail-closed, and therefore safe — but it means a remote withdrawal-destination
  *    allowlist and a marketplace-built swap are close to mutually exclusive today.
+ * 4. **A priority fee cannot be bounded at all.** There is no Compute Budget condition source, and
+ *    `solana_program_instruction` carries only `programId` — so a policy may permit the program and
+ *    then say nothing whatever about the price it names. `SetComputeUnitPrice` at the maximum unit
+ *    limit spends the account's entire native balance on a validator tip. This is the starkest of
+ *    the four: the others are controls that are weaker than their EVM counterparts, and this is a
+ *    control with no remote expression at all. `solana.ts` refuses it locally, and that ceiling is
+ *    the only thing standing there.
  *
  * {@link PrivySolanaSigner} adds a local check Privy cannot do: it parses the transaction and
  * refuses any SPL delegation or authority transfer, an unallowlisted program, or an unrecognised
@@ -95,6 +103,7 @@ import type {
   PrivyWalletApi,
 } from "./privy-api.ts";
 import {
+  COMPUTE_BUDGET_PROGRAM,
   guardSolanaTransaction,
   SOLANA_CAIP2,
   type SolanaCluster,
@@ -602,11 +611,32 @@ function auditSolanaRule(rule: PrivyPolicyRule, label: string, chain: string, pa
     pass.findings.push(
       `rule ${label} permits the System Program by program id alone, which permits its Assign ` +
         "instruction — reassigning the account's owner program, and an owner program may debit " +
-        "the account's lamports without a signature from anyone. Privy's " +
-        "solana_system_program_instruction source is documented for Transfer's fields; whether it " +
-        "can pin an instruction name is not established here, so bound this rule to the " +
-        "destinations and lamport ceilings you mean, and treat the local guard in solana.ts as the " +
-        "refusal you actually rely on.",
+        "the account's lamports without a signature from anyone. Add a " +
+        "solana_system_program_instruction instructionName condition listing only the " +
+        "instructions you send; that source does support the field, so unlike the token program " +
+        "this hole can be closed remotely as well as locally.",
+    );
+  }
+
+  // Privy has no Compute Budget condition source at all — `solana_program_instruction` exposes
+  // `programId` and nothing else — so a policy can say "the Compute Budget program may be invoked"
+  // and can say nothing whatever about the price it names.
+  //
+  // `unverified` rather than a finding, and the distinction is the whole point of having two lists.
+  // A finding means "fix this in Privy" and refuses to start; the token-program and System-Program
+  // findings above are both fixable that way, by adding an `instructionName` condition. This one is
+  // not fixable at all, and nearly every real Solana transaction sets a compute unit limit, so
+  // raising it as a finding would refuse every honest policy while offering no remedy. A control
+  // the vendor cannot express is something to *state*, and to enforce locally — which `solana.ts`
+  // now does.
+  if (programs.includes(COMPUTE_BUDGET_PROGRAM)) {
+    pass.unverified.push(
+      `rule ${label} permits the Compute Budget program, and no Privy condition can bound what it ` +
+        "does: SetComputeUnitPrice commits limit x price / 1e6 lamports to a priority fee, which " +
+        "at the maximum unit limit is the account's whole native balance paid to a validator. " +
+        "There is no Compute Budget field source, so the ceiling in solana.ts is the only refusal " +
+        "there is, and it is local — a compromised or compelled vendor is not the threat it " +
+        "defends against, but a confused or driven agent is.",
     );
   }
 
