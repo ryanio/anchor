@@ -28,16 +28,19 @@ and it should feel excellent on accessible hardware you actually own, not a $3,0
 - **Calm notifications**: sales, offers, transfers, watched auction deadlines. Low-volume by default, per-collection controls.
 - **Agent research briefs**: read-only summaries over local data, always cited and timestamped.
 
-Later, and only once the read-only product feels trustworthy: an **intent queue** where an agent drafts
-an action, explains fees and expiry, and hands off to a wallet for a human signature.
+And then the part that makes it more than a dashboard: **an agent that acts on your behalf**, holding a
+real balance under spend controls it cannot widen — starting around $100 and growing as the policy model
+earns it. See [docs/autonomy.md](docs/autonomy.md).
 
 ## Principles
 
 These are not negotiable, and they shape the architecture:
 
 - Private keys and seed phrases never touch agents, device firmware, or logs.
-- Agents **propose**. They never silently execute.
-- Any asset-moving action requires explicit hardware-wallet approval by a human.
+- The agent **acts within policy it cannot change**. Limits are enforced at signing time, outside the
+  agent — so a compromised desktop inherits the spend budget, not the balance.
+- Withdrawals go only to pre-registered addresses; changing that list is a human action with a time-lock.
+- Token approvals are a separate, human-only action class. They are never delegated.
 - Least-privilege scoped tokens only, stored in the OS keyring — never in a theme file or a prompt.
 - Cache locally and make data freshness visible.
 - Treat floor prices, mint eligibility, and social signals as hints, not facts.
@@ -50,7 +53,7 @@ These are not negotiable, and they shape the architecture:
 3. **Gallery / theme integration** — display art, apply a reversible palette.
 4. **Notification policy** — defaults that avoid spam, with per-collection controls.
 5. **Agent briefs** — read-only summaries over the same local data service.
-6. **Intent queue** — only after the read-only product is trustworthy.
+6. **Policy-bound execution** — an `Executor` interface over a policy engine (Privy, Turnkey) or an onchain module (Safe, session keys), with the value ladder in [docs/autonomy.md](docs/autonomy.md).
 
 ## Layout
 
@@ -60,7 +63,7 @@ These are not negotiable, and they shape the architecture:
 | `widget/` | Quickshell top-bar widget |
 | `theme/` | Gallery wallpaper and palette extraction |
 | `packaging/` | Arch packaging, targeting the `[omarchy]` repo |
-| `docs/` | Vision, security model, roadmap detail |
+| `docs/` | Security model, autonomy and spend controls, roadmap |
 
 ## Installing
 

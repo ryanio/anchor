@@ -4,10 +4,23 @@ These constraints define the project. Anything that violates one is out of scope
 
 ## Keys and signing
 
-- **Private keys and seed phrases never touch this codebase**, an agent, device firmware, or a log file.
-- Anchor **proposes**; it does not execute. There is no code path that submits an onchain transaction.
-- Asset-moving actions require explicit **hardware-wallet approval** by a human. The intent queue hands
-  off a prepared action; a wallet signs it.
+The agent is meant to act autonomously, including sending onchain transactions and holding real value.
+The safety property is **not** "the agent cannot transact" — it is that **the agent never holds
+unbounded authority.**
+
+- **Policy is enforced outside the agent**, at signing time, by a key-management service with a policy
+  engine or by an onchain smart-account module. The agent can request; it cannot approve its own
+  request. A compromised desktop therefore inherits the *policy budget*, not the balance.
+- **Private keys and seed phrases never touch this codebase**, an agent process, device firmware, or a
+  log file. Keys live in a secure enclave or a smart account — never in Anchor.
+- **Withdrawals go only to pre-registered addresses.** Changing that list is a human action with a
+  time-lock. This is the single control that makes a large balance survivable.
+- **Token approvals are their own action class.** `setApprovalForAll` moves no funds and slips past a
+  spend cap, yet hands over everything. It is never delegated to the agent.
+- **A kill switch must work from the phone, without the desktop.**
+
+The full model — control surface, value tiers from $100 to $100k+, vendor versus onchain enforcement,
+and the named residual risks — is in [autonomy.md](autonomy.md).
 
 ## Tokens and credentials
 
@@ -29,9 +42,13 @@ These constraints define the project. Anything that violates one is out of scope
 
 ## Agent involvement
 
-Agents are useful for summarizing activity, watching collections, and drafting proposals. They are not
-useful as autonomous traders, and Anchor will not ship that. Every agent output must cite its data
+Agents summarise activity, watch collections, draft proposals, and — within policy — execute. What they
+must never do is decide their own limits. Every agent output that informs a decision must cite its data
 source and timestamp.
+
+Untrusted marketplace content (listing titles, collection descriptions, scraped pages) is a live
+prompt-injection surface. Policy holds regardless of what the agent is convinced of, which is precisely
+why policy lives outside it.
 
 If a hardware device is ever added as an approval surface, it is a **display and presence gate**, not a
 key store — commodity microcontrollers have no certified secure element and must be assumed extractable

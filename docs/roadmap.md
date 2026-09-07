@@ -28,11 +28,14 @@ filters. The failure mode to avoid is a desktop that cries wolf.
 Read-only summaries over the same local data service: overnight activity, a collection's recent sales
 and offers, listings matching filters. Always cited, always timestamped, never financial actions.
 
-## 6. Intent queue
+## 6. Policy-bound execution
 
-Only after the read-only product is trustworthy. An agent drafts listing or offer parameters, explains
-fees, expiry, and the asset affected, shows an explicit final-review card, and hands off to a wallet for
-a human signature.
+The agent starts acting. An `Executor` interface abstracts *where policy is enforced* — a vendor policy
+engine (Privy, Turnkey) to start, an onchain module (Safe allowance, ERC-4337 session keys) as the
+trust-minimised destination — so the backend is a config choice, not an architectural one.
+
+Balances grow through the tiers in [autonomy.md](autonomy.md): ~$100, then $1k, $10k, $100k+, each
+promotion earned by a clean incident record. The agent proposes; policy it cannot change decides.
 
 ## Packaging
 
