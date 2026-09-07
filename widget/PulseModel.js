@@ -783,7 +783,9 @@ function credentials(health) {
  */
 function apiKeyRejected(state) {
   const s = state ?? emptyState();
-  for (const key of ["portfolio", "activity", "collections"]) {
+  // Every data read, `balances` included. A route left out of this list is a route whose 401 the
+  // panel would absorb silently while continuing to say the key is fine.
+  for (const key of ["portfolio", "activity", "collections", "balances"]) {
     if (s[key] && s[key].status === 401) return true;
   }
   return false;

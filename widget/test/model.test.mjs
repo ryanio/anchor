@@ -814,6 +814,24 @@ test("the credential step opens a prompt and never carries the secret", () => {
   assert.deepEqual(argv, ["omarchy-launch-terminal", "anchor-service", "--set-api-key"]);
 });
 
+test("a 401 on any data read demotes the API-key step, including the newest one", () => {
+  const rejected = (key) =>
+    stateWith({
+      health: health(),
+      [key]: { data: null, meta: null, receivedAt: 0, error: "unauthorized", status: 401 },
+    });
+
+  // `balances` is the read added for the breakdown. A route left out of this list is one whose 401
+  // the panel absorbs silently while still saying the key is fine — which is the exact failure the
+  // "presence is not function" rule exists for.
+  for (const key of ["portfolio", "activity", "collections", "balances"]) {
+    assert.equal(Model.apiKeyRejected(rejected(key)), true, `${key} 401 must be noticed`);
+    const step = Model.setupProgress(rejected(key)).required[1];
+    assert.equal(step.state, "current");
+    assert.match(step.label, /Replace/);
+  }
+});
+
 test("applyUnitState folds a probe in without disturbing a reading", () => {
   const before = stateWith({ portfolio: { data: { totalValueUsd: "5" }, meta: null, receivedAt: NOW } });
   const after = Model.applyUnitState(before, "LoadState=loaded\nActiveState=active\n");
