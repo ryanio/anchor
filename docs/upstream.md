@@ -26,7 +26,7 @@ already exists in the same package — `lib/api/walletAuth.js:4` defines
 **What we wrote.** `segment()` in `service/src/opensea.ts:166`, applied at eleven call sites before
 any value is handed to the SDK.
 
-**Status: fixed upstream. Ships in `@opensea/sdk` 12.1.1 / `@opensea/api-types` 0.9.2.** OpenSea exported `segment()` from `apiPaths.ts` and applied
+**Status: fixed upstream and consumed.** Landed in `@opensea/sdk` 12.1.1 / `@opensea/api-types` 0.9.2. OpenSea exported `segment()` from `apiPaths.ts` and applied
 it to all 100 interpolation sites (61 of 88 builders took a parameter), and dropped the duplicate
 helper in `walletAuth.ts` plus the now-double-encoding wrapper at the one call site in `accounts.ts`.
 It reaches npm on the next SDK release. **Do not bump and delete in separate commits** — see below.
@@ -38,8 +38,13 @@ reject the two bare forms rather than encoding them. Rejection is sufficient as 
 after encoding, nothing else is still a dot segment. Ours is in `service/src/opensea.ts` with tests
 covering both the refusal and the near-misses (`"..."`, `"%2e%2e"`, `".%2e"`).
 
-**When the bump lands — read this carefully.** Do **not** simply delete `segment()` the moment the SDK
-starts encoding. We would then encode twice, and a slug containing a space would go out as `%2520`
+**Done, and the trap was real.** Bumping without removing our encoding produced exactly the
+double-encode this entry warned about, and `opensea.test.ts` caught it — the traversal test failed
+with `%252F` where it expected `%2F`. The bump and the removal were one commit. `segment()` still
+exists and still **rejects** `.` and `..`; it just no longer encodes.
+
+Historical note on why deletion had to be atomic: do **not** simply delete `segment()` the moment the
+SDK starts encoding. We would then encode twice, and a slug containing a space would go out as `%2520`
 rather than `%20`. In practice this is narrow: for ordinary slugs and for hex or base58 addresses
 `encodeURIComponent` is the identity, so double-encoding is a no-op — it bites only on exactly the
 inputs the upstream fix exists to protect.
@@ -81,9 +86,9 @@ address on another, which is our property, not the SDK's.
 
 ## 4. No runtime chain list
 
-**Partly fixed upstream.** The `exports` half ships in `@opensea/api-types` 0.9.2: the
-`./opensea-api.json` subpath is declared, and `./package.json` alongside it so the version is
-readable without reaching into the tarball. The runtime chain list is still absent.
+**Partly fixed upstream and verified.** The `exports` half landed in `@opensea/api-types` 0.9.2:
+`require("@opensea/api-types/opensea-api.json")` now resolves (128 paths), and `./package.json` is
+exported alongside it. The runtime chain list is still absent, so `ChainsAgree` stays.
 
 **Upstream problem.** `ChainIdentifier` is type-only. There is no runtime array of the 29 slugs, and
 `opensea-api.json` was listed in the package's `files` but absent from its `exports`, so
@@ -113,11 +118,16 @@ than compensating code, which is why there is nothing to delete.
 
 ## 6. No status code on SDK errors
 
-**Status: fixed upstream, ships in `@opensea/sdk` 12.1.1.** All four throw sites now go through one
+**Status: fixed upstream and consumed** in `@opensea/sdk` 12.1.1. All four throw sites now go through one
 builder, so `statusCode` is set on every non-OK response and `responseBody` comes along whenever a
 body parsed. The type is `OpenSeaApiError`; `OpenSeaRateLimitError` remains as an alias with the
-identical shape, so existing rate-limit handling compiles unchanged. **On upgrade: build the 5xx
-retry ladder**, keyed off `statusCode` alone.
+identical shape, so existing rate-limit handling compiles unchanged.
+
+The retry ladder now exists in `ReadOnlyOpenSeaAPI.get()`: 502/503/504 and status-less transport
+errors are retried twice with jittered exponential backoff, outside the shared rate limiter so a
+sleeping request cannot hold a slot. **500 is deliberately excluded** — entry 7 below is a measured
+counter-example of a deterministic one, and retrying it only delays the stale-cache fallback. 429 is
+left to the SDK's own `Retry-After` ladder.
 
 **Upstream problem.** Only `_createRateLimitError` attached `statusCode` (429 and 599). Every other
 failure threw a bare `Error` whose message was built from a remote-controlled response body —
