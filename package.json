@@ -1,0 +1,17 @@
+{
+  "name": "anchor",
+  "private": true,
+  "type": "module",
+  "description": "Tooling shared across the repo. Workspaces keep their own deps.",
+  "engines": {
+    "node": ">=26.0.0"
+  },
+  "scripts": {
+    "check": "biome check .",
+    "format": "biome check --write ."
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.12"
+  },
+  "license": "MIT"
+}

@@ -1,21 +1,25 @@
 /**
  * Regression tests for the audit findings. Each of these fails without its fix.
  */
-import { test, describe, before, after } from "node:test";
+
 import assert from "node:assert/strict";
-import { connect } from "node:net";
-import type { AddressInfo } from "node:net";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import type { Server } from "node:http";
-import { mkdtempSync, existsSync, rmSync } from "node:fs";
+import type { AddressInfo } from "node:net";
+import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createApp } from "./server.ts";
+import { after, before, describe, test } from "node:test";
 import { Cache } from "./cache.ts";
+import { type Config, validate } from "./config.ts";
 import { OpenSeaClient } from "./opensea.ts";
-import { validate, type Config } from "./config.ts";
+import { createApp } from "./server.ts";
 
 const config: Config = {
-  chain: "ethereum", wallet: "", collections: [], port: 0,
+  chain: "ethereum",
+  wallet: "",
+  collections: [],
+  port: 0,
   ttl: { nfts: 300, events: 60, stats: 120, listings: 120, offers: 60 },
   requestsPerSecond: 2,
 };
@@ -34,17 +38,25 @@ before(async () => {
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   port = (server.address() as AddressInfo).port;
 });
-after(() => { server.closeAllConnections(); server.close(); });
+after(() => {
+  server.closeAllConnections();
+  server.close();
+});
 
 /** Raw socket: `fetch` would normalise the malformed target before it ever reached the server. */
 function raw(requestLine: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const sock = connect(port, "127.0.0.1", () => sock.write(requestLine));
     let buf = "";
-    sock.on("data", (d) => { buf += d.toString(); });
+    sock.on("data", (d) => {
+      buf += d.toString();
+    });
     sock.on("end", () => resolve(buf));
     sock.on("error", reject);
-    setTimeout(() => { sock.destroy(); resolve(buf); }, 1500);
+    setTimeout(() => {
+      sock.destroy();
+      resolve(buf);
+    }, 1500);
   });
 }
 
@@ -91,7 +103,9 @@ describe("cache", () => {
     const c = new Cache(tmpDb());
     c.put("k", { v: 1 }, 600);
     const realNow = Date.now;
-    t.after(() => { Date.now = realNow; });
+    t.after(() => {
+      Date.now = realNow;
+    });
     Date.now = () => realNow() - 600_000; // clock jumps back 10 minutes
     const entry = c.get<{ v: number }>("k");
     assert.equal(entry?.stale, true, "negative age must not read as fresh");
@@ -113,7 +127,11 @@ describe("cache", () => {
       new Cache(tmpDb());
       assert.equal(existsSync(join(dir, "anchor")), false);
     } finally {
-      prev === undefined ? delete process.env.XDG_DATA_HOME : (process.env.XDG_DATA_HOME = prev);
+      if (prev === undefined) {
+        delete process.env.XDG_DATA_HOME;
+      } else {
+        process.env.XDG_DATA_HOME = prev;
+      }
       rmSync(dir, { recursive: true, force: true });
     }
   });

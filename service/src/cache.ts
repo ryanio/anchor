@@ -5,9 +5,10 @@
  * the data is and whether it is stale, so the UI can show it. A stale floor price displayed as
  * current is a bug (docs/security.md).
  */
-import { DatabaseSync } from "node:sqlite";
+
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { dataDir } from "./config.ts";
 
 export interface CacheEntry<T> {
@@ -43,9 +44,9 @@ export class Cache {
   }
 
   get<T>(key: string): CacheEntry<T> | null {
-    const row = this.#db
-      .prepare("SELECT body, fetched_at, ttl FROM responses WHERE key = ?")
-      .get(key) as { body: string; fetched_at: number; ttl: number } | undefined;
+    const row = this.#db.prepare("SELECT body, fetched_at, ttl FROM responses WHERE key = ?").get(key) as
+      | { body: string; fetched_at: number; ttl: number }
+      | undefined;
     if (!row) return null;
 
     // Stored in milliseconds. With second precision a put at t=100.9 read at t=101.0 reported an

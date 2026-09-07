@@ -18,29 +18,24 @@
  * destination allowlist, mandatory simulation, and a kill switch.
  */
 import {
+  type ApprovedAction,
   allow,
+  type Denied,
   deny,
   mintApproval,
-  type ApprovedAction,
-  type Denied,
   type PolicyDecision,
 } from "./decision.ts";
-import type {
-  ExecutorStatus,
-  PolicyAuthority,
-  RevocationReceipt,
-  Settlement,
-} from "./executor.ts";
+import type { ExecutorStatus, PolicyAuthority, RevocationReceipt, Settlement } from "./executor.ts";
 import {
+  type ActionRequest,
+  type Address,
   allowlistHas,
+  type DelegableActionKind,
   incomingValue,
   money,
   outgoingDenominations,
   outgoingDestinations,
   outgoingValue,
-  type ActionRequest,
-  type Address,
-  type DelegableActionKind,
   type Simulation,
 } from "./types.ts";
 
@@ -143,8 +138,7 @@ export class PolicyEngine implements PolicyAuthority {
   async evaluate(request: ActionRequest, simulation: Simulation): Promise<PolicyDecision> {
     const now = this.#now();
     const ctx = { requestId: request.id, decidedAt: now, policyVersion: this.#version };
-    const no = (reason: Parameters<typeof deny>[0], detail: string): Denied =>
-      deny(reason, detail, ctx);
+    const no = (reason: Parameters<typeof deny>[0], detail: string): Denied => deny(reason, detail, ctx);
 
     // 1. Kill switch first. A revoked policy answers nothing else.
     if (this.#revoked) {
@@ -177,10 +171,7 @@ export class PolicyEngine implements PolicyAuthority {
 
     // 5. Contract allowlist.
     if (!allowlistHas(this.#limits.contractAllowlist, request.contract)) {
-      return no(
-        "contract-not-allowlisted",
-        `contract ${request.contract} is not on the contract allowlist`,
-      );
+      return no("contract-not-allowlisted", `contract ${request.contract} is not on the contract allowlist`);
     }
 
     // 6. Simulation is mandatory. Never judge a payload whose effects have not been computed.
@@ -206,10 +197,7 @@ export class PolicyEngine implements PolicyAuthority {
     }
     const declaredDenom = declaredDenomination(request);
     if (declaredDenom !== null && declaredDenom !== denom) {
-      return no(
-        "denomination-mismatch",
-        `request is denominated in ${declaredDenom}, policy in ${denom}`,
-      );
+      return no("denomination-mismatch", `request is denominated in ${declaredDenom}, policy in ${denom}`);
     }
 
     // 8. Does the simulation agree with what the agent claimed it was doing?
@@ -233,10 +221,7 @@ export class PolicyEngine implements PolicyAuthority {
     //    the user chose — a marketplace sale is not a withdrawal, a transfer out is.
     if (request.kind === "transfer") {
       if (!allowlistHas(this.#limits.withdrawalAllowlist, request.to)) {
-        return no(
-          "destination-not-allowlisted",
-          `${request.to} is not a pre-registered withdrawal address`,
-        );
+        return no("destination-not-allowlisted", `${request.to} is not a pre-registered withdrawal address`);
       }
       for (const destination of outgoingDestinations(simulation)) {
         if (!allowlistHas(this.#limits.withdrawalAllowlist, destination)) {
@@ -403,11 +388,7 @@ export class PolicyEngine implements PolicyAuthority {
    * answer is always to deny — never to prefer the assertion, and never to "fix up" the request.
    * Returns a reason string on mismatch, or `null` when they agree.
    */
-  #checkSimulationAgreement(
-    request: ActionRequest,
-    simulation: Simulation,
-    denom: string,
-  ): string | null {
+  #checkSimulationAgreement(request: ActionRequest, simulation: Simulation, denom: string): string | null {
     const out = outgoingValue(simulation, denom).amount;
     const incoming = incomingValue(simulation, denom).amount;
 

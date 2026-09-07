@@ -5,14 +5,9 @@
  * in tests and read as documentation. Neither is suitable for anything else, and both say so at
  * run time in the `source`/`signer` fields they stamp on their output.
  */
-import { isUsableApproval, type ApprovedAction } from "./decision.ts";
+import { type ApprovedAction, isUsableApproval } from "./decision.ts";
 import type { Signer, Simulator, SubmissionReceipt } from "./executor.ts";
-import {
-  money,
-  type ActionRequest,
-  type AssetDelta,
-  type Simulation,
-} from "./types.ts";
+import { type ActionRequest, type AssetDelta, money, type Simulation } from "./types.ts";
 
 /**
  * A simulator that simply believes the request.
@@ -117,9 +112,7 @@ export class InertSigner implements Signer {
     // with a cast, and a real signer is reachable across a process boundary where types are only a
     // convention. Identity is the check that survives both.
     if (!isUsableApproval(approved, now)) {
-      throw new Error(
-        "refusing to sign: approval was not minted by a policy authority, or has expired",
-      );
+      throw new Error("refusing to sign: approval was not minted by a policy authority, or has expired");
     }
 
     this.submitted.push(approved);

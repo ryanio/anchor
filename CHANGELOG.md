@@ -18,6 +18,12 @@ has the facts.
 - Test suite on `node --test`, plus CI for typecheck and tests.
 - Build diary and changelog published to anchor.ryanio.com.
 
+### Added (tooling)
+- Biome 2.5.12 as the single formatter and linter — never ESLint or Prettier. One config at the root
+  governs every workspace; CI runs `biome ci .` and fails on any diagnostic.
+- A daily build-diary job on the Hermes scheduler that skips the entry when the day produced nothing
+  worth reading, rather than padding.
+
 ### Added (brand)
 - An anchor mark that reads as an **A** — distinctive rather than a stock anchor glyph, and legible at
   16px. Stroke-based with `currentColor`, so one file themes everywhere. Favicon and solid-fill

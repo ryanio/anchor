@@ -10,7 +10,7 @@
  * red-in-CI failures in a single day.
  */
 import { readFileSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -23,8 +23,10 @@ const problems: string[] = [];
 // The running interpreter must satisfy the pin.
 const runningMajor = process.versions.node.split(".")[0]!;
 if (runningMajor !== major) {
-  problems.push(`running Node ${process.versions.node}, but .node-version pins ${pinned} (major ${major}). ` +
-                `Run \`mise install\` locally; CI reads .node-version via node-version-file.`);
+  problems.push(
+    `running Node ${process.versions.node}, but .node-version pins ${pinned} (major ${major}). ` +
+      `Run \`mise install\` locally; CI reads .node-version via node-version-file.`,
+  );
 }
 
 // Every workspace's package.json engines. Adding a workspace must not create a new drift hole.
@@ -37,7 +39,9 @@ for (const ws of ["service", "executor"]) {
     continue; // workspace not present on this branch
   }
   if (pkg.engines?.node !== expectedEngines) {
-    problems.push(`${ws}/package.json engines.node is ${JSON.stringify(pkg.engines?.node)}, expected "${expectedEngines}"`);
+    problems.push(
+      `${ws}/package.json engines.node is ${JSON.stringify(pkg.engines?.node)}, expected "${expectedEngines}"`,
+    );
   }
 }
 
@@ -75,7 +79,7 @@ for (const wf of ["ci.yml", "deploy.yml"]) {
 }
 
 if (problems.length > 0) {
-  console.error("Node version drift detected:\n" + problems.map((p) => `  - ${p}`).join("\n"));
+  console.error(`Node version drift detected:\n${problems.map((p) => `  - ${p}`).join("\n")}`);
   process.exit(1);
 }
 console.log(`Node version consistent: ${pinned} everywhere.`);

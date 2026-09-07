@@ -31,8 +31,8 @@
  * on the concrete backend's administrative surface, which the agent does not hold a reference to.
  * The kill switch is one-way from this side.
  */
-import type { PolicyDecision, ApprovedAction, Denied } from "./decision.ts";
-import type { ActionRequest, Simulation, Money } from "./types.ts";
+import type { ApprovedAction, Denied, PolicyDecision } from "./decision.ts";
+import type { ActionRequest, Money, Simulation } from "./types.ts";
 
 // --- Simulation ------------------------------------------------------------------------------
 

@@ -5,24 +5,15 @@
  * signer refuses anything policy did not mint, that budget is released when submission fails, and
  * that the `Executor` an agent holds has no vocabulary for approving itself.
  */
-import { test, describe } from "node:test";
+
 import assert from "node:assert/strict";
-import { PolicyBoundExecutor, type Executor, type Signer } from "./executor.ts";
-import { PolicyEngine } from "./policy.ts";
+import { describe, test } from "node:test";
+import { type ApprovedAction, isMintedApproval } from "./decision.ts";
+import { type Executor, PolicyBoundExecutor, type Signer } from "./executor.ts";
+import { ACCOUNT, ATTACKER, buy, COLD_VAULT, COLLECTION, clock, limits, transfer, usd } from "./fixtures.ts";
 import { DeclaredIntentSimulator, FailingSigner, InertSigner } from "./inert.ts";
-import { isMintedApproval, type ApprovedAction } from "./decision.ts";
+import { PolicyEngine } from "./policy.ts";
 import type { ActionRequest } from "./types.ts";
-import {
-  ACCOUNT,
-  ATTACKER,
-  COLD_VAULT,
-  COLLECTION,
-  buy,
-  clock,
-  limits,
-  transfer,
-  usd,
-} from "./fixtures.ts";
 
 /**
  * A full pipeline on one controllable clock.
@@ -264,9 +255,9 @@ describe("the Executor interface cannot be used to self-approve", () => {
     const asInterface: Executor = executor;
 
     assert.deepEqual(
-      ["execute", "preflight", "revoke", "status"].filter(
-        (m) => typeof (asInterface as unknown as Record<string, unknown>)[m] === "function",
-      ).sort(),
+      ["execute", "preflight", "revoke", "status"]
+        .filter((m) => typeof (asInterface as unknown as Record<string, unknown>)[m] === "function")
+        .sort(),
       ["execute", "preflight", "revoke", "status"],
     );
 

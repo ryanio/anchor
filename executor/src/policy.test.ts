@@ -4,28 +4,29 @@
  * to pre-registered addresses, token approvals are refused as their own class, and the kill switch
  * stops everything.
  */
-import { test, describe } from "node:test";
+
 import assert from "node:assert/strict";
-import { PolicyEngine, tierLimits, type PolicyLimits } from "./policy.ts";
-import { DeclaredIntentSimulator } from "./inert.ts";
-import { address, money, type ActionRequest, type Simulation } from "./types.ts";
+import { describe, test } from "node:test";
 import type { Denied, PolicyDecision } from "./decision.ts";
 import {
   ACCOUNT,
   ATTACKER,
-  COLD_VAULT,
-  COLLECTION,
-  DENOM,
-  MARKETPLACE,
-  OTHER_COLLECTION,
   acceptOffer,
   buy,
+  COLD_VAULT,
+  COLLECTION,
   cancelOwnListing,
   clock,
+  DENOM,
   limits,
+  MARKETPLACE,
+  OTHER_COLLECTION,
   transfer,
   usd,
 } from "./fixtures.ts";
+import { DeclaredIntentSimulator } from "./inert.ts";
+import { PolicyEngine, type PolicyLimits, tierLimits } from "./policy.ts";
+import { type ActionRequest, address, money, type Simulation } from "./types.ts";
 
 /** Build an engine plus a cooperative simulator sharing one controllable clock. */
 function engine(over: Partial<PolicyLimits> = {}) {
@@ -56,10 +57,7 @@ describe("per-transaction cap", () => {
 
   test("a transfer is charged at its valuation, not waved through as 'not a purchase'", async () => {
     const { decide } = engine();
-    assert.equal(
-      denied(await decide(transfer("r1", 9_999n, COLD_VAULT))).reason,
-      "per-transaction-cap",
-    );
+    assert.equal(denied(await decide(transfer("r1", 9_999n, COLD_VAULT))).reason, "per-transaction-cap");
   });
 });
 
@@ -150,7 +148,7 @@ describe("contract allowlist", () => {
 
   test("a freshly deployed 'helpful' contract is not special", async () => {
     const { decide } = engine();
-    const fresh = address("0xfeed" + "0".repeat(36));
+    const fresh = address(`0xfeed${"0".repeat(36)}`);
     assert.equal(
       denied(await decide(buy("r1", 1n, 0, { contract: fresh }))).reason,
       "contract-not-allowlisted",
@@ -277,9 +275,7 @@ describe("withdrawal destination allowlist", () => {
     const lying: Simulation = {
       requestId: "r1",
       ok: true,
-      deltas: [
-        { direction: "out", value: usd(1_000n), counterparty: ATTACKER, assetType: "erc721" },
-      ],
+      deltas: [{ direction: "out", value: usd(1_000n), counterparty: ATTACKER, assetType: "erc721" }],
       simulatedAt: 0,
       source: "test",
     };
@@ -288,10 +284,7 @@ describe("withdrawal destination allowlist", () => {
 
   test("an empty withdrawal allowlist means no transfers at all", async () => {
     const { decide } = engine({ withdrawalAllowlist: [] });
-    assert.equal(
-      denied(await decide(transfer("r1", 1n, COLD_VAULT))).reason,
-      "destination-not-allowlisted",
-    );
+    assert.equal(denied(await decide(transfer("r1", 1n, COLD_VAULT))).reason, "destination-not-allowlisted");
   });
 
   test("the allowlist is not consulted for a marketplace purchase", async () => {
@@ -348,9 +341,7 @@ describe("simulation is mandatory", () => {
     const decision = await policy.evaluate(cancelOwnListing("r1"), {
       requestId: "r1",
       ok: true,
-      deltas: [
-        { direction: "out", value: usd(500n), counterparty: ATTACKER, assetType: "erc20" },
-      ],
+      deltas: [{ direction: "out", value: usd(500n), counterparty: ATTACKER, assetType: "erc20" }],
       simulatedAt: 0,
       source: "test",
     });
@@ -473,9 +464,7 @@ describe("status and tiers", () => {
     assert.equal(tierLimits(3, lists).perTransaction, 100_000n);
     for (const tier of [1, 2, 3] as const) {
       assert.equal(
-        (tierLimits(tier, lists).allowedActions as readonly string[]).includes(
-          "set-approval-for-all",
-        ),
+        (tierLimits(tier, lists).allowedActions as readonly string[]).includes("set-approval-for-all"),
         false,
       );
     }

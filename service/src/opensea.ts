@@ -13,7 +13,7 @@
  *
  * Endpoint paths verified against docs.opensea.io.
  */
-import { Cache, type CacheEntry } from "./cache.ts";
+import type { Cache, CacheEntry } from "./cache.ts";
 import { getApiKey as getApiKeyFromKeyring } from "./keyring.ts";
 
 const BASE = "https://api.opensea.io/api/v2";
@@ -181,7 +181,11 @@ export class OpenSeaClient {
    * Cache-first GET. Fresh cache short-circuits; otherwise fetch, and fall back to stale data
    * if the network fails — a slightly old portfolio beats an error card.
    */
-  async #get<T>(path: string, params: Record<string, string | string[] | undefined>, ttl: number): Promise<CacheEntry<T>> {
+  async #get<T>(
+    path: string,
+    params: Record<string, string | string[] | undefined>,
+    ttl: number,
+  ): Promise<CacheEntry<T>> {
     const url = new URL(BASE + path);
     for (const [k, v] of Object.entries(params)) {
       if (v === undefined) continue;
@@ -251,22 +255,38 @@ export class OpenSeaClient {
   }
 
   /** NFTs owned by an account. GET /chain/{chain}/account/{address}/nfts */
-  nftsByAccount(address: string, ttl: number, opts: { collection?: string; limit?: number; next?: string } = {}) {
-    return this.#get<unknown>(`/chain/${segment(this.#chain)}/account/${segment(address)}/nfts`, {
-      collection: opts.collection,
-      limit: String(opts.limit ?? 50),
-      next: opts.next,
-    }, ttl);
+  nftsByAccount(
+    address: string,
+    ttl: number,
+    opts: { collection?: string; limit?: number; next?: string } = {},
+  ) {
+    return this.#get<unknown>(
+      `/chain/${segment(this.#chain)}/account/${segment(address)}/nfts`,
+      {
+        collection: opts.collection,
+        limit: String(opts.limit ?? 50),
+        next: opts.next,
+      },
+      ttl,
+    );
   }
 
   /** Account activity. GET /events/accounts/{address} */
-  eventsByAccount(address: string, ttl: number, opts: { eventTypes?: string[]; limit?: number; next?: string } = {}) {
-    return this.#get<unknown>(`/events/accounts/${segment(address)}`, {
-      chain: this.#chain,
-      event_type: opts.eventTypes,
-      limit: String(opts.limit ?? 50),
-      next: opts.next,
-    }, ttl);
+  eventsByAccount(
+    address: string,
+    ttl: number,
+    opts: { eventTypes?: string[]; limit?: number; next?: string } = {},
+  ) {
+    return this.#get<unknown>(
+      `/events/accounts/${segment(address)}`,
+      {
+        chain: this.#chain,
+        event_type: opts.eventTypes,
+        limit: String(opts.limit ?? 50),
+        next: opts.next,
+      },
+      ttl,
+    );
   }
 
   /** GET /collections/{slug} */

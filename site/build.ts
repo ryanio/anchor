@@ -6,8 +6,8 @@
  * blockquotes, tables, links, inline code, bold and italic. That is everything a build diary needs,
  * and it keeps the project's no-dependency promise. If you need more, write HTML in the entry.
  */
-import { readdirSync, readFileSync, writeFileSync, mkdirSync, rmSync, cpSync, existsSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
@@ -16,8 +16,12 @@ const OUT = join(ROOT, "dist");
 // ── tiny markdown ──────────────────────────────────────────────────────────
 // Escapes quotes too: without that, a link URL lands inside a quoted attribute and can close it.
 const esc = (s: string) =>
-  s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
-   .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+  s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 
 /**
  * Only http, https and mailto, plus site-relative paths. Everything else becomes an inert "#".
@@ -33,22 +37,27 @@ function safeHref(url: string): string {
 
 function inline(s: string): string {
   // Code spans are extracted BEFORE any other rule runs, so markdown inside `...` stays literal.
+  // The sentinel is a private-use codepoint rather than NUL: same guarantee that it cannot occur in
+  // real input, without a control character in a regex.
   // Doing it the other way round rendered `**not bold**` inside a code span as actual bold.
   const codes: string[] = [];
   const withPlaceholders = s.replace(/`([^`]+)`/g, (_, c: string) => {
     codes.push(c);
-    return `\u0000CODE${codes.length - 1}\u0000`;
+    return `\uE000CODE${codes.length - 1}\uE000`;
   });
 
   const html = esc(withPlaceholders)
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, text: string, href: string) =>
-      // `href` is already escaped by the esc() above — escaping again turned &quot; into &amp;quot;
-      // and mangled legitimate URLs. No raw quote can survive that pass, so the attribute is safe.
-      `<a href="${safeHref(href)}">${text}</a>`)
+    .replace(
+      /\[([^\]]+)\]\(([^)]+)\)/g,
+      (_, text: string, href: string) =>
+        // `href` is already escaped by the esc() above — escaping again turned &quot; into &amp;quot;
+        // and mangled legitimate URLs. No raw quote can survive that pass, so the attribute is safe.
+        `<a href="${safeHref(href)}">${text}</a>`,
+    )
     .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
     .replace(/(^|[^*])\*([^*]+)\*/g, "$1<em>$2</em>");
 
-  return html.replace(/\u0000CODE(\d+)\u0000/g, (_, i: string) => `<code>${esc(codes[Number(i)]!)}</code>`);
+  return html.replace(/\uE000CODE(\d+)\uE000/g, (_, i: string) => `<code>${esc(codes[Number(i)]!)}</code>`);
 }
 
 /** Split a table row on unescaped pipes that are not inside a code span. */
@@ -59,7 +68,11 @@ function splitRow(line: string): string[] {
   for (let i = 0; i < line.length; i++) {
     const ch = line[i]!;
     if (ch === "`") inCode = !inCode;
-    if (ch === "|" && !inCode) { cells.push(current); current = ""; continue; }
+    if (ch === "|" && !inCode) {
+      cells.push(current);
+      current = "";
+      continue;
+    }
     current += ch;
   }
   cells.push(current);
@@ -82,7 +95,10 @@ function markdown(src: string): string {
 
   while (i < lines.length) {
     const line = lines[i]!;
-    if (!line.trim()) { i++; continue; }
+    if (!line.trim()) {
+      i++;
+      continue;
+    }
 
     if (line.startsWith("```")) {
       const body: string[] = [];
@@ -142,7 +158,7 @@ function markdown(src: string): string {
       if (head) {
         out.push(
           `<table><thead><tr>${head.map((c) => `<th>${inline(c)}</th>`).join("")}</tr></thead>` +
-          `<tbody>${body.map((r) => `<tr>${r.map((c) => `<td>${inline(c)}</td>`).join("")}</tr>`).join("")}</tbody></table>`,
+            `<tbody>${body.map((r) => `<tr>${r.map((c) => `<td>${inline(c)}</td>`).join("")}</tr>`).join("")}</tbody></table>`,
         );
       }
       continue;
@@ -156,17 +172,32 @@ function markdown(src: string): string {
 }
 
 // ── frontmatter ────────────────────────────────────────────────────────────
-interface Entry { slug: string; title: string; date: string; summary: string; html: string }
+interface Entry {
+  slug: string;
+  title: string;
+  date: string;
+  summary: string;
+  html: string;
+}
 
 function parseEntry(file: string): Entry {
   const raw = readFileSync(join(ROOT, "diary", file), "utf8");
   const m = /^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/.exec(raw.replace(/^\uFEFF/, ""));
   if (!m) throw new Error(`${file}: missing frontmatter`);
   const meta = Object.fromEntries(
-    m[1]!.split("\n").filter((l) => l.includes(":")).map((l) => {
-      const idx = l.indexOf(":");
-      return [l.slice(0, idx).trim(), l.slice(idx + 1).trim().replace(/^["']|["']$/g, "")];
-    }),
+    m[1]!
+      .split("\n")
+      .filter((l) => l.includes(":"))
+      .map((l) => {
+        const idx = l.indexOf(":");
+        return [
+          l.slice(0, idx).trim(),
+          l
+            .slice(idx + 1)
+            .trim()
+            .replace(/^["']|["']$/g, ""),
+        ];
+      }),
   );
   return {
     slug: file.replace(/\.md$/, ""),
@@ -240,24 +271,34 @@ const entries = readdirSync(join(ROOT, "diary"))
 for (const e of entries) {
   writeFileSync(
     join(OUT, "diary", `${e.slug}.html`),
-    page(`${e.title} — Anchor`, `<article><h1>${esc(e.title)}</h1><p class="date">${esc(e.date)}</p>${e.html}</article>`),
+    page(
+      `${e.title} — Anchor`,
+      `<article><h1>${esc(e.title)}</h1><p class="date">${esc(e.date)}</p>${e.html}</article>`,
+    ),
   );
 }
 
 const index = entries
-  .map((e) => `<li><a href="/diary/${e.slug}.html"><span class="entry-date">${esc(e.date)}</span><span class="entry-title">${esc(e.title)}</span><span class="entry-summary">${esc(e.summary)}</span></a></li>`)
+  .map(
+    (e) =>
+      `<li><a href="/diary/${e.slug}.html"><span class="entry-date">${esc(e.date)}</span><span class="entry-title">${esc(e.title)}</span><span class="entry-summary">${esc(e.summary)}</span></a></li>`,
+  )
   .join("");
 
 writeFileSync(
   join(OUT, "index.html"),
   page("Anchor — build diary", `<ul class="entries">${index}</ul>`, {
-    subtitle: "Make your wallet a part of your desktop, not another browser tab. Built in the open — dead ends included.",
+    subtitle:
+      "Make your wallet a part of your desktop, not another browser tab. Built in the open — dead ends included.",
   }),
 );
 
 writeFileSync(
   join(OUT, "changelog.html"),
-  page("Changelog — Anchor", `<article>${markdown(readFileSync(join(ROOT, "..", "CHANGELOG.md"), "utf8"))}</article>`),
+  page(
+    "Changelog — Anchor",
+    `<article>${markdown(readFileSync(join(ROOT, "..", "CHANGELOG.md"), "utf8"))}</article>`,
+  ),
 );
 
 console.log(`built ${entries.length} entries -> ${OUT}`);

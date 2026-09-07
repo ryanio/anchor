@@ -120,6 +120,28 @@ and Hermes reads both at a project root but only the **first match** in a subdir
 (`AGENTS.override.md` → `AGENTS.md` → `agents.md` → `CLAUDE.md` → ...). A subdirectory holding both
 would have its `CLAUDE.md` silently ignored — one more reason there is only ever one real file.
 
+## Formatting and linting
+
+**Biome, always. Never ESLint or Prettier.** One tool, one config, one pass — it formats and lints
+together and runs fast enough that there is no reason to skip it.
+
+```bash
+npm run check     # verify
+npm run format    # apply safe fixes
+```
+
+`biome.json` at the root governs every workspace; do not add per-workspace configs. CI runs
+`biome ci .` and fails on any diagnostic.
+
+Suppress a rule only with a reason attached, and only when the rule is wrong about *this* code:
+
+```ts
+// biome-ignore lint/suspicious/noControlCharactersInRegex: matching control characters is the point —
+// this asserts they are absent from error messages.
+```
+
+A bare `biome-ignore` with no reason is worse than the lint it silences.
+
 ## Node version
 
 **`.node-version` at the repo root is the single source of truth.** It currently pins 26.8.1.

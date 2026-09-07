@@ -91,12 +91,7 @@ export function formatMoney(m: Money): string {
  * else — a "transfer", an opaque call — and the denial becomes an accident of parsing rather than a
  * rule. Modelling it makes the refusal total, exhaustive over the union, and directly testable.
  */
-export type ActionKind =
-  | "buy"
-  | "accept-offer"
-  | "cancel-own-listing"
-  | "transfer"
-  | "set-approval-for-all";
+export type ActionKind = "buy" | "accept-offer" | "cancel-own-listing" | "transfer" | "set-approval-for-all";
 
 /**
  * The actions that may *ever* be delegated to an agent.
