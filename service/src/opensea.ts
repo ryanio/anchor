@@ -44,6 +44,67 @@ const REQUEST_TIMEOUT_MS = 15_000;
  */
 const CALL_DEADLINE_MS = 60_000;
 
+/**
+ * Transient-failure retries.
+ *
+ * This could not exist before `@opensea/sdk` 12.1.1. Until then only 429 and 599 carried a
+ * `statusCode`; every other failure was a bare `Error` whose message was built from a
+ * remote-controlled body, so a retryable 502 was indistinguishable from a permanent 404. Parsing
+ * the message was never a fallback available to us either — errors are scrubbed on the way out
+ * because both credentials travel in headers. `OpenSeaApiError` now sets `statusCode` on every
+ * non-OK response, which is the whole reason a ladder is possible.
+ *
+ * **500 is deliberately not retryable.** Tempting, but there is a measured counter-example:
+ * `/account/{address}/portfolio` returns a *deterministic* 500 for a large account with no query
+ * parameters (docs/upstream.md entry 7). Retrying that spends two extra requests and delays the
+ * stale-cache fallback, which would have served the user something useful. Gateway errors are the
+ * honestly transient ones.
+ *
+ * **429 is not retried here either.** The SDK runs its own `Retry-After` ladder for rate limits; a
+ * second ladder on top multiplies the wait rather than shortening it.
+ */
+const RETRYABLE_STATUSES: ReadonlySet<number> = new Set([502, 503, 504]);
+/** Attempts after the first. Two rides out a gateway blip without stalling a bar widget. */
+const MAX_RETRIES = 2;
+const RETRY_BASE_DELAY_MS = 400;
+
+/**
+ * True when a failure is worth trying again.
+ *
+ * A transport error with no status — a socket reset, a DNS blip — is retryable. A timeout is not:
+ * the per-attempt ceiling already elapsed, so another attempt would spend what remains of the call
+ * deadline and most likely time out too.
+ */
+function isRetryable(err: unknown): boolean {
+  const name = err instanceof Error ? err.name : "";
+  if (name === "TimeoutError" || name === "AbortError") return false;
+  const status = statusOf(err);
+  return status === null ? true : RETRYABLE_STATUSES.has(status);
+}
+
+/**
+ * Exponential backoff with full jitter.
+ *
+ * Jitter matters more here than the growth curve: the widget wakes several readers at once, so a
+ * fixed backoff retries them in lockstep and hits the same struggling gateway together.
+ */
+function retryDelayMs(attempt: number, random: () => number = Math.random): number {
+  return Math.round(random() * RETRY_BASE_DELAY_MS * 2 ** attempt);
+}
+
+const sleep = (ms: number, signal: AbortSignal): Promise<void> =>
+  new Promise((resolve, reject) => {
+    const timer = setTimeout(resolve, ms);
+    signal.addEventListener(
+      "abort",
+      () => {
+        clearTimeout(timer);
+        reject(signal.reason);
+      },
+      { once: true },
+    );
+  });
+
 export class MissingApiKeyError extends Error {
   constructor() {
     super("No OpenSea API key in the keyring. Run: anchor-service --set-api-key");
@@ -152,16 +213,28 @@ function describeFailure(err: unknown): string {
 }
 
 /**
- * Percent-encode a value the SDK is about to interpolate into a path.
+ * Guard a value the SDK is about to interpolate into a path.
  *
- * **The SDK does not do this.** `getCollectionStatsPath(slug)` is a template literal, so a slug of
- * `../../events/accounts/0xdead` produced a request to `/api/events/accounts/0xdead/stats` — a
- * different endpoint entirely, with a cache key that collides with the real one. Slugs and
- * addresses arrive from config and from local HTTP requests, so neither is trusted.
+ * **This no longer encodes.** `@opensea/sdk` 12.1.1 applies its own `segment()` across `apiPaths.ts`,
+ * so encoding here as well would double-encode — a slug containing a space would go out as `%2520`
+ * rather than `%20`. The bump and the removal of our `encodeURIComponent` had to be one commit, and
+ * the traversal test below caught it when they briefly were not: it failed with `%252F` where it
+ * expected `%2F`. That test asserts the *behaviour*, which is why it survived the mechanism changing.
  *
- * Encoding here is safe against double-encoding: a real slug is `[a-z0-9-]` and a real address is
- * hex or base58, and `encodeURIComponent` is the identity on all of those. Only hostile input
- * changes shape, which is the point.
+ * **The rejection stays**, and is not redundant with the SDK's. It fails before the request is
+ * built, and this service caches by path: a traversed path does not merely reach the wrong endpoint,
+ * it poisons that endpoint's cache key.
+ *
+ *
+ * **The SDK did not do this before 12.1.1.** `getCollectionStatsPath(slug)` was a template literal,
+ * so a slug of `../../events/accounts/0xdead` produced a request to
+ * `/api/events/accounts/0xdead/stats` — a different endpoint entirely, with a cache key that
+ * collides with the real one. Slugs and addresses arrive from config and from local HTTP requests,
+ * so neither is trusted.
+ *
+ * Do not reintroduce encoding here on the grounds that it is harmless for real values. It is
+ * harmless for `[a-z0-9-]` slugs and hex or base58 addresses — and it is wrong for exactly the
+ * hostile inputs this function exists to handle, which is the worst possible place to be wrong.
  *
  * ## Encoding is not sufficient — `.` and `..` must be refused
  *
@@ -185,11 +258,12 @@ function describeFailure(err: unknown): string {
 function segment(value: string): string {
   if (value === "." || value === "..") {
     throw new TypeError(
-      `path segment ${JSON.stringify(value)} is a relative path reference and cannot be encoded — ` +
+      `path segment ${JSON.stringify(value)} is a relative path reference and cannot be used — ` +
         "it would traverse to a different endpoint",
     );
   }
-  return encodeURIComponent(value);
+  // Deliberately returned unchanged. See the note above the doc comment.
+  return value;
 }
 
 /** Carries the ttl into `get()` and the freshness metadata back out. See the module comment. */
@@ -255,14 +329,35 @@ export class ReadOnlyOpenSeaAPI extends OpenSeaAPI {
       return cached.data;
     }
 
+    // One deadline for the whole call, retries and backoff included, so a struggling gateway can
+    // never hold a widget past it.
+    const deadline = AbortSignal.timeout(CALL_DEADLINE_MS);
+
     try {
-      const data = await limiter.schedule(() =>
-        super.get<T>(apiPath, query, {
-          ...options,
-          timeout: REQUEST_TIMEOUT_MS,
-          signal: AbortSignal.timeout(CALL_DEADLINE_MS),
-        }),
-      );
+      // Each attempt is scheduled separately, and the backoff sleep happens *outside* the limiter.
+      // Sleeping while holding a slot would starve every other read on the desktop, queued behind a
+      // request that is doing nothing at all.
+      //
+      // The return type is inferred rather than annotated: the SDK's `Camelize<T>` is a conditional
+      // type that `Awaited<>` will not collapse, and `Camelize` is not exported from the SDK root
+      // (docs/upstream.md entry 8), so there is no name to write here even if we wanted one.
+      const attemptWithRetries = async () => {
+        for (let attempt = 0; ; attempt++) {
+          try {
+            return await limiter.schedule(() =>
+              super.get<T>(apiPath, query, {
+                ...options,
+                timeout: REQUEST_TIMEOUT_MS,
+                signal: deadline,
+              }),
+            );
+          } catch (err) {
+            if (attempt >= MAX_RETRIES || deadline.aborted || !isRetryable(err)) throw err;
+            await sleep(retryDelayMs(attempt), deadline);
+          }
+        }
+      };
+      const data = await attemptWithRetries();
       cache.put(key, data, scope.ttl);
       scope.meta = { fetchedAt: Math.floor(Date.now() / 1000), ageSeconds: 0, stale: false };
       return data;
@@ -346,7 +441,7 @@ export class OpenSeaClient {
    * The SDK fixes both credentials at construction, so a refreshed wallet JWT means a new instance.
    * That happens about twice a day; the constructor only allocates.
    */
-  async #resolveApi(scope: Scope, what: string): Promise<ReadOnlyOpenSeaAPI> {
+  async #resolveApi(scope: Scope): Promise<ReadOnlyOpenSeaAPI> {
     const apiKey = await this.#getApiKey();
     if (!apiKey) throw new MissingApiKeyError();
 
@@ -379,7 +474,7 @@ export class OpenSeaClient {
     what: string,
     fn: (api: ReadOnlyOpenSeaAPI) => Promise<T>,
   ): Promise<CacheEntry<T>> {
-    const api = await this.#resolveApi(scope, what);
+    const api = await this.#resolveApi(scope);
     const store: CallScope = { ttl };
     let data: T;
     try {

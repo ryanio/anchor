@@ -549,3 +549,67 @@ describe("errors never carry a credential", () => {
     });
   });
 });
+
+describe("transient failures are retried, permanent ones are not", () => {
+  // This suite could not have been written before @opensea/sdk 12.1.1. Until then only 429 and 599
+  // carried a `statusCode`, so a retryable 502 and a permanent 404 were the same bare Error — and
+  // this service scrubs remote error text, so parsing the message was never available either.
+
+  test("a gateway error is retried and the second attempt is served", async () => {
+    const h = harness(respondInOrder(() => statusResponse(502), ok));
+    await using(h, async () => {
+      const entry = await h.client.collection("cool-cats", NO_TTL);
+      assert.deepEqual(entry.data, { ok: true });
+      assert.equal(h.calls.length, 2, "one failure, then one success");
+    });
+  });
+
+  test("a 404 is not retried — it will not become true", async () => {
+    const h = harness(() => statusResponse(404));
+    await using(h, async () => {
+      const err = await rejects(() => h.client.collection("cool-cats", NO_TTL));
+      assert.match(err.message, /404/);
+      assert.equal(h.calls.length, 1, "a permanent failure must cost exactly one request");
+    });
+  });
+
+  // Deliberate, and the reason is measured rather than assumed: /account/{address}/portfolio
+  // returns a *deterministic* 500 for a large account with no query parameters (docs/upstream.md
+  // entry 7). Retrying it spends two extra requests and delays the stale-cache fallback.
+  test("a 500 is not retried", async () => {
+    const h = harness(() => statusResponse(500));
+    await using(h, async () => {
+      const err = await rejects(() => h.client.collection("cool-cats", NO_TTL));
+      assert.match(err.message, /500/);
+      assert.equal(h.calls.length, 1);
+    });
+  });
+
+  test("retries are bounded", async () => {
+    const h = harness(() => statusResponse(503));
+    await using(h, async () => {
+      const err = await rejects(() => h.client.collection("cool-cats", NO_TTL));
+      assert.match(err.message, /503/);
+      assert.equal(h.calls.length, 3, "the first attempt plus MAX_RETRIES, and no more");
+    });
+  });
+
+  // The stale-fallback behaviour is covered above; what this pins is the *interaction* — the
+  // retries happen first, and the cached answer is served only once the ladder is exhausted.
+  test("the ladder runs to exhaustion before falling back to cache", async () => {
+    const cache = tempCache();
+    const warm = harness(() => jsonResponse({ floor: 1 }), { cache });
+    await using(warm, async () => {
+      await warm.client.collectionStats("cool-cats", NO_TTL); // present but stale
+    });
+
+    const h = harness(() => statusResponse(503), { cache });
+    await using(h, async () => {
+      const entry = await h.client.collectionStats("cool-cats", FRESH_TTL);
+      assert.deepEqual(entry.data, { floor: 1 }, "stale beats an error card");
+      assert.equal(entry.stale, true);
+      assert.equal(h.calls.length, 3, "it exhausts the ladder before giving up");
+    });
+    cache.close();
+  });
+});

@@ -149,6 +149,18 @@ weight, never hue, which is what makes "one accent per view" enforceable rather 
 - [docs/upstream.md](docs/upstream.md) — every workaround that exists only because of an upstream
   gap, and what to delete when each is fixed.
 
+### Changed
+- **`@opensea/sdk` 12.1.1 and `@opensea/api-types` 0.9.2.** Three findings Anchor reported upstream
+  are fixed in this release. Path parameters are encoded by the SDK, so Anchor stopped encoding them
+  — doing both double-encodes, which its own traversal test caught. `segment()` remains, and still
+  refuses `.` and `..`, because encoding never handled those and the URL parser strips escapes before
+  removing dot segments.
+- **A retry ladder.** Every SDK error now carries a `statusCode`, which makes it possible to tell a
+  retryable failure from a permanent one for the first time. 502/503/504 and status-less transport
+  errors are retried twice with jittered backoff, outside the shared rate limiter so a sleeping
+  request cannot hold a slot. 500 is excluded deliberately: `/account/{address}/portfolio` returns a
+  deterministic one, and retrying it only delays the stale-cache fallback.
+
 ### Known limitations
 
 - **The wallet-token exchange has never been run end to end.** Its request and response shapes are
