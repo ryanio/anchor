@@ -642,6 +642,18 @@ test("a snapshot never restores which credentials exist", () => {
 // Settings
 // -------------------------------------------------------------------------------------------
 
+test("the manifest's advertised defaults are the ones the model actually applies", () => {
+  // The shell stores `barWidget.defaults` as registry metadata and never merges it into `settings`
+  // — `Model.mergeSettings` is what applies defaults. That makes the manifest block documentation,
+  // and documentation that disagrees with the code is the bug this test exists to prevent.
+  const manifest = require("../manifest.json");
+  assert.deepEqual(manifest.barWidget.defaults, Model.DEFAULT_SETTINGS);
+
+  // Every advertised setting is also one the model will accept, and vice versa.
+  const advertised = manifest.barWidget.schema.map((field) => field.key).sort();
+  assert.deepEqual(advertised, Object.keys(Model.DEFAULT_SETTINGS).sort());
+});
+
 test("settings come from a hand-edited file, so every field is validated", () => {
   const merged = Model.mergeSettings({
     port: "8080",

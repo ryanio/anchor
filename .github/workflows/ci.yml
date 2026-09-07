@@ -48,5 +48,10 @@ jobs:
           npx --prefix executor tsc --noEmit --project executor
           npm test --prefix executor
 
+      # No install step: the widget has no dependencies at all. Its logic lives in a plain script
+      # that QML's engine loads, and the tests drive it through `require` under node --test.
+      - name: Widget — test
+        run: npm test --prefix widget
+
       - name: Site builds
         run: node site/build.ts

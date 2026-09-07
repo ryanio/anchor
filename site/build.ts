@@ -270,7 +270,7 @@ ${CSS}</style>
         <span class="foot-mark">${MARK}<span>Anchor</span></span>
         <p>A wallet-aware Linux desktop. Your art becomes the theme, your watchlist lives in the bar,
            and an agent acts within limits it cannot change.</p>
-        <a class="foot-cta" href="${LINKS.repo}">
+        <a class="foot-cta btn btn--strong" href="${LINKS.repo}">
           ${icon("github", 15)}<span>Read the source</span>${icon("arrow-up-right", 13)}
         </a>
       </div>

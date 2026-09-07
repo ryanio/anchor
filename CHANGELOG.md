@@ -69,13 +69,42 @@ wash-trade drains, and budget is reserved at approval rather than settlement. Th
 $100 to $100k+, each tier earned by a clean incident record — is in
 [docs/autonomy.md](docs/autonomy.md).
 
+**The Quickshell bar widget** — roadmap step 2. Portfolio value, incoming offers, closing
+deadlines and an activity count, in the Omarchy top bar, read from the local service on loopback.
+
+- **It never blocks the bar.** Every fetch is a detached `curl`; the last reading is restored from a
+  snapshot on disk before any of them start, so the bar has content on its first frame. This runs
+  inside the single process that draws the whole desktop.
+- **Every degraded state is a designed state.** Service down, no API key, no wallet, offline — each
+  renders as a calm dimmed mark and a panel saying what is missing and the command that fixes it,
+  never as an error. A red box on a fresh install is a bad first impression.
+- **Staleness is shown, not hidden**, using the service's own `meta.ageSeconds` so a reading keeps
+  ageing honestly across a reboot.
+- **Setup is three steps, not a wall.** Completed steps leave the queue and a segmented bar keeps the
+  record; one step is current and only it shows a command; the optional step collapses behind a pill
+  you can press. Each step says what it gets you rather than what it configures.
+- **A stored credential is not a working one.** A 401 on any read sends the API-key step back to
+  current and says the key is being rejected, rather than ticking it because `/health` says a string
+  exists.
+- Marketplace names are sanitised — bidi overrides, zero-width padding, combining-mark runs and
+  control characters — and rendered as plain text. Money stays a decimal string, rounded digit by
+  digit; no denomination is ever converted, because there is no exchange rate in the widget.
+- Read-only: no credential of its own, loopback only, and clicking a row opens a browser.
+
+**A component layer above the tokens** — `theme/components.css`, with `theme/README.md` documenting
+each piece and when to use it. Pills, a step primitive, segmented progress, buttons in two weights,
+list rows, and generalised surfaces (`.card`, `.well`, `.lift`), so the site, the widget and the
+standalone pages compose from one vocabulary instead of each inventing its own. Variants choose
+weight, never hue, which is what makes "one accent per view" enforceable rather than aspirational.
+
 **The site, the brand, and the tooling.**
 
 - anchor.ryanio.com: build diary, changelog and `llms.txt`, on a deep-water palette with shared
   tokens in `theme/tokens.css` reused across the project rather than redefined.
 - An anchor mark that reads as an **A**, stroke-based on `currentColor`, legible at 16px.
-- `scripts/check-contrast.ts` computes WCAG ratios from the tokens and fails CI — all 20 text and
-  accent pairs clear AA in both themes, so a colour that looks good but is unreadable cannot land.
+- `scripts/check-contrast.ts` computes WCAG ratios from the tokens and fails CI — all 32 text,
+  accent and component pairs clear AA in both themes, so a colour that looks good but is unreadable
+  cannot land.
 - `scripts/check-versions.ts` enforces the Node floor across `.node-version`, CI and the PKGBUILD,
   and requires GitHub Actions to be pinned to commit SHAs rather than mutable tags.
 - Biome as the single formatter and linter — never ESLint or Prettier.

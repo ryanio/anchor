@@ -19,7 +19,13 @@
     "defaults": {
       "port": 8787,
       "timeframe": "DAY",
-      "showValue": true
+      "showValue": true,
+      "deadlineWindowHours": 48,
+      "urgentHours": 6,
+      "activityWindowHours": 24,
+      "staleAfter": 900,
+      "maxNameLength": 28,
+      "timeout": 6
     },
     "schema": [
       {
@@ -34,10 +40,22 @@
         "label": "Change over",
         "description": "Window the percentage change is measured across.",
         "options": [
-          { "value": "HOUR", "label": "Hour" },
-          { "value": "DAY", "label": "Day" },
-          { "value": "WEEK", "label": "Week" },
-          { "value": "MONTH", "label": "Month" }
+          {
+            "value": "HOUR",
+            "label": "Hour"
+          },
+          {
+            "value": "DAY",
+            "label": "Day"
+          },
+          {
+            "value": "WEEK",
+            "label": "Week"
+          },
+          {
+            "value": "MONTH",
+            "label": "Month"
+          }
         ]
       },
       {
@@ -63,6 +81,24 @@
         "type": "number",
         "label": "Name length",
         "description": "Characters of a collection or item name to show before truncating."
+      },
+      {
+        "key": "activityWindowHours",
+        "type": "number",
+        "label": "Activity window (hours)",
+        "description": "How far back the activity count on the bar looks."
+      },
+      {
+        "key": "staleAfter",
+        "type": "number",
+        "label": "Call it stale after (seconds)",
+        "description": "A reading older than this is shown as stale even if the service has not said so."
+      },
+      {
+        "key": "timeout",
+        "type": "number",
+        "label": "Read timeout (seconds)",
+        "description": "How long a read waits for the local service before it counts as a failure."
       }
     ]
   }

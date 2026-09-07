@@ -32,7 +32,7 @@ if (runningMajor !== major) {
 
 // Every workspace's package.json engines. Adding a workspace must not create a new drift hole.
 const expectedEngines = `>=${major}.0.0`;
-for (const ws of ["service", "executor"]) {
+for (const ws of ["service", "executor", "widget"]) {
   let pkg: { engines?: { node?: string } };
   try {
     pkg = JSON.parse(read(`${ws}/package.json`)) as { engines?: { node?: string } };
