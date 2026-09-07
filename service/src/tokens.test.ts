@@ -52,7 +52,7 @@ async function rig(
   const { calls, restore } = stubFetch(withExchange(opts.handler ?? (() => jsonResponse({ ok: true }))));
   const config = testConfig({
     chains: opts.chains ?? ["ethereum"],
-    wallet: opts.wallet ?? WALLET,
+    wallets: [opts.wallet ?? WALLET],
     tokens: opts.tokens ?? [],
   });
   const client = new OpenSeaClient({
@@ -240,7 +240,7 @@ describe("the wallet token", () => {
         : jsonResponse({ ok: true }),
     );
     try {
-      const config = testConfig({ wallet: WALLET });
+      const config = testConfig({ wallets: [WALLET] });
       const client = new OpenSeaClient({
         chains: config.chains,
         requestsPerSecond: 1000,

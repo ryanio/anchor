@@ -150,8 +150,8 @@ describe("config validation", () => {
 
   test("valid config passes through with defaults filled in", () => {
     const wallet = "0x1E0049783F008A0085193E00003D00cd54003c71";
-    const c = validate({ wallet });
-    assert.equal(c.wallet, wallet);
+    const c = validate({ wallets: [wallet] });
+    assert.deepEqual(c.wallets, [wallet]);
     assert.deepEqual(c.chains, ["ethereum"]);
     assert.equal(c.requestsPerSecond, 2);
     assert.equal(c.ttl.nfts, 300);
@@ -159,7 +159,9 @@ describe("config validation", () => {
 
   test("a truncated wallet is refused at load rather than 400ing at the first call", () => {
     // `"0xabc"` used to be accepted, and only OpenSea knew it was wrong. See chains.test.ts.
-    assert.throws(() => validate({ wallet: "0xabc" }), /`wallet`/);
+    // The singular spelling still has to be validated, not just accepted: it is read as a
+    // one-element `wallets`, and the error names the element that is wrong.
+    assert.throws(() => validate({ wallet: "0xabc" }), /`wallets\[0\]`/);
   });
 });
 

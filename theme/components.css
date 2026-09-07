@@ -46,6 +46,16 @@
   padding: var(--space-3) var(--space-4);
 }
 
+/*
+ * A group lifted one step further toward the reader — the CSS counterpart of the Quickshell
+ * panel's `PanelBlock`. Use it for a block of rows inside a card, where a divider would otherwise
+ * be doing two jobs badly: saying where the group ends, and giving the eye somewhere to rest.
+ * On a light theme it reads as a plain card, because a light stack has no headroom above white.
+ */
+.card--raised {
+  background: var(--surface-raised);
+}
+
 /* A surface that responds to the pointer. Composes onto `.card`, `.surface` or `.glass`. */
 .lift {
   transition: none;

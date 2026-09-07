@@ -259,17 +259,50 @@ function groupDigits(value) {
  * rule (`executor/src/types.ts`) is that denominations do not implicitly convert, and a read-only
  * widget has even less business inventing a rate than the thing that spends money does.
  */
+/**
+ * Pad a decimal string out to exactly `places` fraction digits.
+ *
+ * A *display* rule, applied after rounding and grouping and never to the value itself: nothing
+ * downstream reads this string back. It exists because USD has exactly two decimal places by
+ * definition, and `$125,430.5` is not a dollar amount — it is a number that happens to be in
+ * dollars. Denominations without a fixed minor unit must not get this: ETH quoted to 8 places
+ * would become `1.50000000`, which claims a precision the response never made.
+ */
+function padFraction(value, places) {
+  const text = String(value ?? "");
+  const dot = text.indexOf(".");
+  const digits = dot === -1 ? 0 : text.length - dot - 1;
+  if (digits >= places) return text;
+  return (dot === -1 ? `${text}.` : text) + "0".repeat(places - digits);
+}
+
+/** Fixed minor units, by denomination. Only currencies whose minor unit is part of the unit. */
+const FIXED_DECIMALS = { USD: 2 };
+
 function formatMoney(amount, options) {
   const opts = options ?? {};
   const decimal = typeof amount === "string" ? amount : null;
   if (decimal === null || DECIMAL_RE.exec(decimal.trim()) === null) return "";
 
   const symbol = sanitizeSymbol(opts.symbol);
+  const fixed = FIXED_DECIMALS[symbol];
+
   // `exact` shows the figure the API gave rather than a magnitude, but still caps the fraction:
   // a response with eighteen decimal places would otherwise run off the edge of the panel. The cap
-  // is a display limit, not arithmetic — nothing downstream reads this string back.
-  const body =
-    opts.exact === true ? groupDigits(roundDecimal(decimal, 8) ?? decimal) : compactDecimal(decimal);
+  // is a display limit, not arithmetic — nothing downstream reads this string back. A denomination
+  // with a fixed minor unit is rounded and padded to it; everything else keeps the 8-place cap and
+  // its trailing zeros trimmed.
+  let body = null;
+  if (opts.exact === true) {
+    const places = fixed === undefined ? 8 : fixed;
+    body = groupDigits(roundDecimal(decimal, places) ?? decimal);
+    if (body !== null && fixed !== undefined) body = padFraction(body, fixed);
+  } else {
+    body = compactDecimal(decimal);
+    // The compact form is a magnitude *once it has a unit on it*: "$125.00K" would pad a rounding
+    // rather than a cent. Below the first unit it is still an amount, and $11.1 is not a price.
+    if (body !== null && fixed !== undefined && !/[KMBT]$/.test(body)) body = padFraction(body, fixed);
+  }
   if (body === null) return "";
 
   if (symbol === "USD") return body.startsWith("-") ? `-$${body.slice(1)}` : `$${body}`;
@@ -403,6 +436,156 @@ function dimAlpha(foreground, background, desired, minRatio) {
     }
   }
   return 1;
+}
+
+// -------------------------------------------------------------------------------------------
+// Depth, taken from the live Omarchy theme
+// -------------------------------------------------------------------------------------------
+//
+// The panel used to paint every surface the same colour, which is what made it read flat: a ground,
+// its rows and its sunken wells were all one value and only the text told you where you were.
+//
+// The fix is not an Anchor palette. Omarchy's themes already ship the layers — every stock theme
+// defines `background`, `lighter_background` and `dark_background`, and in *both* light and dark
+// themes `lighter_background` steps away from the ground toward the reader while `dark_background`
+// steps away from it. (Checked against all 22 stock themes: catppuccin-latte's "lighter" is
+// #dce0e8 against a #eff1f5 ground — darker, because on a light theme the alternate surface is the
+// darker one. The names describe the palette, not the direction.) So the theme author's own choice
+// is used where it is usable, and a step is derived from the ground only when it is not.
+
+const HEX_RE = /^#?([0-9a-f]{6})$/i;
+
+/** A `#rrggbb` string as QML-shaped channels, or null. Colour maths here is all 0–1. */
+function hexToRgb(value) {
+  const m = HEX_RE.exec(String(value ?? "").trim());
+  if (m === null) return null;
+  const n = Number.parseInt(m[1], 16);
+  return { r: ((n >> 16) & 255) / 255, g: ((n >> 8) & 255) / 255, b: (n & 255) / 255 };
+}
+
+/**
+ * The handful of keys Anchor needs out of an Omarchy theme's `colors.toml`.
+ *
+ * The shell's own `Color` singleton parses this file too, but keeps only foreground, background,
+ * accent, urgent and muted — the surface layers never reach QML. Rather than duplicate its parser
+ * this reads the same file for the four extra keys and nothing else, so a theme that omits them
+ * still yields a usable result and no key here can turn into a colour at a call site.
+ */
+function parseThemeColors(raw) {
+  const out = { mode: "dark", background: null, raised: null, sunken: null, line: null, foreground: null };
+  const lines = String(raw ?? "").split("\n");
+  for (const line of lines) {
+    const kv = /^\s*([a-z_]+)\s*=\s*(.+?)\s*$/.exec(line);
+    if (kv === null) continue;
+    const key = kv[1];
+    // Values are quoted hex or a bare word; a trailing comment is stripped before unquoting so
+    // `background = "#1a1b26"  # deep` reads as the colour rather than as the whole line.
+    const value = kv[2].replace(/\s+#.*$/, "").replace(/^["']|["']$/g, "");
+    if (key === "mode") out.mode = value === "light" ? "light" : "dark";
+    else if (key === "background") out.background = hexToRgb(value);
+    else if (key === "lighter_background") out.raised = hexToRgb(value);
+    else if (key === "dark_background") out.sunken = hexToRgb(value);
+    else if (key === "selection") out.line = hexToRgb(value);
+    else if (key === "foreground") out.foreground = hexToRgb(value);
+  }
+  return out;
+}
+
+/** A surface is a *step*, not an edge: below this it is invisible, above it reads as a border. */
+const SURFACE_MIN_RATIO = 1.03;
+const SURFACE_MAX_RATIO = 1.5;
+const SURFACE_TARGET_RATIO = 1.14;
+/** A well that had to go *up* takes a shorter step than the card, so the pair stays ordered. */
+const SUNKEN_REVERSED_RATIO = 1.07;
+const LINE_MIN_RATIO = 1.25;
+const LINE_MAX_RATIO = 4;
+const LINE_TARGET_RATIO = 1.4;
+
+/**
+ * Blend `toward` into `ground` until the pair reaches `target` contrast, or as far as it goes.
+ *
+ * Used only when the theme has no usable value of its own. Stepping by alpha rather than by a fixed
+ * lightness delta is what makes one rule work on both #000000 and #ffffff grounds: on a ground that
+ * cannot go further in that direction the loop simply runs out and returns the closest it reached.
+ */
+function stepToward(ground, toward, target) {
+  let best = ground;
+  for (let alpha = 0.02; alpha <= 0.6; alpha += 0.01) {
+    best = composite(toward, ground, alpha);
+    if (contrastRatio(best, ground) >= target) return best;
+  }
+  return best;
+}
+
+const BLACK = { r: 0, g: 0, b: 0 };
+const WHITE = { r: 1, g: 1, b: 1 };
+
+/**
+ * A derived step, with the direction reversed when the ground has no room left in it.
+ *
+ * `vantablack` is a #000000 ground and the `white` theme is #ffffff, so "a well is darker" and "a
+ * card is lighter" are both false somewhere. When the preferred direction cannot reach the target,
+ * the step goes the other way and takes a *shorter* one, which keeps the two layers apart and keeps
+ * the well reading as the quieter of the pair rather than out-shouting the card above it.
+ */
+function derivedStep(ground, preferred, opposite, target, reversedTarget) {
+  const first = stepToward(ground, preferred, target);
+  if (contrastRatio(first, ground) >= SURFACE_MIN_RATIO) return first;
+  return stepToward(ground, opposite, reversedTarget);
+}
+
+/** The theme's own value when it is a real step off *this* ground, otherwise one derived from it. */
+function surfaceStep(ground, candidate, preferred, opposite, reversedTarget) {
+  if (candidate !== null && candidate !== undefined) {
+    const r = contrastRatio(candidate, ground);
+    if (r >= SURFACE_MIN_RATIO && r <= SURFACE_MAX_RATIO) return candidate;
+  }
+  return derivedStep(ground, preferred, opposite, SURFACE_TARGET_RATIO, reversedTarget);
+}
+
+/**
+ * The three surfaces the panel draws on, and the hairline between them.
+ *
+ * `ground` is passed in rather than taken from the theme file because the ground the panel actually
+ * sits on is the shell's `popups.background`, which a theme may set independently of `background`
+ * in its `shell.toml`. Deriving the steps from the file while painting on a different ground is how
+ * a "themed" surface ends up not matching the thing it sits on.
+ */
+function panelSurfaces(ground, theme) {
+  const t = theme ?? {};
+  const light = t.mode === "light";
+  // Raised moves toward the reader, sunken away from it. On a light theme both are darker than the
+  // ground — a light UI has no headroom above white — which is exactly what the stock themes do.
+  const raised = surfaceStep(
+    ground,
+    t.raised,
+    light ? BLACK : WHITE,
+    light ? WHITE : BLACK,
+    SURFACE_TARGET_RATIO,
+  );
+  const sunken = surfaceStep(ground, t.sunken, BLACK, WHITE, SUNKEN_REVERSED_RATIO);
+  // The theme's foreground makes the best derived rule — it is the one colour guaranteed to
+  // contrast with the ground — and where there is no theme at all the direction is decided the
+  // same way the surfaces decide it, by trying and reversing when the ground has no room.
+  const fallbackLine = t.foreground ?? (light ? BLACK : WHITE);
+  const fallbackLineOpposite = t.foreground ?? (light ? WHITE : BLACK);
+  // A hairline is allowed a louder step than a surface, and a much wider band: `selection` is the
+  // theme's own "this row is picked" colour, and across the stock themes that runs from barely
+  // there (#292e42 on Tokyo Night) to a mid grey (#c0c0c0 on `white`). Both draw a legible rule.
+  // The only thing a divider must not do is reach text contrast, which is what the ceiling is for.
+  let line = t.line ?? null;
+  if (line !== null) {
+    const r = contrastRatio(line, ground);
+    // The floor is not cosmetic: `vantablack` sets `selection` and `lighter_background` to the same
+    // value, and a divider identical to the surface beside it disappears exactly where it is doing
+    // its job. Below the floor the rule is derived instead, so a separator is always a separator.
+    if (r < LINE_MIN_RATIO || r > LINE_MAX_RATIO) line = null;
+  }
+  if (line === null) {
+    line = derivedStep(ground, fallbackLine, fallbackLineOpposite, LINE_TARGET_RATIO, LINE_TARGET_RATIO);
+  }
+
+  return { ground: ground, raised: raised, sunken: sunken, line: line };
 }
 
 // -------------------------------------------------------------------------------------------
@@ -542,9 +725,44 @@ function emptyState() {
     portfolio: null,
     activity: null,
     collections: null,
+    /** Token holdings, for the asset and chain breakdowns. Never on the bar. */
+    balances: null,
     /** Wall-clock ms of the last read of any kind that succeeded. */
     updatedAt: 0,
+    /**
+     * What `systemctl --user` says about the service unit. Not a reading from the service — it is
+     * a fact about this machine, and it is what decides whether setup shows a button or a command.
+     */
+    unit: { loaded: false, active: "", failed: false },
   };
+}
+
+/** Fold a `systemctl show` result into state. Its own function so a test can drive it. */
+function applyUnitState(state, raw) {
+  return Object.assign({}, state ?? emptyState(), { unit: parseUnitState(raw) });
+}
+
+/**
+ * Every wallet Anchor is watching, as a list.
+ *
+ * The config used to name one wallet and the widget read one field. `wallets` is the list and
+ * `wallet` is kept as its first element for anything that still asks — the same shape the project
+ * already uses for `chain` → `chains`, so a hand-edited config with either spelling works.
+ *
+ * Watching all of them by default is as far as this goes: Anchor cannot *discover* a person's
+ * wallets, because it holds no wallet credential and there is no endpoint that maps a human to
+ * their addresses. Until a wallet adapter is connected, "all of them" means "all of the ones in the
+ * config", and the setup step is widened rather than deleted. See widget/README.md.
+ */
+function walletList(health) {
+  const list = health?.wallets;
+  if (Array.isArray(list)) {
+    const out = [];
+    for (const entry of list) if (typeof entry === "string" && entry !== "") out.push(entry);
+    if (out.length > 0) return out;
+  }
+  const single = health?.wallet;
+  return typeof single === "string" && single !== "" ? [single] : [];
 }
 
 function credentials(health) {
@@ -565,10 +783,130 @@ function credentials(health) {
  */
 function apiKeyRejected(state) {
   const s = state ?? emptyState();
-  for (const key of ["portfolio", "activity", "collections"]) {
+  // Every data read, `balances` included. A route left out of this list is a route whose 401 the
+  // panel would absorb silently while continuing to say the key is fine.
+  for (const key of ["portfolio", "activity", "collections", "balances"]) {
     if (s[key] && s[key].status === 401) return true;
   }
   return false;
+}
+
+// -------------------------------------------------------------------------------------------
+// Actions the panel can take
+// -------------------------------------------------------------------------------------------
+//
+// A setup step should *do* the thing, not describe it. Handing someone a `node …` command to copy
+// out of a bar widget is the opposite of a desktop feature.
+//
+// A widget that spawns processes deserves a hard look, so the shape is deliberate. **The panel
+// passes an identifier, never a command.** Every argv is assembled here from string literals, the
+// table is closed, and an unknown id yields `null` — which means there is no expression anywhere in
+// this project that turns marketplace text, a `/health` response, a `shell.json` setting or any
+// other attacker-reachable value into something that runs. The one non-literal element is the
+// config file's path, which is built from `$HOME`/`$XDG_CONFIG_HOME` and then validated below.
+//
+// What the allowed commands can do is bounded too. `systemctl --user` is the invoking user's own
+// service manager: no polkit prompt, no privilege the user did not already have, and it can only
+// start a unit that is already installed on the machine — the widget never writes one. None of this
+// touches the read-only invariant either: starting the data service creates no code path from this
+// widget to a signature, because the service refuses every non-GET before routing and holds no key.
+//
+// What is deliberately *not* here is any path that carries a credential. The API key is typed by a
+// human into a terminal that writes it straight to the OS keyring; the widget opens that terminal
+// and never sees the secret. A text field in the bar would put a credential inside the single
+// process that draws the whole desktop, and passing it as an argument would put it in the process
+// table. Neither is worth the saved click.
+
+const SERVICE_UNIT = "anchor-service.service";
+
+const ACTION = {
+  /** `systemctl --user start` — this session only. */
+  START_SERVICE: "start-service",
+  /** `systemctl --user enable --now` — and every session after it. */
+  ENABLE_SERVICE: "enable-service",
+  /** Read the unit's state. Not user-visible; the widget polls it like any other reading. */
+  PROBE_SERVICE: "probe-service",
+  /** Opens a terminal on the interactive prompt. The secret never comes near this process. */
+  SET_API_KEY: "set-api-key",
+  /** Opens `~/.config/anchor/config.json` in whichever editor Omarchy is configured to use. */
+  EDIT_CONFIG: "edit-config",
+};
+
+/**
+ * Where the service's config lives, from the environment rather than from any setting.
+ *
+ * Validated even so: an absolute path, no `..` segment, no control characters. `$XDG_CONFIG_HOME`
+ * is the user's own variable and not an attack surface in any realistic sense, but this value is
+ * the single non-literal that reaches `execDetached`, and "realistically safe" is the argument that
+ * precedes every injection. Returns null rather than guessing, and a null runs nothing.
+ */
+function configFilePath(env) {
+  const e = env ?? {};
+  const base =
+    typeof e.configHome === "string" && e.configHome !== ""
+      ? e.configHome
+      : typeof e.home === "string" && e.home !== ""
+        ? `${e.home}/.config`
+        : "";
+  if (base === "") return null;
+  const path = `${base}/anchor/config.json`;
+  if (path.charAt(0) !== "/") return null;
+  if (path.split("/").includes("..")) return null;
+  // Its own regex, not the shared `CONTROL_RE`: that one carries the `g` flag, and `.test()` on a
+  // global regex advances `lastIndex`, so alternate calls return false on identical input.
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: refusing them is the point — a path is what reaches execDetached, and a test asserts a control character is rejected.
+  if (/[\u0000-\u001F\u007F-\u009F]/.test(path)) return null;
+  return path;
+}
+
+/**
+ * The argv for an action id, or null.
+ *
+ * `null` is the whole safety property: the caller runs what this returns and nothing else, so an id
+ * that is not in this table cannot become a command however it was produced.
+ */
+function actionArgv(id, env) {
+  switch (id) {
+    case ACTION.START_SERVICE:
+      return ["systemctl", "--user", "start", SERVICE_UNIT];
+    case ACTION.ENABLE_SERVICE:
+      return ["systemctl", "--user", "enable", "--now", SERVICE_UNIT];
+    case ACTION.PROBE_SERVICE:
+      return ["systemctl", "--user", "show", SERVICE_UNIT, "--property=LoadState", "--property=ActiveState"];
+    case ACTION.SET_API_KEY:
+      // `omarchy-launch-terminal` is Omarchy's own launcher and takes the command as argv, so the
+      // prompt runs in a real TTY. That matters beyond convenience: `--set-api-key` refuses a value
+      // that arrives with whitespace or control characters, which is how it caught a wrapper
+      // feeding it its own command line (AGENTS.md, "Measuring things").
+      return ["omarchy-launch-terminal", "anchor-service", "--set-api-key"];
+    case ACTION.EDIT_CONFIG: {
+      const path = configFilePath(env);
+      return path === null ? null : ["omarchy-launch-editor", path];
+    }
+    default:
+      return null;
+  }
+}
+
+/**
+ * `systemctl show` output as the two facts the panel needs.
+ *
+ * `loaded` is the honest test for "is there a button worth showing": a unit file that exists can be
+ * named, and one that does not cannot. It is *not* a promise that starting will work — a unit whose
+ * `ExecStart` is missing loads fine and fails on start — so `failed` is read back afterwards and
+ * the step says so rather than the panel claiming a success it did not observe.
+ */
+function parseUnitState(raw) {
+  const out = { loaded: false, active: "", failed: false };
+  if (typeof raw !== "string") return out;
+  for (const line of raw.split("\n")) {
+    const kv = /^([A-Za-z]+)=(.*)$/.exec(line.trim());
+    if (kv === null) continue;
+    if (kv[1] === "LoadState") out.loaded = kv[2] === "loaded";
+    else if (kv[1] === "ActiveState") out.active = kv[2];
+  }
+  out.failed = out.active === "failed";
+  return out;
 }
 
 /**
@@ -590,16 +928,29 @@ function setupSteps(state) {
   const reachable = health !== null;
   const rejected = creds.apiKey && apiKeyRejected(state);
 
+  const unit = state?.unit ?? { loaded: false, active: "", failed: false };
+
   return [
     {
       key: "service",
       label: "Start the data service",
-      detail: "Everything Anchor shows is read through it, on loopback.",
+      // Three details for three different situations, and the middle one is the one that matters:
+      // a unit can load and still fail to start, and a panel that showed a button, ran it, and then
+      // said nothing would be claiming a success it never observed.
+      detail: unit.failed
+        ? "It is installed but failed to start. `systemctl --user status anchor-service` says why."
+        : unit.loaded
+          ? "Everything Anchor shows is read through it, on loopback."
+          : "Everything Anchor shows is read through it, on loopback. Install Anchor's service unit and this becomes a button.",
       // `missing` is a phrase that reads as a sentence, because it is one — deriving it from
       // `label` produced "opensea api key stored is missing".
       missing: "the data service is not running",
       done: reachable,
-      hint: "node service/src/index.ts",
+      // Offered only when the unit is actually installed. A button that cannot work is worse than
+      // no button: it moves the failure from "not set up yet" to "this thing is broken".
+      action: unit.loaded ? { id: ACTION.START_SERVICE, label: "Start Anchor" } : null,
+      secondary: unit.loaded ? { id: ACTION.ENABLE_SERVICE, label: "and at login" } : null,
+      hint: unit.loaded ? "systemctl --user start anchor-service" : "node service/src/index.ts",
       optional: false,
     },
     {
@@ -610,19 +961,27 @@ function setupSteps(state) {
       label: rejected ? "Replace your OpenSea API key" : "Add your OpenSea API key",
       detail: rejected
         ? "The stored key is being rejected. Nothing will load until it is replaced."
-        : "This is the only credential Anchor needs.",
+        : "The only credential Anchor needs. Opens a terminal — the key goes straight to your keyring and never through this widget.",
       missing: rejected ? "the stored API key is being rejected" : "needs an OpenSea API key",
       done: reachable && creds.apiKey && !rejected,
+      // A step that can be started from the panel is, even though it cannot be *finished* there.
+      // Typing a secret into the process that draws the desktop is not a shortcut worth having, so
+      // the widget opens the prompt and then has nothing more to do with it.
+      action: { id: ACTION.SET_API_KEY, label: rejected ? "Replace the key" : "Enter the key" },
+      secondary: null,
       hint: rejected ? "anchor-service --check-credentials" : "anchor-service --set-api-key",
       optional: false,
     },
     {
       key: "wallet",
-      label: "Say which wallet to follow",
-      detail: "Anchor watches it. It never holds its keys.",
+      label: "Add a wallet to watch",
+      detail: "Anchor watches every wallet you list, and never holds their keys.",
       missing: "no wallet configured",
-      done: reachable && typeof health.wallet === "string" && health.wallet.length > 0,
-      hint: "set `wallet` in ~/.config/anchor/config.json",
+      done: reachable && walletList(health).length > 0,
+      action: { id: ACTION.EDIT_CONFIG, label: "Open config" },
+      secondary: null,
+      // The button opens this file, so the footnote is the path rather than a sentence about it.
+      hint: "~/.config/anchor/config.json",
       optional: false,
     },
     // There is deliberately no wallet-PAT step here. Anchor used to ask for one and call the
@@ -636,7 +995,9 @@ function setupSteps(state) {
       detail: "Their floor prices show up in this panel.",
       missing: "no collections watched",
       done: reachable && Array.isArray(health.collections) && health.collections.length > 0,
-      hint: "add slugs to `collections` in ~/.config/anchor/config.json",
+      action: { id: ACTION.EDIT_CONFIG, label: "Open config" },
+      secondary: null,
+      hint: "`collections` in ~/.config/anchor/config.json",
       optional: true,
       /** What skipping this costs, as a noun phrase. See `optionalSummary`. */
       benefit: "floor prices",
@@ -762,8 +1123,12 @@ function statusDetail(state, nowMs, settings) {
       if (status === STATUS.READY) {
         const events = activityCount(s, now, settings);
         const hours = Number(settings?.activityWindowHours) || 24;
-        parts.push(`${events} event${events === 1 ? "" : "s"} in ${hours}h`);
+        // Zero is not news. "0 events in 24h" is a line that costs a reader something and tells
+        // them nothing they did not already get from the absence of a list.
+        if (events > 0) parts.push(`${events} event${events === 1 ? "" : "s"} in ${hours}h`);
       }
+      // A healthy, quiet wallet still deserves a subtitle that says the widget is working.
+      if (parts.length === 0 && status === STATUS.READY) return "up to date";
       return parts.join(" · ");
     }
   }
@@ -773,6 +1138,209 @@ function statusDetail(state, nowMs, settings) {
 function statusSummary(state, nowMs, settings) {
   const detail = statusDetail(state, nowMs, settings);
   return detail === "" ? "Anchor" : `Anchor — ${detail}`;
+}
+
+// -------------------------------------------------------------------------------------------
+// The portfolio, broken down
+// -------------------------------------------------------------------------------------------
+//
+// Three views of one number, and each says what it covers, because they do not all cover the same
+// thing:
+//
+//   **Type** is the whole portfolio. `/portfolio/value` returns `nftValueUsd` and `tokenValueUsd`
+//   and they sum to the total, so this is the only view that accounts for everything.
+//
+//   **Assets** and **Chains** come from `/balances`, which is the *token* half. They are labelled
+//   as such and their own total is shown, rather than being presented as shares of the portfolio.
+//   Drawing NFT value into a chain split would need per-chain NFT valuation, which the endpoint
+//   does not return; inventing it from what is available is exactly the kind of plausible number
+//   this widget exists not to print.
+//
+// The form is a labelled split bar, never a pie. Two or three parts of a whole is a ratio, and a
+// pie of two slices is the canonical way to make a ratio harder to read than the sentence it
+// replaced. Every segment carries its own name, value and share as text; the bar is the shape of
+// the answer and the rows are the answer.
+
+const BREAKDOWNS = [
+  { key: "type", label: "type" },
+  { key: "asset", label: "assets" },
+  { key: "chain", label: "chains" },
+];
+
+/** Sum a list of decimal strings without going through a float. See rule 2 in the module comment. */
+function sumDecimals(values) {
+  let total = "0";
+  for (const value of values) total = addDecimals(total, value);
+  return total;
+}
+
+/** `a + b` on two non-negative decimal strings, digit by digit with a carry. */
+function addDecimals(a, b) {
+  const ma = DECIMAL_RE.exec(String(a ?? "").trim());
+  const mb = DECIMAL_RE.exec(String(b ?? "").trim());
+  if (!ma || !mb || ma[1] === "-" || mb[1] === "-") return ma && ma[1] !== "-" ? String(a) : "0";
+
+  const fracLen = Math.max((ma[3] ?? "").length, (mb[3] ?? "").length);
+  const pad = (m) => m[2] + (m[3] ?? "").padEnd(fracLen, "0");
+  const da = pad(ma);
+  const db = pad(mb);
+  const width = Math.max(da.length, db.length);
+  const xa = da.padStart(width, "0");
+  const xb = db.padStart(width, "0");
+
+  let carry = 0;
+  let out = "";
+  for (let i = width - 1; i >= 0; i--) {
+    const sum = Number(xa[i]) + Number(xb[i]) + carry;
+    out = String(sum % 10) + out;
+    carry = sum >= 10 ? 1 : 0;
+  }
+  if (carry > 0) out = "1" + out;
+
+  const cut = out.length - fracLen;
+  const int = out.slice(0, cut).replace(/^0+(?=\d)/, "");
+  const frac = out.slice(cut);
+  return fracLen === 0 ? int : trimZeros(`${int}.${frac}`);
+}
+
+/**
+ * A share, 0–1, as a float.
+ *
+ * The one place a float is allowed, and only because nothing is printed from it: it sets the width
+ * of a rectangle. The percentage beside it is rounded from the same number and is a share, not an
+ * amount — `Model.formatMoney` still prints every figure from the decimal string.
+ */
+function share(part, total) {
+  const p = Number(part);
+  const t = Number(total);
+  if (!isFinite(p) || !isFinite(t) || t <= 0) return 0;
+  return Math.min(1, Math.max(0, p / t));
+}
+
+/** Token holdings from `/balances`, largest first. Every string here is remote and sanitised. */
+function balanceRows(state, settings) {
+  const data = state?.balances?.data ?? null;
+  const list = Array.isArray(data) ? data : (data?.tokens ?? data?.balances ?? data?.items ?? null);
+  if (!Array.isArray(list)) return [];
+  const maxName = Number(settings?.maxNameLength) || DEFAULT_MAX_NAME;
+
+  const out = [];
+  for (const row of list) {
+    const usd = pickDecimal(row, ["usdValue", "usd_value"]);
+    if (usd === null) continue;
+    const symbol = sanitizeSymbol(pickString(row, ["symbol"]));
+    const name = sanitize(pickString(row, ["name"]), maxName);
+    out.push({
+      // The ticker is the shortest true name and the one people read; the long name is the
+      // fallback, and the address never appears — it is an identifier, not a label.
+      label: symbol !== "" ? symbol : name !== "" ? name : "token",
+      chain: sanitize(pickString(row, ["chain"]), 16) || "unknown",
+      usd,
+    });
+  }
+  out.sort((a, b) => Number(b.usd) - Number(a.usd));
+  return out;
+}
+
+/** How many rows a split can carry before the tail stops being readable. */
+const BREAKDOWN_LIMIT = 5;
+
+/**
+ * One view of the portfolio: rows, their shares, and what the view actually covers.
+ *
+ * `scope` is not decoration. It is the sentence that would have made a fabricated total obvious,
+ * and it is why every view states its own total rather than borrowing the headline's.
+ */
+function portfolioBreakdown(state, settings, mode) {
+  const portfolio = readPortfolio(state?.portfolio ?? null);
+  const usd = { symbol: "USD" };
+
+  if (mode === "type") {
+    const parts = [];
+    if (portfolio.nftValue !== null) parts.push({ label: "NFTs", value: portfolio.nftValue });
+    if (portfolio.tokenValue !== null) parts.push({ label: "Tokens", value: portfolio.tokenValue });
+    if (parts.length === 0) return { rows: [], total: null, scope: "", symbol: "USD" };
+    const total = portfolio.total ?? sumDecimals(parts.map((p) => p.value));
+    return {
+      rows: parts.map((p) => ({
+        label: p.label,
+        value: p.value,
+        text: formatMoney(p.value, usd),
+        share: share(p.value, total),
+      })),
+      total,
+      totalText: formatMoney(total, { symbol: "USD", exact: true }),
+      scope: "everything Anchor can see",
+      symbol: "USD",
+    };
+  }
+
+  const balances = balanceRows(state, settings);
+  if (balances.length === 0) return { rows: [], total: null, scope: "", symbol: "USD" };
+
+  let grouped = balances;
+  if (mode === "chain") {
+    const byChain = {};
+    const order = [];
+    for (const row of balances) {
+      if (byChain[row.chain] === undefined) {
+        byChain[row.chain] = "0";
+        order.push(row.chain);
+      }
+      byChain[row.chain] = addDecimals(byChain[row.chain], row.usd);
+    }
+    grouped = order.map((chain) => ({ label: chain, usd: byChain[chain] }));
+    grouped.sort((a, b) => Number(b.usd) - Number(a.usd));
+  }
+
+  const total = sumDecimals(grouped.map((row) => row.usd));
+
+  // Past the limit the tail is folded into one row rather than dropped: a split whose parts do not
+  // add up to its own stated total is worse than a coarse one.
+  const head = grouped.slice(0, BREAKDOWN_LIMIT);
+  const tail = grouped.slice(BREAKDOWN_LIMIT);
+  const rows = head.map((row) => ({
+    label: row.label,
+    value: row.usd,
+    text: formatMoney(row.usd, usd),
+    share: share(row.usd, total),
+  }));
+  if (tail.length > 0) {
+    const rest = sumDecimals(tail.map((row) => row.usd));
+    rows.push({
+      label: `${tail.length} more`,
+      value: rest,
+      text: formatMoney(rest, usd),
+      share: share(rest, total),
+    });
+  }
+
+  return {
+    rows,
+    total,
+    totalText: formatMoney(total, { symbol: "USD", exact: true }),
+    // Said on every view that is not the whole portfolio, every time it is drawn.
+    scope: "tokens only — NFT value is not broken down by " + (mode === "chain" ? "chain" : "asset"),
+    symbol: "USD",
+  };
+}
+
+/**
+ * Where the number on screen came from, in one line.
+ *
+ * A total is a claim about specific addresses at a specific moment, and a panel that shows the
+ * figure without either is asking to be believed rather than read. This is the line that would
+ * have made two addresses nobody configured obvious at a glance.
+ */
+function provenance(state, nowMs, settings) {
+  const wallets = walletList(state?.health);
+  const parts = [];
+  if (wallets.length === 1) parts.push(shortAddress(wallets[0]));
+  else if (wallets.length > 1) parts.push(`${wallets.length} wallets`);
+
+  const age = ageSeconds(state?.portfolio, nowMs);
+  if (age !== null) parts.push(`as of ${relativeAge(age)}`);
+  return parts.join("  ·  ");
 }
 
 // -------------------------------------------------------------------------------------------
@@ -885,10 +1453,18 @@ function isIncomingOffer(event, wallet) {
   if (!orderType.includes("offer") && !orderType.includes("bid")) return false;
 
   const maker = String(event?.maker ?? "").toLowerCase();
-  const owner = String(wallet ?? "").toLowerCase();
+  // Takes one wallet or the whole watched list. It has to be the list, not one call per wallet
+  // OR-ed together: with two wallets, an offer *made* by the first is "not made by the second",
+  // so any per-wallet test combined with `some` counts a person's own bid as incoming to them.
+  const owners = [];
+  for (const entry of Array.isArray(wallet) ? wallet : [wallet]) {
+    const owner = String(entry ?? "").toLowerCase();
+    if (owner !== "") owners.push(owner);
+  }
   // An offer the user made themselves is not an incoming offer. An unknown maker is counted:
   // under-reporting a deadline is worse than over-reporting one.
-  return maker === "" || owner === "" || maker !== owner;
+  if (maker === "" || owners.length === 0) return true;
+  return owners.indexOf(maker) === -1;
 }
 
 /**
@@ -901,12 +1477,13 @@ function isIncomingOffer(event, wallet) {
 function deadlines(state, nowMs, settings) {
   const now = Number(nowMs) || Date.now();
   const windowMs = (Number(settings?.deadlineWindowHours) || 48) * 3600000;
-  const wallet = state?.health?.wallet ?? "";
+  const wallets = walletList(state?.health);
   const maxName = Number(settings?.maxNameLength) || DEFAULT_MAX_NAME;
+  const names = collectionNames(state, settings);
 
   const out = [];
   for (const event of eventList(state?.activity?.data)) {
-    if (!isIncomingOffer(event, wallet)) continue;
+    if (!isIncomingOffer(event, wallets)) continue;
 
     const expiry = pickTime(event, EXPIRY_KEYS);
     if (expiry === null) continue;
@@ -926,7 +1503,7 @@ function deadlines(state, nowMs, settings) {
       name:
         sanitize(nft.name, maxName) ||
         (identifier === "" ? "Collection offer" : `#${sanitize(identifier, 12)}`),
-      collection: sanitize(slug, maxName),
+      collection: displayName(slug, names, maxName),
       url: collectionUrl(slug),
       amount: paymentAmount(event.payment),
       expiresAt: expiry,
@@ -959,10 +1536,10 @@ function paymentAmount(payment) {
  * is still an offer, it just has no clock on it.
  */
 function offerCount(state) {
-  const wallet = state?.health?.wallet ?? "";
+  const wallets = walletList(state?.health);
   let count = 0;
   for (const event of eventList(state?.activity?.data)) {
-    if (isIncomingOffer(event, wallet)) count++;
+    if (isIncomingOffer(event, wallets)) count++;
   }
   return count;
 }
@@ -989,10 +1566,41 @@ const FLOOR_SYMBOL_KEYS = ["floorPriceSymbol", "floor_price_symbol"];
  * partial state. Rows the service could not fetch keep their slug and say so, rather than
  * vanishing — a collection that silently disappears reads as one the user removed.
  */
+/**
+ * Slug → display name, learned from `/collections`.
+ *
+ * A slug is an identifier and reads like one: nobody calls it "boredapeyachtclub". The service
+ * returns the collection's own `name` alongside its stats, and this is the one place that mapping
+ * is built, so a deadline row and a floor row cannot end up disagreeing about what to call the same
+ * collection. A name is marketplace content like any other and is sanitised on the way in.
+ *
+ * Slugs are *not* replaced everywhere: `Model.collectionUrl` still takes the slug, and the config
+ * file still names slugs, because those are the places the exact identifier is the point.
+ */
+function collectionNames(state, settings) {
+  const out = {};
+  const data = state?.collections?.data;
+  if (!Array.isArray(data)) return out;
+  const maxName = Number(settings?.maxNameLength) || DEFAULT_MAX_NAME;
+  for (const row of data) {
+    if (typeof row?.slug !== "string" || row.slug === "") continue;
+    const name = sanitize(row?.name, maxName);
+    if (name !== "") out[row.slug] = name;
+  }
+  return out;
+}
+
+/** The prettiest true name for a slug: the collection's own, else the slug itself. */
+function displayName(slug, names, maxName) {
+  const known = names && typeof names[slug] === "string" ? names[slug] : "";
+  return known !== "" ? known : sanitize(slug, maxName);
+}
+
 function collectionRows(state, settings) {
   const data = state?.collections?.data;
   if (!Array.isArray(data)) return [];
   const maxName = Number(settings?.maxNameLength) || DEFAULT_MAX_NAME;
+  const names = collectionNames(state, settings);
 
   return data.map((row) => {
     const slug = typeof row?.slug === "string" ? row.slug : "";
@@ -1002,7 +1610,7 @@ function collectionRows(state, settings) {
 
     return {
       slug,
-      name: sanitize(slug, maxName) || "collection",
+      name: displayName(slug, names, maxName) || "collection",
       url: collectionUrl(slug),
       floor: floor === null ? null : formatMoney(floor, { symbol }),
       error: typeof row?.error === "string" ? sanitize(row.error, 80) : null,
@@ -1091,6 +1699,7 @@ function serializeSnapshot(state) {
       portfolio: s.portfolio,
       activity: s.activity,
       collections: s.collections,
+      balances: s.balances,
       updatedAt: s.updatedAt,
     },
     null,
@@ -1123,6 +1732,7 @@ function parseSnapshot(raw) {
     portfolio: entryOrNull(parsed.portfolio),
     activity: entryOrNull(parsed.activity),
     collections: entryOrNull(parsed.collections),
+    balances: entryOrNull(parsed.balances),
     updatedAt: Number.isFinite(parsed.updatedAt) ? parsed.updatedAt : 0,
   });
 }
@@ -1188,11 +1798,20 @@ function applyRead(state, key, response, nowMs) {
 
 // -------------------------------------------------------------------------------------------
 
+// What the bar shows. Sparse by default and widened by the person who wants more: a bar reading
+// `⚓ $125K ▲1% ◆3 ◷1h 36m ·5` is six things competing in a 26px strip, and five of them are
+// answers to questions nobody asked while looking at a clock. The value is the headline and the
+// countdown is the only item with a deadline attached; everything else is one press away in the
+// panel, and one press away from being on the bar permanently.
 const DEFAULT_SETTINGS = {
   port: DEFAULT_PORT,
   timeout: 6,
   timeframe: "DAY",
   showValue: true,
+  showChange: false,
+  showOffers: false,
+  showDeadline: true,
+  showActivity: false,
   maxNameLength: DEFAULT_MAX_NAME,
   deadlineWindowHours: 48,
   activityWindowHours: 24,
@@ -1201,6 +1820,20 @@ const DEFAULT_SETTINGS = {
 };
 
 const TIMEFRAMES = ["HOUR", "DAY", "WEEK", "MONTH"];
+
+/**
+ * The bar's optional items, in the order they are drawn and offered.
+ *
+ * One list, so the toggles in the panel and the things on the bar cannot drift apart — the same
+ * argument as `optionalSummary` being derived from the steps rather than written beside them.
+ */
+const BAR_ITEMS = [
+  { key: "showValue", label: "value" },
+  { key: "showChange", label: "change" },
+  { key: "showOffers", label: "offers" },
+  { key: "showDeadline", label: "closing" },
+  { key: "showActivity", label: "activity" },
+];
 
 /** Settings come from `shell.json`, which a person edits by hand. Every field is untrusted. */
 function mergeSettings(settings) {
@@ -1246,6 +1879,7 @@ if (typeof module !== "undefined") {
     compactDecimal,
     groupDigits,
     formatMoney,
+    padFraction,
     formatChange,
     relativeAge,
     countdown,
@@ -1253,6 +1887,15 @@ if (typeof module !== "undefined") {
     relativeLuminance,
     contrastRatio,
     dimAlpha,
+    hexToRgb,
+    parseThemeColors,
+    panelSurfaces,
+    ACTION,
+    SERVICE_UNIT,
+    configFilePath,
+    actionArgv,
+    parseUnitState,
+    applyUnitState,
     curlArgs,
     parseResponse,
     ageSeconds,
@@ -1261,6 +1904,10 @@ if (typeof module !== "undefined") {
     credentials,
     apiKeyRejected,
     setupSteps,
+    walletList,
+    collectionNames,
+    displayName,
+    BAR_ITEMS,
     optionalSummary,
     setupProgress,
     statusOf,
@@ -1268,6 +1915,12 @@ if (typeof module !== "undefined") {
     statusSummary,
     numberToDecimal,
     readPortfolio,
+    addDecimals,
+    sumDecimals,
+    balanceRows,
+    portfolioBreakdown,
+    provenance,
+    BREAKDOWNS,
     paymentAmount,
     eventList,
     isIncomingOffer,

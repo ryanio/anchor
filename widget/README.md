@@ -63,6 +63,10 @@ omarchy bar set anchor.pulse showValue false
 | Key | Default | What it does |
 |---|---|---|
 | `port` | `8787` | Loopback port of the data service. Must match `port` in `~/.config/anchor/config.json`. |
+| `showChange` | `false` | Add the percentage change to the bar. |
+| `showOffers` | `false` | Add the incoming-offer count to the bar. |
+| `showDeadline` | `true` | Add the countdown to the next offer that closes. |
+| `showActivity` | `false` | Add the count of recent events to the bar. |
 | `timeframe` | `DAY` | Window the percentage change is measured across: `HOUR`, `DAY`, `WEEK`, `MONTH`. |
 | `showValue` | `true` | Show the portfolio number on the bar. Turn off while screen sharing — offers and deadlines still show, and the value stays in the panel. |
 | `deadlineWindowHours` | `48` | Only count down offers closing within this many hours. Further out is not news. |
@@ -86,7 +90,12 @@ hand-edit.
 | Middle click | Refresh every read now |
 | `r` in the panel | Refresh |
 | `v` in the panel | Toggle the value |
+| `d` in the panel | Show or hide the details view |
+| `b` in the panel | Cycle the portfolio breakdown: type · assets · chains |
+| `s` in the panel | Run the current setup step's action — the same thing its button does |
 | `Esc` | Close |
+
+A pill is not a tab stop, so `s` is how the panel stays finishable without a pointer.
 
 Over IPC, which is useful from a hook after the service restarts:
 
@@ -103,10 +112,10 @@ calm dimmed mark rather than a red box.
 | Bar shows | State | Meaning | Panel offers |
 |---|---|---|---|
 | Dimmed mark, no numbers | `starting` | Nothing read yet, and no snapshot on disk. | "reading…" |
-| Dimmed mark, last number | `offline` | The service did not answer. The previous reading stays, labelled with its age. | The age of what you are looking at, and the command to start the service |
+| Dimmed mark, last number | `offline` | The service did not answer. The previous reading stays, labelled with its age. | The age of what you are looking at, and the button that starts the service |
 | Dimmed mark | `setup` | The service answered, but Anchor is not configured far enough to show anything. | The setup sequence — see below |
 | Number, dimmed | `stale` | Configured and working; something on screen has outlived its TTL. | "stale, *n* old — retrying" |
-| Number, full strength | `ready` | Everything is current. | Portfolio, what is closing, floors |
+| Number, full strength | `ready` | Everything is current. | Portfolio and what is closing. Floors and the value split are behind `details`. |
 
 **Staleness is always shown, never hidden.** Every number carries the age of the data behind it,
 taken from the service's own `meta.ageSeconds` so it keeps counting across a reboot. A stale floor
@@ -120,16 +129,46 @@ synchronous request here would freeze the bar, the notifications and every panel
 ### The setup sequence
 
 Three required steps, one optional. Completed steps **leave** the list; the segmented bar above them
-keeps the record, and the header says which step you are on.
+keeps the record. There is no "step 2 of 3" header — the segments, the numbered discs and the panel
+subtitle were all saying it already.
 
-1. **Start the data service** — everything Anchor shows is read through it, on loopback.
-2. **Add your OpenSea API key** — the only credential Anchor needs.
-3. **Say which wallet to follow** — Anchor watches it, and never holds its keys.
+1. **Start the data service** — a **Start Anchor** button, plus **and at login**. They run
+   `systemctl --user start` / `enable --now` on `anchor-service.service`.
+2. **Add your OpenSea API key** — an **Enter the key** button that opens a terminal on the
+   interactive prompt.
+3. **Add a wallet to watch** — an **Open config** button that opens
+   `~/.config/anchor/config.json` in the editor Omarchy is configured to use.
+
+**Every configured wallet is watched.** `wallets` is a list and `wallet: "0x…"` is still read as a
+one-element one. What Anchor cannot do is *discover* a person's wallets: it holds no wallet
+credential by design, and no endpoint maps a human to their addresses. So the step is widened
+rather than deleted, and it comes back if the list is emptied. Auto-discovery arrives with a wallet
+adapter, not here.
 
 Optional, collapsed behind a pill you can press: **watch a few collections**, for floor prices.
 
-Only the current step shows its command, because offering a command for a step that cannot succeed
-yet is an invitation to run it and watch it fail.
+Only the current step shows its action, because offering one for a step that cannot succeed yet is
+an invitation to run it and watch it fail. The raw command behind each step is still there, in the
+`details` view.
+
+**A button only appears when it can work.** Step 1's button is offered only if
+`systemctl --user show anchor-service.service` reports `LoadState=loaded`; with no unit installed
+the step falls back to the command, which is what shipped before. A unit that loads and then fails
+to start is a different thing again, and the step says so rather than reporting a success nobody
+observed. See [../service/README.md](../service/README.md) for installing the unit.
+
+**Spawning processes from a bar widget.** The panel passes an *identifier* to `Model.actionArgv`,
+never a command. Every argv is built there from string literals, the table is closed, and an
+unrecognised id returns null and runs nothing — so no marketplace string, `/health` response or
+`shell.json` setting has a path to something that executes. `systemctl --user` is the invoking
+user's own service manager: no polkit prompt, no privilege the user did not already have, and it can
+only start a unit already installed on the machine. Starting the data service creates no path from
+this widget to a signature; the service still refuses every non-GET before routing.
+
+**No credential passes through the widget.** The API key is typed into a terminal that writes it
+straight to the OS keyring. A field in the bar would put a secret inside the process that draws the
+whole desktop, and passing it as an argument would put it in the process table. That step is one the
+panel can *start* and cannot finish, and it says so.
 
 There is deliberately **no wallet-PAT step**. Anchor used to ask for one; re-measured with a key that
 actually authenticates, every route this service calls needs the API key and nothing else. See the
@@ -142,6 +181,33 @@ function are different claims. `anchor-service --check-credentials` settles it.
 
 ## Design notes
 
+Start with the "Design principles" section of [../theme/README.md](../theme/README.md) — it governs
+this widget and the site alike. What follows is what those principles cost in this file.
+
+- **The default panel is a few things.** Hero, the number and where it came from, what is closing,
+  one row of controls. The breakdown, the floor list, the raw command behind each setup step and
+  the bar-item toggles are all behind `details` — deferred, not deleted.
+- **The bar starts sparse and you add to it.** The mark, the value and the countdown to the next
+  offer that closes. The change, the offer count and the activity count are off by default and go
+  on from the `details` view or with `omarchy bar set`. A bar reading
+  `⚓ $125K ▲1% ◆3 ◷1h 36m ·5` is six things competing in a 26px strip.
+- **The number says where it came from.** Which wallets, and how old, in one line under the total.
+  Not a debug line: a total is a claim about specific addresses at a specific moment, and a panel
+  that prints the figure without either is asking to be believed rather than read.
+- **A breakdown is a labelled split bar, never a pie**, and each of its three views states what it
+  covers. `type` is the whole portfolio; `assets` and `chains` come from `/balances` and are the
+  *token* half, which they say, with their own total. Drawing NFT value into a chain split would
+  need per-chain NFT valuation the endpoint does not return.
+- **USD always carries two decimal places.** `$125,430.5` is not a dollar amount. The rule is keyed
+  on the denomination and applies only to it: ETH at 8 places must not become `1.50000000`.
+- **Depth comes from the theme, not from Anchor.** `OmarchyPalette` reads the active theme's
+  `colors.toml` for `lighter_background`, `dark_background` and `selection` — three keys the shell's
+  own `Color` singleton drops — and `Model.panelSurfaces` decides per theme whether each is a usable
+  step off the popup's actual ground or has to be derived from it. The bar itself stays unpainted.
+- **The step marker is aligned by measurement.** The numeral sits on the step title's own baseline
+  and the disc is centred on the numeral's *ink*, both from `FontMetrics`/`TextMetrics` at runtime.
+  It used to be a fixed 1px top margin against a metric-derived label, which put the disc 2.1px low
+  and grew worse as `[font] base-size` rose.
 - **The mark is the identity, not the hue.** Every colour is the user's own Omarchy theme, read
   through `bar.barForeground` and `Color.*`. A widget that painted itself ocean-cyan on a Rose Pine
   desktop would look like a bug.

@@ -22,7 +22,12 @@ import "PulseModel.js" as Model
 //   **Every degraded state is a designed state.** The service can be down, the API key absent or
 //   rejected, the network gone, and no wallet configured at all — four conditions that are all
 //   *normal* on a fresh install. None of them renders as an error: the widget stays a calm dimmed
-//   mark with a panel that says what is missing and the command that fixes it.
+//   mark with a panel that says what is missing and offers the button that fixes it.
+//
+// The panel spawns processes, which in a bar widget deserves a hard look. It passes an *identifier*
+// to `Model.actionArgv`, never a command: every argv is literal, the table is closed, and an id
+// that is not in it runs nothing. See the "Actions the panel can take" section of `PulseModel.js`
+// for what those commands can and cannot do, and for why no credential ever passes through here.
 Panel {
   id: root
 
@@ -47,7 +52,28 @@ Panel {
   readonly property var portfolio: Model.readPortfolio(state.portfolio)
   readonly property var collections: Model.collectionRows(state, config)
   readonly property var progress: Model.setupProgress(state)
+
+  /** Which breakdown the details view is showing. Never affects the default view. */
+  property string breakdown: "type"
+  readonly property var split: Model.portfolioBreakdown(root.state, root.config, root.breakdown)
+
+  /**
+   * Where the number came from: which wallets, and how fresh.
+   *
+   * Not behind the disclosure, and not a debug line. A total is a claim about specific addresses at
+   * a specific moment, and a panel that prints the figure without either is asking to be believed
+   * rather than read. This project has already had one afternoon of a plausible number being taken
+   * for a true one.
+   */
+  readonly property string provenance: Model.provenance(root.state, root.nowMs, root.config)
   readonly property bool needsSetup: status === Model.STATUS.SETUP
+
+  /** The step being worked on, so the keyboard can reach the same button the pointer can. */
+  readonly property var currentStep: {
+    const steps = root.progress.required
+    for (let i = 0; i < steps.length; i++) if (steps[i].state === "current") return steps[i]
+    return null
+  }
 
   /**
    * Whether the optional steps are expanded.
@@ -58,6 +84,16 @@ Panel {
    * binding, which is the intended QML idiom here: after that the choice is the user's.
    */
   property bool optionalOpen: root.progress.complete
+
+  /**
+   * Whether the second view is showing.
+   *
+   * Closed on open, always: the default panel is a hero, a number, what is closing, and one row of
+   * controls. Everything diagnostic — the NFT/token split, the age of a *current* reading, the
+   * floor list, the raw command behind each setup step, the read-only note — lives behind this and
+   * is one press away. Deferred, not deleted; see "Design principles" in `theme/README.md`.
+   */
+  property bool detailsOpen: false
 
   /**
    * Honour `prefers-reduced-motion`.
@@ -80,8 +116,17 @@ Panel {
     }
   }
 
-  readonly property string walletShort: state.health && state.health.wallet
-    ? Model.shortAddress(state.health.wallet) : ""
+  readonly property var wallets: Model.walletList(state.health)
+
+  /**
+   * The hero's trailing pill. One wallet gets its short address; several get a count, because six
+   * truncated hex strings is not information, it is a wall.
+   */
+  readonly property string walletShort: root.wallets.length === 0
+    ? ""
+    : root.wallets.length === 1
+      ? Model.shortAddress(root.wallets[0])
+      : root.wallets.length + " wallets"
 
   // ------------------------------------------------------------------------------ theme colours
   //
@@ -122,7 +167,37 @@ Panel {
   /** The popup's own surface, which is what panel text is measured against — not the bar's. */
   readonly property color panelGround: Color.popups.background
 
+  /**
+   * Depth, taken from the theme rather than invented.
+   *
+   * The panel used to paint its ground, its rows and its wells the same colour, which is what made
+   * it read flat. `Color` cannot help — it keeps five values out of `colors.toml` and none of them
+   * is a surface — so `OmarchyPalette` reads the same file for the layers the theme already
+   * defines and `Model.panelSurfaces` decides, per theme, whether each one is a usable step off
+   * *this* ground or has to be derived from it. Checked against all 22 stock themes.
+   */
+  OmarchyPalette {
+    id: palette
+    ground: root.panelGround
+  }
+
+  readonly property color panelRaised: palette.raised
+  readonly property color panelSunken: palette.sunken
+  readonly property color panelLine: palette.line
+
   readonly property bool vertical: bar ? bar.vertical : false
+
+  /**
+   * How long the bar's open-panel mark should be.
+   *
+   * `Bar.qml` looks for exactly these two properties on a module and falls back to 55% of the slot
+   * when a module does not offer them — a figure calibrated for a text label sitting in a padded
+   * slot. Measured on the running bar: a slot 172px wide drew a 96px underline against 154px of
+   * painted content, which is what "it stops short" was. This is the shell's own contract for it,
+   * not a nudge: report what the module actually paints and the mark tracks it.
+   */
+  readonly property real openPanelIndicatorWidth: content.implicitWidth
+  readonly property real openPanelIndicatorHeight: content.implicitHeight
 
   // ------------------------------------------------------------------------------------ reading
 
@@ -131,6 +206,7 @@ Panel {
     portfolioRead.refresh()
     activityRead.refresh()
     collectionsRead.refresh()
+    balancesRead.refresh()
   }
 
   /** `refreshAll` on every instance of this widget — one per monitor. See the IPC handler below. */
@@ -179,6 +255,17 @@ Panel {
   }
 
   ServiceRead {
+    id: balancesRead
+    path: "/balances"
+    settings: root.config
+    // Only the details view reads this, so it polls at the portfolio's own pace rather than faster,
+    // and nothing on the bar waits for it.
+    interval: 180000
+    startDelay: 1600
+    onFinished: (response) => root.apply("balances", response)
+  }
+
+  ServiceRead {
     id: collectionsRead
     path: "/collections"
     settings: root.config
@@ -219,6 +306,15 @@ Panel {
    * need a wakeup every second, and a widget that keeps a laptop's CPU out of idle forever is a
    * worse neighbour than one whose minute rolls over slightly late.
    */
+  // Cheap, local, and the answer changes outside this process — the user may have installed the
+  // package or run `systemctl --user enable` in a terminal since the panel was last open. The theme
+  // is re-read for the same reason: `omarchy theme set` pushes to the shell over IPC, which is not
+  // a path this file is on.
+  onOpenedChanged: if (opened) {
+    unitProbe.running = true
+    palette.reload()
+  }
+
   Timer {
     interval: root.opened ? 1000 : 20000
     repeat: true
@@ -261,6 +357,7 @@ Panel {
   Component.onCompleted: {
     ensureDir.running = true
     motionPref.running = true
+    unitProbe.running = true
     // Paint from disk first; the reads have their own staggered start delays.
     snapshot.reload()
   }
@@ -277,14 +374,80 @@ Panel {
     }
   }
 
-  function toggleShowValue() {
+  /**
+   * Run one of the panel's actions.
+   *
+   * The whole safety property is that this takes an id and not a command. `Model.actionArgv` owns
+   * the closed table of literal argv arrays; anything it does not recognise returns null and
+   * nothing is spawned. `execDetached` takes an argv array, so even a value that somehow reached
+   * the list could not become a second command.
+   */
+  function runAction(id) {
+    const argv = Model.actionArgv(id, {
+      home: Quickshell.env("HOME"),
+      configHome: Quickshell.env("XDG_CONFIG_HOME"),
+    })
+    if (argv === null) return
+    Quickshell.execDetached(argv)
+    // Starting a unit is not the same as the unit being up, and `systemctl start` returns before
+    // the port is listening. Re-read shortly after rather than claiming a result we did not see.
+    afterAction.restart()
+  }
+
+  Timer {
+    id: afterAction
+    interval: 1500
+    repeat: true
+    triggeredOnStart: false
+    property int ticks: 0
+    onRunningChanged: if (running) ticks = 0
+    onTriggered: {
+      ticks++
+      unitProbe.running = true
+      root.refreshAll()
+      if (ticks >= 3) running = false
+    }
+  }
+
+  /**
+   * What `systemctl --user` knows about the service unit.
+   *
+   * This decides whether the first setup step shows a button or falls back to a command, so it is
+   * the difference between an action that works everywhere and one that works on the machine it was
+   * written on. `LoadState` proves a unit file exists; `ActiveState` is read back afterwards
+   * because a unit can load and still fail to start, and the step says so when it does.
+   */
+  Process {
+    id: unitProbe
+    command: Model.actionArgv(Model.ACTION.PROBE_SERVICE, {})
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.state = Model.applyUnitState(root.state, text)
+    }
+    stderr: StdioCollector { waitForEnd: true }
+  }
+
+  /**
+   * Flip one boolean on this widget's bar-layout entry and persist it.
+   *
+   * `key` is checked against the model's own list rather than trusted, so the only settings this
+   * can write are the ones the panel is allowed to offer — the same closed-table argument as
+   * `Model.actionArgv`, applied to config instead of to argv.
+   */
+  function toggleSetting(key) {
+    let allowed = false
+    for (let i = 0; i < Model.BAR_ITEMS.length; i++) if (Model.BAR_ITEMS[i].key === key) allowed = true
+    if (!allowed) return
+
     const entry = { id: root.moduleName }
-    for (const key in root.settings) if (key !== "id") entry[key] = root.settings[key]
-    entry.showValue = root.config.showValue === false
+    for (const existing in root.settings) if (existing !== "id") entry[existing] = root.settings[existing]
+    entry[key] = root.config[key] === false
     root.settings = entry
     if (root.bar && root.bar.shell && typeof root.bar.shell.updateEntryInline === "function")
       root.bar.shell.updateEntryInline(root.moduleName, entry)
   }
+
+  function toggleShowValue() { root.toggleSetting("showValue") }
 
   // -------------------------------------------------------------------------------- the tooltip
 
@@ -293,19 +456,29 @@ Panel {
     return age === null ? "" : Model.relativeAge(age)
   }
 
+  /**
+   * One line, deliberately.
+   *
+   * The bar's tooltip is not ours: `Bar.qml` owns a single shared `PopupWindow` and its label is
+   * hardcoded `horizontalAlignment: Text.AlignHCenter`, one colour, one weight, with no per-module
+   * override. Handing that a four-line paragraph is what produced a centred block with nothing
+   * leading it — the alignment was never the widget's to set. Forking the shell's tooltip to fix
+   * the alignment would give Anchor a tooltip that matched nothing else on the bar.
+   *
+   * So the tooltip says one thing. A single centred line has no alignment problem and no hierarchy
+   * to get wrong, and everything that used to be in it is a click away in the panel, where the
+   * typography is ours.
+   */
   readonly property string tooltip: {
-    const lines = [Model.statusSummary(root.state, root.nowMs, root.config)]
-
+    const parts = []
     if (root.portfolio.total !== null) {
-      // The exact figure, ungrouped by magnitude — the bar shows "12.3K", the tooltip shows what
-      // that was rounded from, so the compact form never has to be trusted on its own.
-      lines.push(Model.formatMoney(root.portfolio.total, { symbol: root.portfolio.symbol, exact: true })
-        + (root.ageText === "" ? "" : "  ·  " + root.ageText + " old"))
+      // The exact figure, ungrouped by magnitude — the bar shows "$125K", this shows what that was
+      // rounded from, so the compact form never has to be trusted on its own.
+      parts.push(Model.formatMoney(root.portfolio.total, { symbol: root.portfolio.symbol, exact: true }))
     }
-    if (root.label.offers > 0) lines.push(root.label.offers + " incoming offer" + (root.label.offers === 1 ? "" : "s"))
-    if (root.deadlines.length > 0) lines.push("Next closes in " + root.deadlines[0].label)
-    if (root.walletShort !== "") lines.push(root.walletShort)
-    return lines.join("\n")
+    const detail = Model.statusDetail(root.state, root.nowMs, root.config)
+    if (detail !== "") parts.push(detail)
+    return parts.length === 0 ? "Anchor" : "Anchor — " + parts.join("  ·  ")
   }
 
   // ------------------------------------------------------------------------------- the bar item
@@ -367,7 +540,9 @@ Panel {
       // says there is something to look at — the panel is one click away.
       Rectangle {
         anchors.verticalCenter: parent.verticalCenter
-        visible: root.vertical && (root.label.offers > 0 || root.label.deadline !== "")
+        visible: root.vertical
+          && ((root.config.showOffers && root.label.offers > 0)
+            || (root.config.showDeadline && root.label.deadline !== ""))
         width: Style.space(4)
         height: width
         radius: width / 2
@@ -387,7 +562,7 @@ Panel {
 
       Text {
         anchors.verticalCenter: parent.verticalCenter
-        visible: !root.vertical && root.label.change !== null && root.label.change.arrow !== ""
+        visible: !root.vertical && root.config.showChange && root.label.change !== null && root.label.change.arrow !== ""
         textFormat: Text.PlainText
         // Direction is an arrow, not a colour: red and green fight every theme on the desktop and
         // vanish entirely for a red-green colour-blind reader. The arrow works in both cases.
@@ -400,7 +575,7 @@ Panel {
 
       Text {
         anchors.verticalCenter: parent.verticalCenter
-        visible: !root.vertical && root.label.offers > 0
+        visible: !root.vertical && root.config.showOffers && root.label.offers > 0
         textFormat: Text.PlainText
         text: "◆" + root.label.offers
         color: root.foreground
@@ -411,7 +586,7 @@ Panel {
 
       Text {
         anchors.verticalCenter: parent.verticalCenter
-        visible: !root.vertical && root.label.deadline !== ""
+        visible: !root.vertical && root.config.showDeadline && root.label.deadline !== ""
         textFormat: Text.PlainText
         text: "◷" + root.label.deadline
         // The only place the theme's attention colour is used, and only for a decision whose
@@ -426,7 +601,7 @@ Panel {
       // something happened. Two characters, dimmed, and absent entirely when nothing has.
       Text {
         anchors.verticalCenter: parent.verticalCenter
-        visible: !root.vertical && root.label.activity > 0
+        visible: !root.vertical && root.config.showActivity && root.label.activity > 0
         textFormat: Text.PlainText
         text: "·" + root.label.activity
         color: root.dim
@@ -446,8 +621,11 @@ Panel {
     bar: root.bar
     open: root.opened
     focusTarget: keys
-    contentWidth: panel.fittedContentWidth(Style.space(340))
-    contentHeight: panel.fittedContentHeight(column.implicitHeight, Style.space(560))
+    contentWidth: panel.fittedContentWidth(Style.space(360))
+    // Tall enough that the details view does not scroll on a normal wallet. The default view is
+    // about half this; nothing on the short path got taller, only the disclosure is allowed to be
+    // long. Past the cap the scroll lane below keeps the bar out of the content.
+    contentHeight: panel.fittedContentHeight(column.implicitHeight, Style.space(720))
 
     PanelKeyCatcher {
       id: keys
@@ -457,11 +635,37 @@ Panel {
       onTextKey: (character) => {
         if (character === "r" || character === "R") root.refreshAll()
         else if (character === "v" || character === "V") root.toggleShowValue()
+        else if (character === "d" || character === "D") root.detailsOpen = !root.detailsOpen
+        // Keyboard parity with the button on the current step. A pill is not a tab stop, and a
+        // panel that can only be finished with a pointer is not finished.
+        else if (character === "s" || character === "S") {
+          if (root.currentStep && root.currentStep.action) root.runAction(root.currentStep.action.id)
+        }
+        // Cycles the breakdown, so the tabs are reachable the same way everything else here is.
+        else if (character === "b" || character === "B") {
+          root.detailsOpen = true
+          const keys = Model.BREAKDOWNS.map((entry) => entry.key)
+          root.breakdown = keys[(keys.indexOf(root.breakdown) + 1) % keys.length]
+        }
       }
 
       Flickable {
         id: flick
         anchors.fill: parent
+        // The scrollbar's own lane — see `column` below, which is what actually reserves it.
+        //
+        // An attached `ScrollBar.vertical` reserves nothing: measured, it is 10px wide and sits at
+        // `flick.width - 10`, painting *over* the right edge of whatever is under it. With the
+        // panel's cards spanning the full width that is the card border and the row values, so the
+        // moment a flick made the bar appear it read as the gutter going wrong.
+        //
+        // Insetting the *Flickable* was the obvious fix and the wrong one: the bar is positioned in
+        // the Flickable's own coordinate space, so a right margin moves the bar inward with it and
+        // the content is still underneath — now with a visibly wider gutter on one side. Insetting
+        // the content column instead leaves the bar exactly where it was, in a lane of its own,
+        // with a matching lane on the left so the panel stays symmetric. It is unconditional: a
+        // gutter that appears when a list gets one row longer is the shift being complained about.
+        readonly property int scrollLane: 10
         contentWidth: width
         contentHeight: column.implicitHeight
         clip: true
@@ -472,7 +676,8 @@ Panel {
 
         Column {
           id: column
-          width: flick.width
+          x: flick.scrollLane
+          width: flick.width - flick.scrollLane * 2
           spacing: Style.space(12)
 
           PanelHero {
@@ -497,23 +702,11 @@ Panel {
 
           // ------------------------------------------------------------------- portfolio value
 
-          PanelSeparator {
-            width: parent.width
-            foreground: root.panelForeground
-            visible: portfolioBlock.visible
-          }
-
-          Column {
+          PanelBlock {
             id: portfolioBlock
-            width: parent.width
-            spacing: Style.space(2)
+            color: root.panelRaised
+            line: root.panelLine
             visible: root.portfolio.total !== null
-
-            PanelSectionHeader {
-              text: "Portfolio"
-              foreground: root.panelForeground
-              fontFamily: root.fontFamily
-            }
 
             Row {
               spacing: Style.space(8)
@@ -542,32 +735,19 @@ Panel {
               }
             }
 
+            // Provenance, and it stays in the default view. An age on its own is reassurance —
+            // that was the earlier call and it was wrong by half. *Which addresses* plus *how old*
+            // is the sentence that makes a total checkable, and it is one line either way.
             Text {
               width: parent.width
-              visible: root.portfolio.nftValue !== null || root.portfolio.tokenValue !== null
+              visible: text !== ""
               textFormat: Text.PlainText
-              // Both halves are quoted in the same currency the total is, by the same response.
-              // Nothing here is converted; this is the split the endpoint already returned.
-              text: [
-                root.portfolio.nftValue === null ? ""
-                  : "NFTs " + Model.formatMoney(root.portfolio.nftValue, { symbol: root.portfolio.symbol }),
-                root.portfolio.tokenValue === null ? ""
-                  : "Tokens " + Model.formatMoney(root.portfolio.tokenValue, { symbol: root.portfolio.symbol })
-              ].filter((part) => part !== "").join("   ·   ")
-              color: root.panelDim
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
-            }
-
-            Text {
-              width: parent.width
-              textFormat: Text.PlainText
-              // Freshness, always, in the same place. A number without an age is a claim about now.
               text: root.status === Model.STATUS.OFFLINE
                 ? "service unreachable — last reading " + root.ageText + " old"
                 : root.status === Model.STATUS.STALE
-                  ? "stale, " + root.ageText + " old — retrying"
-                  : root.ageText === "" ? "" : "as of " + root.ageText
+                  ? root.provenance + "  ·  stale, retrying"
+                  : root.provenance
+              wrapMode: Text.WrapAtWordBoundaryOrAnywhere
               color: root.panelDim
               font.family: root.fontFamily
               font.pixelSize: Style.font.caption
@@ -576,16 +756,10 @@ Panel {
 
           // --------------------------------------------------------------------- what is closing
 
-          PanelSeparator {
-            width: parent.width
-            foreground: root.panelForeground
-            visible: deadlineBlock.visible
-          }
-
-          Column {
+          PanelBlock {
             id: deadlineBlock
-            width: parent.width
-            spacing: Style.space(2)
+            color: root.panelRaised
+            line: root.panelLine
             visible: root.deadlines.length > 0
 
             PanelSectionHeader {
@@ -599,7 +773,7 @@ Panel {
 
               delegate: PulseRow {
                 required property var modelData
-                width: column.width
+                width: parent.width
                 label: modelData.name
                 sublabel: [modelData.collection, modelData.amount].filter((p) => p !== "").join("  ·  ")
                 value: modelData.label
@@ -611,111 +785,22 @@ Panel {
             }
           }
 
-          // An offer with no stated expiry still exists; it just has no clock to count down, so it
-          // has no row above. Saying how many are unaccounted for is more honest than a list that
-          // quietly holds fewer items than the bar's badge claims.
-          Text {
-            width: parent.width
-            visible: root.label.offers > root.deadlines.length && !root.needsSetup
-            textFormat: Text.PlainText
-            text: (root.label.offers - root.deadlines.length) + " more offer"
-              + (root.label.offers - root.deadlines.length === 1 ? "" : "s")
-              + " with no stated expiry"
-            color: root.panelDim
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.caption
-          }
-
-          // ----------------------------------------------------------------- watched collections
-
-          PanelSeparator {
-            width: parent.width
-            foreground: root.panelForeground
-            visible: collectionBlock.visible
-          }
-
-          Column {
-            id: collectionBlock
-            width: parent.width
-            spacing: Style.space(2)
-            visible: root.collections.length > 0
-
-            PanelSectionHeader {
-              text: "Floors"
-              foreground: root.panelForeground
-              fontFamily: root.fontFamily
-            }
-
-            Repeater {
-              model: root.collections
-
-              delegate: PulseRow {
-                required property var modelData
-                width: column.width
-                label: modelData.name
-                // A collection the service could not fetch keeps its row and says why. Dropping it
-                // would read as one the user had removed from their config.
-                sublabel: modelData.error === null ? "" : modelData.error
-                value: modelData.floor === null ? "—" : modelData.floor
-                faded: modelData.stale || modelData.error !== null
-                url: modelData.url === null ? "" : modelData.url
-                foreground: root.panelForeground
-                fontFamily: root.fontFamily
-                onActivated: root.openUrl(modelData.url)
-              }
-            }
-          }
-
           // ------------------------------------------------------------------------------ setup
           //
-          // Not an error panel, and not a checklist either. A vertical stack of five identical rows
-          // reads as a chore and hides the two things that matter: how far along you are, and which
-          // single thing to do next.
+          // Not an error panel, and not a checklist either. Completed required steps leave the
+          // queue and the progress segments record them; one step is current and it is the only one
+          // offering a button; the optional pair is deferred behind a single line.
           //
-          // So: completed required steps leave the queue and the progress segments record them; one
-          // step is current and it is the only one showing a command; the optional pair is deferred
-          // behind a single line that says what they buy. On a fresh install that is three lines and
-          // one command instead of five rows of settings names.
+          // There is deliberately no "Set up Anchor · step 1 of 3" header any more. Between the
+          // header, the counter, the segments and the numbered discs, the panel was saying the same
+          // fact four ways on open — and the hero above already names what is missing.
 
-          PanelSeparator {
-            width: parent.width
-            foreground: root.panelForeground
-            visible: setupBlock.visible
-          }
-
-          Column {
+          PanelBlock {
             id: setupBlock
-            width: parent.width
+            color: root.panelRaised
+            line: root.panelLine
             spacing: Style.space(7)
             visible: root.needsSetup || root.status === Model.STATUS.OFFLINE
-
-            Item {
-              width: parent.width
-              implicitHeight: Math.max(setupHeader.implicitHeight, setupCount.implicitHeight)
-
-              PanelSectionHeader {
-                id: setupHeader
-                anchors.left: parent.left
-                anchors.verticalCenter: parent.verticalCenter
-                text: root.progress.complete ? "Unlock the rest" : "Set up Anchor"
-                foreground: root.panelForeground
-                fontFamily: root.fontFamily
-              }
-
-              Text {
-                id: setupCount
-                anchors.right: parent.right
-                anchors.verticalCenter: parent.verticalCenter
-                textFormat: Text.PlainText
-                // Position, not just progress. "Step 2 of 3" is a promise about how much is left.
-                text: root.progress.complete
-                  ? root.progress.total + " of " + root.progress.total
-                  : "step " + root.progress.position + " of " + root.progress.total
-                color: root.panelDim
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
-              }
-            }
 
             StepProgress {
               width: parent.width
@@ -736,16 +821,21 @@ Panel {
 
                 delegate: SetupStep {
                   required property var modelData
-                  width: column.width
+                  width: parent.width
                   state_: modelData.state
                   number: modelData.number
                   label: modelData.label
                   detail: modelData.detail
                   hint: modelData.hint
+                  action: modelData.action
+                  secondary: modelData.secondary
+                  showCommand: root.detailsOpen
                   foreground: root.panelForeground
-                  ground: root.panelGround
+                  ground: root.panelRaised
+                  wellGround: root.panelSunken
                   fontFamily: root.fontFamily
                   animate: root.animate
+                  onActionTriggered: (id) => root.runAction(id)
                 }
               }
             }
@@ -768,7 +858,7 @@ Panel {
                 label: root.optionalOpen ? "optional" : root.progress.optionalRemaining + " optional"
                 interactive: true
                 foreground: root.panelForeground
-                ground: root.panelGround
+                ground: root.panelRaised
                 fontFamily: root.fontFamily
                 onClicked: root.optionalOpen = !root.optionalOpen
               }
@@ -798,69 +888,241 @@ Panel {
 
                 delegate: SetupStep {
                   required property var modelData
-                  width: column.width
+                  width: parent.width
                   state_: modelData.state
                   number: 0
                   label: modelData.label
                   detail: modelData.detail
                   hint: modelData.state === "done" ? "" : modelData.hint
+                  action: modelData.state === "done" ? null : modelData.action
+                  showCommand: root.detailsOpen
                   foreground: root.panelForeground
-                  ground: root.panelGround
+                  ground: root.panelRaised
+                  wellGround: root.panelSunken
                   fontFamily: root.fontFamily
                   animate: root.animate
+                  onActionTriggered: (id) => root.runAction(id)
                 }
               }
             }
           }
 
           // ---------------------------------------------------------------------------- footer
+          //
+          // Two action buttons and one disclosure. Everything that used to compete for attention on
+          // open — the value split, the age of a current reading, the floor list, the read-only
+          // note — is behind that disclosure now, which is the whole point: a panel you can read in
+          // a glance, with the rest one press away rather than deleted.
 
-          PanelSeparator {
+          Item {
             width: parent.width
-            foreground: root.panelForeground
+            implicitHeight: Math.max(footerActions.implicitHeight, detailsPill.implicitHeight)
+
+            Row {
+              id: footerActions
+              anchors.left: parent.left
+              anchors.verticalCenter: parent.verticalCenter
+              spacing: Style.space(4)
+
+              PanelActionButton {
+                iconText: "󰑐"
+                tooltipText: "Refresh now (r)"
+                foreground: root.panelDim
+                hoverColor: root.panelForeground
+                fontFamily: root.fontFamily
+                onClicked: root.refreshAll()
+              }
+
+              PanelActionButton {
+                iconText: root.config.showValue ? "󰈈" : "󰈉"
+                tooltipText: root.config.showValue ? "Hide the value on the bar (v)" : "Show the value on the bar (v)"
+                foreground: root.panelDim
+                hoverColor: root.panelForeground
+                fontFamily: root.fontFamily
+                onClicked: root.toggleShowValue()
+              }
+
+              PanelActionButton {
+                iconText: "󰏌"
+                tooltipText: "Open this wallet on OpenSea"
+                visible: root.wallets.length > 0 && Model.accountUrl(root.wallets[0]) !== null
+                foreground: root.panelDim
+                hoverColor: root.panelForeground
+                fontFamily: root.fontFamily
+                onClicked: root.openUrl(Model.accountUrl(root.wallets[0]))
+              }
+            }
+
+            Pill {
+              id: detailsPill
+              anchors.right: parent.right
+              anchors.verticalCenter: parent.verticalCenter
+              variant: "optional"
+              label: root.detailsOpen ? "less" : "details"
+              interactive: true
+              foreground: root.panelForeground
+              ground: root.panelGround
+              fontFamily: root.fontFamily
+              onClicked: root.detailsOpen = !root.detailsOpen
+            }
           }
 
-          Row {
-            width: parent.width
-            spacing: Style.space(4)
+          // --------------------------------------------------------------------------- details
+          //
+          // Not removed — deferred. Everything here is true and occasionally wanted, and none of it
+          // is worth a line on open.
 
-            PanelActionButton {
-              iconText: "󰑐"
-              tooltipText: "Refresh now (r)"
-              foreground: root.panelDim
-              hoverColor: root.panelForeground
-              fontFamily: root.fontFamily
-              onClicked: root.refreshAll()
+          PanelBlock {
+            color: root.panelRaised
+            line: root.panelLine
+            visible: root.detailsOpen
+
+            // ------------------------------------------------------------ the breakdown
+            //
+            // Three views of one number behind one tab strip. Each states what it covers, because
+            // they do not all cover the same thing — `type` is the whole portfolio, `assets` and
+            // `chains` are the token half, and saying so is cheaper than a footnote nobody reads.
+
+            Item {
+              width: parent.width
+              implicitHeight: breakdownTabs.implicitHeight
+              visible: root.split.rows.length > 0
+
+              Row {
+                id: breakdownTabs
+                anchors.left: parent.left
+                spacing: Style.space(5)
+
+                Repeater {
+                  model: root.detailsOpen ? Model.BREAKDOWNS : []
+
+                  delegate: Pill {
+                    required property var modelData
+                    // The chosen tab is the one thing selected here, so it takes the `recommended`
+                    // weight and the rest stay `optional`. Not `required`: nothing is being asked
+                    // for, and the loud variant belongs to the setup step that is.
+                    variant: root.breakdown === modelData.key ? "recommended" : "optional"
+                    label: modelData.label
+                    interactive: true
+                    toggle: true
+                    foreground: root.panelForeground
+                    ground: root.panelRaised
+                    fontFamily: root.fontFamily
+                    onClicked: root.breakdown = modelData.key
+                  }
+                }
+              }
             }
 
-            PanelActionButton {
-              iconText: root.config.showValue ? "󰈈" : "󰈉"
-              tooltipText: root.config.showValue ? "Hide the value on the bar (v)" : "Show the value on the bar (v)"
-              foreground: root.panelDim
-              hoverColor: root.panelForeground
+            SplitBar {
+              width: parent.width
+              visible: root.split.rows.length > 0
+              rows: root.detailsOpen ? root.split.rows : []
+              foreground: root.panelForeground
+              ground: root.panelRaised
+              trackColor: root.panelSunken
               fontFamily: root.fontFamily
-              onClicked: root.toggleShowValue()
             }
 
-            PanelActionButton {
-              iconText: "󰏌"
-              tooltipText: "Open this wallet on OpenSea"
-              visible: root.state.health !== null && Model.accountUrl(root.state.health.wallet) !== null
-              foreground: root.panelDim
-              hoverColor: root.panelForeground
-              fontFamily: root.fontFamily
-              onClicked: root.openUrl(Model.accountUrl(root.state.health.wallet))
+            Text {
+              width: parent.width
+              visible: root.split.rows.length > 0 && text !== ""
+              textFormat: Text.PlainText
+              // Every view states its own total and its own scope. A share of an unstated whole is
+              // the shape of a number that cannot be checked.
+              text: root.split.totalText === undefined ? ""
+                : "of " + root.split.totalText + "  ·  " + root.split.scope
+              wrapMode: Text.WrapAtWordBoundaryOrAnywhere
+              color: root.panelDim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
             }
-          }
 
-          Text {
-            width: parent.width
-            textFormat: Text.PlainText
-            text: "Read-only. Anchor never signs, never writes, and holds no key."
-            wrapMode: Text.WrapAtWordBoundaryOrAnywhere
-            color: root.panelDim
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.caption
+            // An offer with no stated expiry still exists; it just has no clock to count down, so
+            // it has no row above. Saying how many are unaccounted for is more honest than a list
+            // that quietly holds fewer items than the bar's badge claims.
+            Text {
+              width: parent.width
+              visible: root.label.offers > root.deadlines.length && !root.needsSetup
+              textFormat: Text.PlainText
+              text: (root.label.offers - root.deadlines.length) + " more offer"
+                + (root.label.offers - root.deadlines.length === 1 ? "" : "s")
+                + " with no stated expiry"
+              wrapMode: Text.WrapAtWordBoundaryOrAnywhere
+              color: root.panelDim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+            }
+
+            PanelSectionHeader {
+              visible: root.collections.length > 0
+              text: "Floors"
+              foreground: root.panelForeground
+              fontFamily: root.fontFamily
+            }
+
+            Repeater {
+              model: root.detailsOpen ? root.collections : []
+
+              delegate: PulseRow {
+                required property var modelData
+                width: parent.width
+                label: modelData.name
+                // A collection the service could not fetch keeps its row and says why. Dropping it
+                // would read as one the user had removed from their config.
+                sublabel: modelData.error === null ? "" : modelData.error
+                value: modelData.floor === null ? "—" : modelData.floor
+                faded: modelData.stale || modelData.error !== null
+                url: modelData.url === null ? "" : modelData.url
+                foreground: root.panelForeground
+                fontFamily: root.fontFamily
+                onActivated: root.openUrl(modelData.url)
+              }
+            }
+
+            // ------------------------------------------------------------- what the bar shows
+            //
+            // The default bar is the mark, the value and a countdown. This is where the rest gets
+            // switched on — five pressable pills rather than a settings page, because the whole
+            // point is that adding one is as cheap as changing your mind about it.
+
+            PanelSectionHeader {
+              text: "On the bar"
+              foreground: root.panelForeground
+              fontFamily: root.fontFamily
+            }
+
+            Flow {
+              width: parent.width
+              spacing: Style.space(5)
+
+              Repeater {
+                model: root.detailsOpen ? Model.BAR_ITEMS : []
+
+                delegate: Pill {
+                  required property var modelData
+                  // `done` is the vocabulary's "a fact about the past" — here, a fact about now:
+                  // it ticks and drops its border, so the on ones read as a set and the off ones
+                  // as offers. No second hue, and no variant louder than the step you are on.
+                  variant: root.config[modelData.key] ? "done" : "optional"
+                  label: modelData.label
+                  interactive: true
+                  toggle: true
+                  foreground: root.panelForeground
+                  ground: root.panelRaised
+                  fontFamily: root.fontFamily
+                  onClicked: root.toggleSetting(modelData.key)
+                }
+              }
+            }
+
+            // "Read-only. Anchor never signs, never writes, and holds no key." used to close this
+            // block. It is deleted, not moved: it is a claim about the software rather than about
+            // the user's wallet, it is never acted on, and it was the two lines that pushed the
+            // details view past the panel's height cap and into a scroll. It is still stated in
+            // `manifest.json`'s description — which is what the bar's own settings UI shows before
+            // you add the widget, the moment the question is actually being asked — and in the two
+            // READMEs. Say it once, where it can be looked up.
           }
         }
       }

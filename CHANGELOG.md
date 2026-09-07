@@ -113,13 +113,67 @@ deadlines and an activity count, in the Omarchy top bar, read from the local ser
   snapshot on disk before any of them start, so the bar has content on its first frame. This runs
   inside the single process that draws the whole desktop.
 - **Every degraded state is a designed state.** Service down, no API key, no wallet, offline — each
-  renders as a calm dimmed mark and a panel saying what is missing and the command that fixes it,
-  never as an error. A red box on a fresh install is a bad first impression.
+  renders as a calm dimmed mark and a panel saying what is missing and offering the button that
+  fixes it, never as an error. A red box on a fresh install is a bad first impression.
+- **The panel opens on a few things.** Hero, the number and where it came from, what is closing,
+  one row of controls. The breakdown, the floor list, the raw command behind each setup step and
+  the bar-item toggles are behind a `details` disclosure — deferred, not deleted.
+- **The bar starts sparse and is widened by the person who wants more.** The mark, the value and
+  the countdown to the next offer that closes. The change, the offer count and the activity count
+  are off by default and switch on from the panel's details view or with `omarchy bar set`.
+- **The number says where it came from**: which wallets, and how old, in one line under the total.
+  A total is a claim about specific addresses at a specific moment, and a panel that prints the
+  figure without either is asking to be believed rather than read.
+- **A portfolio breakdown**, behind the disclosure, as a labelled split bar rather than a pie —
+  part-to-whole is a stacked bar, and a pie of two slices is the canonical way to make a ratio
+  harder to read than the sentence it replaced. Three views: `type` (the whole portfolio, from
+  `nftValueUsd`/`tokenValueUsd`), `assets` and `chains` (from `/balances`). The last two are the
+  *token* half and say so, with their own total: NFT value is not broken down by chain or by asset
+  by any endpoint, and distributing it across token rows would print a number that is not true.
+- **USD always carries two decimal places.** `$125,430.5` reached the bar. The rule is keyed on the
+  denomination and applies only to it — ETH at eight places must not become `1.50000000` — and to
+  amounts rather than magnitudes, so `$125K` is not padded and `$11.10` is.
+- **Collections are called by their name.** `/collections` now returns each collection's display
+  name alongside its stats, and the panel shows "Bored Ape Yacht Club" where it showed
+  `boredapeyachtclub`. Slugs stay where the exact identifier is the point: links, and the config.
+- **Every configured wallet is watched.** `wallets` is a list in the config and `wallet: "0x…"` is
+  read as a one-element one. Anchor still cannot *discover* a person's wallets — it holds no wallet
+  credential and no endpoint maps a human to their addresses — so the setup step is widened rather
+  than deleted, and the no-wallets state is unchanged.
+- **Depth comes from the active Omarchy theme.** The panel draws on three surfaces — ground, raised
+  and sunken — read from the theme's own `colors.toml` (`lighter_background`, `dark_background`,
+  `selection`), three keys the shell's `Color` singleton does not expose. Where a theme's value is
+  not a usable step off the popup's actual ground, one is derived from it. Checked against all 22
+  stock themes, including `white` and `vantablack`, which have no headroom in one direction.
+- **A setup step does the thing rather than describing it.** Step 1 is a **Start Anchor** button
+  running `systemctl --user start anchor-service` (with **and at login** for `enable --now`); step 2
+  opens a terminal on the API-key prompt; step 3 opens the config file in Omarchy's editor. The raw
+  commands moved behind the `details` disclosure.
 - **Staleness is shown, not hidden**, using the service's own `meta.ageSeconds` so a reading keeps
   ageing honestly across a reboot.
 - **Setup is three steps, not a wall.** Completed steps leave the queue and a segmented bar keeps the
-  record; one step is current and only it shows a command; the optional step collapses behind a pill
-  you can press. Each step says what it gets you rather than what it configures.
+  record; one step is current and only it offers an action; the optional step collapses behind a pill
+  you can press. Each step says what it gets you rather than what it configures. The "Set up
+  Anchor · step 2 of 3" header was removed: between it, the counter, the segments and the numbered
+  discs, the panel was saying one fact four ways.
+- **The bar's open-panel underline tracks what the widget paints.** `Bar.qml` looks for an
+  `openPanelIndicatorWidth` on a module and otherwise falls back to 55% of the slot, a figure
+  calibrated for a text label in a padded slot. Measured on the running bar: a 172px slot drew a
+  96px underline against 154px of content.
+- **The scrollbar has its own lane.** An attached `ScrollBar.vertical` reserves nothing — measured,
+  10px wide at `flick.width - 10` — so it painted over the right edge of the panel's cards the
+  moment a flick made it appear. The content column is inset by that width on both sides,
+  unconditionally, so the bar has somewhere to be and nothing moves when a list gets longer.
+- **The bar's hover tooltip is one line.** The shell owns a single shared tooltip whose label is
+  hardcoded centre-aligned with one weight and no per-module override, so a four-line paragraph
+  handed to it read as a centred block with nothing leading. The alignment was never the widget's
+  to set; the paragraph was.
+- **Something leads in every row.** The value is bold, the name is regular, the sub-line is dimmed.
+  A list where the label and the value are the same weight and colour reads as a wall.
+- **The step marker is aligned by measurement.** The numeral sits on the step title's own baseline
+  and the disc is centred on the numeral's ink, both derived from `FontMetrics`/`TextMetrics` at
+  runtime. It was a fixed 1px top margin against a metric-derived label, which put the disc 2.1px
+  below the title's cap-height centre and grew worse as `[font] base-size` rose.
 - **A stored credential is not a working one.** A 401 on any read sends the API-key step back to
   current and says the key is being rejected, rather than ticking it because `/health` says a string
   exists.
@@ -127,21 +181,49 @@ deadlines and an activity count, in the Omarchy top bar, read from the local ser
   control characters — and rendered as plain text. Money stays a decimal string, rounded digit by
   digit; no denomination is ever converted, because there is no exchange rate in the widget.
 - Read-only: no credential of its own, loopback only, and clicking a row opens a browser.
+- **The panel passes an identifier, never a command.** `Model.actionArgv` owns a closed table of
+  literal argv arrays and returns null for anything else, so nothing that arrives over the network
+  or out of `shell.json` has a path to something that executes. The one non-literal value — the
+  config file's path — is built from `$HOME`/`$XDG_CONFIG_HOME` and rejected if it is relative,
+  contains `..`, or carries a control character. No credential passes through the widget: the API
+  key is typed into a terminal that writes it straight to the keyring.
 
 **A component layer above the tokens** — `theme/components.css`, with `theme/README.md` documenting
 each piece and when to use it. Pills, a step primitive, segmented progress, buttons in two weights,
-list rows, and generalised surfaces (`.card`, `.well`, `.lift`), so the site, the widget and the
-standalone pages compose from one vocabulary instead of each inventing its own. Variants choose
-weight, never hue, which is what makes "one accent per view" enforceable rather than aspirational.
+list rows, and generalised surfaces (`.card`, `.card--raised`, `.well`, `.lift`), so the site, the
+widget and the standalone pages compose from one vocabulary instead of each inventing its own.
+Variants choose weight, never hue, which is what makes "one accent per view" enforceable rather than
+aspirational.
+
+**Design principles, written down** — a short section at the top of `theme/README.md` that governs
+every surface Anchor draws: open on a few things, reassurance is not information, defer rather than
+delete but be willing to delete, a step does the thing rather than describing it, depth instead of
+dividers, and never a colour at a call site. It also records where a future NFT-driven theme plugs
+in — `tokens.css` for the web, the Omarchy theme's `colors.toml` for the widget — and there is no
+third seam, because no colour the widget draws is a literal.
+
+**`widget/SplitBar.qml`** — a part-to-whole split as a bar plus one labelled row per part, on a
+sequential single-hue scale taken from the live theme. Documented in `theme/README.md` as a house
+rule: never a pie, never a legend that is the only way to read the chart, and text never wears a
+segment's colour.
+
+**`packaging/anchor-service.service`** — the data service as a systemd *user* unit, so starting it
+is a button in the bar rather than a command to copy. Installed to `/usr/lib/systemd/user/` by the
+PKGBUILD. **`/usr/bin/anchor-service`, which the unit's `ExecStart` names, does not exist yet** — it
+needs to be a wrapper around the packaged service and its `node_modules`, and until it is, the unit
+must be written against a checkout (see `service/README.md`). The widget probes the unit rather than
+assuming it, so a machine without one shows the command exactly as before.
 
 **The site, the brand, and the tooling.**
 
 - anchor.ryanio.com: build diary, changelog and `llms.txt`, on a deep-water palette with shared
   tokens in `theme/tokens.css` reused across the project rather than redefined.
 - An anchor mark that reads as an **A**, stroke-based on `currentColor`, legible at 16px.
-- `scripts/check-contrast.ts` computes WCAG ratios from the tokens and fails CI — all 32 text,
+- `scripts/check-contrast.ts` computes WCAG ratios from the tokens and fails CI — all 38 text,
   accent and component pairs clear AA in both themes, so a colour that looks good but is unreadable
-  cannot land.
+  cannot land. The widget's colours cannot be reached from there, because they are the user's live
+  theme; `widget/test/model.test.mjs` runs the same arithmetic over the stock Omarchy palettes and
+  is in CI too.
 - `scripts/check-versions.ts` enforces the Node floor across `.node-version`, CI and the PKGBUILD,
   and requires GitHub Actions to be pinned to commit SHAs rather than mutable tags.
 - Biome as the single formatter and linter — never ESLint or Prettier.

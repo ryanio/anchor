@@ -91,6 +91,9 @@ const PAIRS: Pair[] = [
   { fg: "text", bg: "surface-sunken", min: 4.5, note: "body text in a .well" },
   { fg: "text-muted", bg: "surface-sunken", min: 4.5, note: "a hint in a .well" },
   { fg: "text-subtle", bg: "surface-sunken", min: 3.0, note: ".progress-seg.is-filled on its track" },
+  { fg: "text", bg: "surface-raised", min: 4.5, note: "body text in a .card--raised" },
+  { fg: "text-muted", bg: "surface-raised", min: 4.5, note: "a secondary line in a .card--raised" },
+  { fg: "text-subtle", bg: "surface-raised", min: 3.0, note: "a caption in a .card--raised" },
 ];
 
 let failed = 0;

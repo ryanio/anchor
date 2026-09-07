@@ -3,6 +3,11 @@ import qs.Commons
 
 // One line in the panel: a name on the left, a value on the right, and an optional click.
 //
+// Three text roles, and they are the whole hierarchy: the **value** leads (full strength, bold),
+// the **name** identifies (full strength, regular), the **sub-line** supports (dimmed, caption).
+// Drawing the name and the value at the same weight and colour is what makes a list of them read
+// as a wall — the eye has nothing to land on, and every row costs as much attention as every other.
+//
 // Every string that reaches this component has already been through `Model.sanitize`, and both
 // labels render as `Text.PlainText`. That pairing is deliberate: sanitising alone would still let
 // a name containing markup be interpreted if some future edit changed the format, and PlainText
@@ -58,6 +63,7 @@ Item {
       font.pixelSize: Style.font.body
     }
 
+
     Text {
       width: parent.width
       visible: root.sublabel !== ""
@@ -80,6 +86,9 @@ Item {
     color: root.foreground
     font.family: root.fontFamily
     font.pixelSize: Style.font.body
+    // The answer, not the label: a countdown in "Closing soon", a floor in "Floors". Weight rather
+    // than size, so the row keeps one line height and the column keeps its rhythm.
+    font.bold: true
   }
 
   MouseArea {

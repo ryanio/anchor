@@ -23,6 +23,14 @@ Item {
   property color ground: Color.background
   property string fontFamily: Style.font.family
   property bool interactive: false
+  /**
+   * A pill that switches something on and off rather than leading somewhere.
+   *
+   * `›` means "there is more this way". On a toggle there is not, so it is suppressed: the `✓` of
+   * the `done` variant is the whole signal, and two glyphs saying different things on one small
+   * label is how a control stops reading as a control.
+   */
+  property bool toggle: false
 
   signal clicked()
 
@@ -47,7 +55,7 @@ Item {
   readonly property real _fillAlpha: root._required ? 0.1 : 0
 
   readonly property string _prefix: root._done ? "✓ " : ""
-  readonly property string _suffix: root.interactive ? "  ›" : ""
+  readonly property string _suffix: root.interactive && !root.toggle ? "  ›" : ""
 
   implicitWidth: text.implicitWidth + Style.space(14)
   implicitHeight: text.implicitHeight + Style.space(5)

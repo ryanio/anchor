@@ -146,10 +146,38 @@ test("renders an amount in the denomination it arrived in and no other", () => {
   assert.equal(Model.formatMoney("12345.67", { symbol: "USD" }), "$12.3K");
   assert.equal(Model.formatMoney("1.5", { symbol: "ETH" }), "1.5 ETH");
   assert.equal(Model.formatMoney("1.5", { symbol: "WETH" }), "1.5 WETH");
-  assert.equal(Model.formatMoney("-200", { symbol: "USD" }), "-$200");
+  assert.equal(Model.formatMoney("-200", { symbol: "USD" }), "-$200.00");
   // No symbol means no currency is claimed, rather than a default one being assumed.
   assert.equal(Model.formatMoney("1.5", {}), "1.5");
   assert.equal(Model.formatMoney("1.5", { symbol: "🤑" }), "1.5");
+});
+
+test("USD is always two decimal places, and only USD", () => {
+  // The bug this exists for: `$125,430.5` reached Ryan's bar. USD has exactly two decimal places
+  // by definition, so a dollar figure with one is not a dollar figure.
+  assert.equal(Model.formatMoney("125430.5", { symbol: "USD", exact: true }), "$125,430.50");
+  assert.equal(Model.formatMoney("1234", { symbol: "USD", exact: true }), "$1,234.00");
+  assert.equal(Model.formatMoney("0.5", { symbol: "USD", exact: true }), "$0.50");
+  assert.equal(Model.formatMoney("-9.9", { symbol: "USD", exact: true }), "-$9.90");
+  // And it rounds to the minor unit rather than showing eight places of it.
+  assert.equal(Model.formatMoney("1.005", { symbol: "USD", exact: true }), "$1.01");
+
+  // The compact form below its first unit is still an amount, so it pads too.
+  assert.equal(Model.formatMoney("11.1", { symbol: "USD" }), "$11.10");
+  assert.equal(Model.formatMoney("999", { symbol: "USD" }), "$999.00");
+  // With a unit on it, it is a magnitude: padding "$125.00K" pads a rounding, not a cent.
+  assert.equal(Model.formatMoney("125430.5", { symbol: "USD" }), "$125K");
+  assert.equal(Model.formatMoney("1250", { symbol: "USD" }), "$1.25K");
+
+  // And it must not leak. A denomination with no fixed minor unit keeps its own precision, and
+  // trailing zeros there would claim a precision the response never made.
+  assert.equal(Model.formatMoney("1.5", { symbol: "ETH", exact: true }), "1.5 ETH");
+  assert.equal(Model.formatMoney("2", { symbol: "WETH", exact: true }), "2 WETH");
+  assert.equal(Model.formatMoney("1.5", { exact: true }), "1.5");
+
+  assert.equal(Model.padFraction("1.5", 2), "1.50");
+  assert.equal(Model.padFraction("1", 2), "1.00");
+  assert.equal(Model.padFraction("1.234", 2), "1.234", "padding never truncates");
 });
 
 test("there is no exchange rate anywhere in the model", () => {
@@ -681,4 +709,564 @@ test("showValue false hides the number without changing the status", () => {
   const hidden = Model.barLabel(state, NOW, { showValue: false });
   assert.equal(hidden.value, "");
   assert.equal(hidden.status, Model.STATUS.READY);
+});
+
+// -------------------------------------------------------------------------------------------
+// Actions the panel can take
+//
+// A bar widget that spawns processes is the part of this change worth testing hardest. The
+// property being asserted is not "the right command runs" but "nothing else can": the panel hands
+// over an identifier, and everything that becomes an argv is a literal in one closed table.
+// -------------------------------------------------------------------------------------------
+
+test("every action is a fixed argv, and an unknown id runs nothing", () => {
+  const env = { home: "/home/someone" };
+
+  assert.deepEqual(Model.actionArgv(Model.ACTION.START_SERVICE, env), [
+    "systemctl",
+    "--user",
+    "start",
+    "anchor-service.service",
+  ]);
+  assert.deepEqual(Model.actionArgv(Model.ACTION.ENABLE_SERVICE, env), [
+    "systemctl",
+    "--user",
+    "enable",
+    "--now",
+    "anchor-service.service",
+  ]);
+  assert.deepEqual(Model.actionArgv(Model.ACTION.SET_API_KEY, env), [
+    "omarchy-launch-terminal",
+    "anchor-service",
+    "--set-api-key",
+  ]);
+  assert.deepEqual(Model.actionArgv(Model.ACTION.EDIT_CONFIG, env), [
+    "omarchy-launch-editor",
+    "/home/someone/.config/anchor/config.json",
+  ]);
+
+  // The failure mode this exists to prevent: an id that came from anywhere but the table.
+  for (const bogus of ["", "rm", "start-service ; rm -rf /", "startService", null, undefined, 0, {}, []]) {
+    assert.equal(Model.actionArgv(bogus, env), null, `${String(bogus)} must not resolve to a command`);
+  }
+});
+
+test("the one non-literal argument, the config path, is validated rather than trusted", () => {
+  assert.equal(
+    Model.configFilePath({ configHome: "/home/someone/.config" }),
+    "/home/someone/.config/anchor/config.json",
+    "XDG_CONFIG_HOME wins over HOME",
+  );
+  assert.equal(Model.configFilePath({ home: "/home/someone" }), "/home/someone/.config/anchor/config.json");
+
+  assert.equal(Model.configFilePath({}), null, "no environment at all yields no command");
+  assert.equal(Model.configFilePath({ configHome: "relative/path" }), null, "must be absolute");
+  assert.equal(Model.configFilePath({ configHome: "/home/../etc" }), null, "no traversal segment");
+  assert.equal(Model.configFilePath({ configHome: "/home/a\nb" }), null, "no control characters");
+
+  // And a rejected path must take the whole action with it, not fall back to a default.
+  assert.equal(Model.actionArgv(Model.ACTION.EDIT_CONFIG, {}), null);
+});
+
+test("`systemctl show` is read for both facts: a unit can load and still fail", () => {
+  const loaded = Model.parseUnitState("LoadState=loaded\nActiveState=active\n");
+  assert.deepEqual(loaded, { loaded: true, active: "active", failed: false });
+
+  const broken = Model.parseUnitState("LoadState=loaded\nActiveState=failed\n");
+  assert.equal(broken.loaded, true, "the unit file is there");
+  assert.equal(broken.failed, true, "and starting it did not work — the step has to say so");
+
+  const absent = Model.parseUnitState("LoadState=not-found\nActiveState=inactive\n");
+  assert.deepEqual(absent, { loaded: false, active: "inactive", failed: false });
+
+  // A `systemctl` that is missing, killed, or writes nothing must read as "no unit", never as one.
+  for (const nothing of ["", "\n", null, undefined, "Description=whatever"]) {
+    assert.equal(Model.parseUnitState(nothing).loaded, false);
+  }
+});
+
+test("the first setup step offers a button only when the unit is actually installed", () => {
+  const noUnit = Model.setupSteps(stateWith({ health: null }))[0];
+  assert.equal(noUnit.action, null, "no unit, no button — a button that cannot work is worse than none");
+  assert.match(noUnit.hint, /node service/, "and the command stays available as the fallback");
+
+  const withUnit = Model.setupSteps(
+    stateWith({ health: null, unit: { loaded: true, active: "inactive", failed: false } }),
+  );
+  assert.equal(withUnit[0].action.id, Model.ACTION.START_SERVICE);
+  assert.equal(withUnit[0].secondary.id, Model.ACTION.ENABLE_SERVICE, "and one to survive a reboot");
+  assert.match(withUnit[0].hint, /systemctl --user start/, "the raw command becomes the footnote");
+
+  const failed = Model.setupSteps(
+    stateWith({ health: null, unit: { loaded: true, active: "failed", failed: true } }),
+  );
+  assert.match(failed[0].detail, /failed to start/, "a start that did not work is not reported as success");
+});
+
+test("the credential step opens a prompt and never carries the secret", () => {
+  const fresh = stateWith({ health: health({ credentials: { apiKey: false, pat: false } }) });
+  const apiKey = Model.setupSteps(fresh)[1];
+
+  assert.equal(apiKey.action.id, Model.ACTION.SET_API_KEY);
+  const argv = Model.actionArgv(apiKey.action.id, { home: "/home/someone" });
+  // The point of the assertion: the argv is a *prompt*, with no slot a value could be put into.
+  assert.equal(argv.length, 3);
+  assert.deepEqual(argv, ["omarchy-launch-terminal", "anchor-service", "--set-api-key"]);
+});
+
+test("a 401 on any data read demotes the API-key step, including the newest one", () => {
+  const rejected = (key) =>
+    stateWith({
+      health: health(),
+      [key]: { data: null, meta: null, receivedAt: 0, error: "unauthorized", status: 401 },
+    });
+
+  // `balances` is the read added for the breakdown. A route left out of this list is one whose 401
+  // the panel absorbs silently while still saying the key is fine — which is the exact failure the
+  // "presence is not function" rule exists for.
+  for (const key of ["portfolio", "activity", "collections", "balances"]) {
+    assert.equal(Model.apiKeyRejected(rejected(key)), true, `${key} 401 must be noticed`);
+    const step = Model.setupProgress(rejected(key)).required[1];
+    assert.equal(step.state, "current");
+    assert.match(step.label, /Replace/);
+  }
+});
+
+test("applyUnitState folds a probe in without disturbing a reading", () => {
+  const before = stateWith({ portfolio: { data: { totalValueUsd: "5" }, meta: null, receivedAt: NOW } });
+  const after = Model.applyUnitState(before, "LoadState=loaded\nActiveState=active\n");
+  assert.equal(after.unit.loaded, true);
+  assert.deepEqual(after.portfolio, before.portfolio, "a fact about this machine is not a reading");
+});
+
+// -------------------------------------------------------------------------------------------
+// Depth, taken from the live Omarchy theme
+//
+// `scripts/check-contrast.ts` gates theme/tokens.css and cannot reach these colours: they belong
+// to whichever Omarchy theme is applied at runtime. So the gate for them is here, against the
+// palettes of the stock themes — including the two that break every rule of thumb: `white`
+// (a #ffffff ground with no headroom above it) and `vantablack` (#000000, with none below).
+// -------------------------------------------------------------------------------------------
+
+/** The keys `panelSurfaces` reads, in the exact `colors.toml` spelling. */
+function themeToml(values) {
+  return Object.entries(values)
+    .map(([k, v]) => `${k} = "${v}"`)
+    .join("\n");
+}
+
+const STOCK_THEMES = {
+  "tokyo-night": {
+    mode: "dark",
+    background: "#1a1b26",
+    lighter_background: "#24283b",
+    dark_background: "#13141c",
+    selection: "#292e42",
+    foreground: "#a9b1d6",
+  },
+  "catppuccin-latte": {
+    mode: "light",
+    background: "#eff1f5",
+    lighter_background: "#dce0e8",
+    dark_background: "#e3e4e8",
+    selection: "#ccd0da",
+    foreground: "#4c4f69",
+  },
+  white: {
+    mode: "light",
+    background: "#ffffff",
+    lighter_background: "#c0c0c0",
+    dark_background: "#f5f5f5",
+    selection: "#c0c0c0",
+    foreground: "#000000",
+  },
+  vantablack: {
+    mode: "dark",
+    background: "#000000",
+    lighter_background: "#1a1a1a",
+    dark_background: "#090909",
+    selection: "#1a1a1a",
+    foreground: "#ffffff",
+  },
+};
+
+test("colors.toml is parsed for the layers Color.qml drops on the floor", () => {
+  const theme = Model.parseThemeColors(
+    [
+      "# a comment",
+      'mode = "dark"',
+      'accent = "#7aa2f7"',
+      'background = "#1a1b26"   # with a trailing comment',
+      'lighter_background = "#24283b"',
+      'dark_background = "#13141c"',
+      'selection = "#292e42"',
+      'foreground = "#a9b1d6"',
+    ].join("\n"),
+  );
+  assert.equal(theme.mode, "dark");
+  assert.deepEqual(theme.background, Model.hexToRgb("#1a1b26"));
+  assert.deepEqual(theme.raised, Model.hexToRgb("#24283b"));
+  assert.deepEqual(theme.sunken, Model.hexToRgb("#13141c"));
+  assert.deepEqual(theme.line, Model.hexToRgb("#292e42"));
+
+  // A machine with no theme applied is the empty case, not an error case.
+  const none = Model.parseThemeColors("");
+  assert.equal(none.background, null);
+  assert.equal(none.raised, null);
+});
+
+test("every stock theme yields three surfaces that are distinct and still carry text", () => {
+  for (const [name, values] of Object.entries(STOCK_THEMES)) {
+    const theme = Model.parseThemeColors(themeToml(values));
+    const ground = theme.background;
+    const s = Model.panelSurfaces(ground, theme);
+    const text = theme.foreground;
+
+    for (const layer of ["raised", "sunken", "line"]) {
+      const step = Model.contrastRatio(s[layer], ground);
+      assert.ok(step >= 1.03, `${name}: ${layer} is invisible against the ground (${step.toFixed(3)}:1)`);
+      assert.ok(step <= 4, `${name}: ${layer} reads as a border, not a surface (${step.toFixed(3)}:1)`);
+    }
+
+    // The reason depth is worth having at all: text has to stay readable on every layer it lands
+    // on. AA body text is 4.5:1, and full-strength foreground must clear it on all three.
+    for (const layer of ["ground", "raised", "sunken"]) {
+      const r = Model.contrastRatio(text, s[layer]);
+      assert.ok(r >= 4.5, `${name}: foreground on ${layer} is ${r.toFixed(2)}:1, below AA`);
+    }
+
+    // A divider that equals the surface beside it is not a divider. `vantablack` ships exactly
+    // that — `selection` and `lighter_background` are both #1a1a1a — so one has to be derived.
+    const lineVsRaised = Model.contrastRatio(s.line, s.raised);
+    assert.ok(lineVsRaised >= 1.02, `${name}: the hairline vanishes into the raised surface`);
+  }
+});
+
+test("with no theme file at all, the layers are derived from the ground rather than guessed", () => {
+  for (const ground of [Model.hexToRgb("#000000"), Model.hexToRgb("#ffffff"), Model.hexToRgb("#101315")]) {
+    const s = Model.panelSurfaces(ground, {});
+    for (const layer of ["raised", "sunken", "line"]) {
+      assert.ok(
+        Model.contrastRatio(s[layer], ground) >= 1.03,
+        `a derived ${layer} still has to be a visible step`,
+      );
+    }
+  }
+});
+
+// -------------------------------------------------------------------------------------------
+// Names, not slugs
+// -------------------------------------------------------------------------------------------
+
+test("a collection is called by its name, and the slug is the fallback rather than the label", () => {
+  const state = stateWith({
+    health: health(),
+    collections: {
+      data: [
+        { slug: "boredapeyachtclub", name: "Bored Ape Yacht Club", data: { floorPrice: "28.9" } },
+        { slug: "cool-cats", data: { floorPrice: "1.42" } },
+      ],
+      meta: null,
+      receivedAt: NOW,
+    },
+  });
+
+  const rows = Model.collectionRows(state, {});
+  assert.equal(rows[0].name, "Bored Ape Yacht Club");
+  assert.equal(rows[1].name, "cool-cats", "no name from the service means the slug, not a blank");
+  // The link is still built from the slug: that is the identifier, and it is what is validated.
+  assert.equal(rows[0].url, "https://opensea.io/collection/boredapeyachtclub");
+  assert.equal(rows[0].slug, "boredapeyachtclub");
+});
+
+test("a collection name is marketplace content, so it is sanitised and truncated like one", () => {
+  const state = stateWith({
+    collections: {
+      data: [{ slug: "cool-cats", name: `Cool‮Cats${"​".repeat(200)} of the very longest kind` }],
+      meta: null,
+      receivedAt: NOW,
+    },
+  });
+  const name = Model.collectionRows(state, { maxNameLength: 20 })[0].name;
+  assert.ok(!name.includes("‮"), "a bidi override in a name would reorder the row around it");
+  assert.ok(!name.includes("​"));
+  assert.ok(Array.from(name).length <= 20);
+});
+
+test("the deadline rows and the floor rows agree on what a collection is called", () => {
+  const state = stateWith({
+    health: health(),
+    collections: {
+      data: [{ slug: "cool-cats", name: "Cool Cats", data: { floorPrice: "1.42" } }],
+      meta: null,
+      receivedAt: NOW,
+    },
+    activity: {
+      data: {
+        assetEvents: [
+          {
+            eventType: "order",
+            orderType: "item_offer",
+            maker: "0xbidder",
+            asset: { collection: "cool-cats", identifier: "7", name: "Cool Cat #7" },
+            expirationDate: Math.floor((NOW + 3600_000) / 1000),
+            payment: { quantity: "1000000000000000000", decimals: 18, symbol: "WETH" },
+          },
+        ],
+      },
+      meta: null,
+      receivedAt: NOW,
+    },
+  });
+
+  const [row] = Model.deadlines(state, NOW, {});
+  assert.ok(row, "the fixture has to produce a deadline or this asserts nothing");
+  assert.equal(row.collection, "Cool Cats", "the same name the Floors list uses");
+  // One mapping, built in one place: that is the property, not the string.
+  assert.deepEqual(Model.collectionNames(state, {}), { "cool-cats": "Cool Cats" });
+});
+
+// -------------------------------------------------------------------------------------------
+// Wallets, plural
+// -------------------------------------------------------------------------------------------
+
+test("every configured wallet is watched, and the old singular field still works", () => {
+  assert.deepEqual(Model.walletList({ wallets: ["0xa", "0xb"] }), ["0xa", "0xb"]);
+  assert.deepEqual(Model.walletList({ wallet: "0xa" }), ["0xa"], "a service that only reports the singular");
+  assert.deepEqual(
+    Model.walletList({ wallets: [], wallet: "0xa" }),
+    ["0xa"],
+    "an empty list is not an answer",
+  );
+  assert.deepEqual(Model.walletList({ wallets: ["0xa", 7, ""] }), ["0xa"], "hand-edited config is untrusted");
+
+  // The state this now has to keep working, because it is the only way to reach it.
+  assert.deepEqual(Model.walletList({}), []);
+  assert.deepEqual(Model.walletList(null), []);
+});
+
+test("no wallets is still a designed state, not an error", () => {
+  const none = stateWith({ health: health({ wallet: null, wallets: [] }) });
+  assert.equal(Model.statusOf(none, NOW), Model.STATUS.SETUP);
+  assert.equal(Model.statusDetail(none, NOW, {}), "no wallet configured");
+
+  const step = Model.setupSteps(none).find((s) => s.key === "wallet");
+  assert.equal(step.done, false);
+  assert.equal(step.action.id, Model.ACTION.EDIT_CONFIG);
+});
+
+test("an offer to any watched wallet counts, not just the first", () => {
+  const event = (recipient) => ({
+    eventType: "order",
+    orderType: "item_offer",
+    maker: "0xbidder",
+    taker: recipient,
+    expirationDate: Math.floor((NOW + 3600_000) / 1000),
+    payment: { quantity: "1000000000000000000", decimals: 18, symbol: "WETH" },
+    asset: { collection: "cool-cats", identifier: "7" },
+  });
+
+  const state = stateWith({
+    health: health({ wallet: "0xaaa", wallets: ["0xaaa", "0xbbb"] }),
+    activity: { data: { assetEvents: [event("0xbbb")] }, meta: null, receivedAt: NOW },
+  });
+  assert.equal(Model.offerCount(state), 1, "the second wallet is watched too, or the plural means nothing");
+  assert.equal(Model.deadlines(state, NOW, {}).length, 1);
+
+  // The regression the plural introduced and this caught: testing each wallet and OR-ing the
+  // results counts your own bid as incoming, because an offer made by wallet A is indeed "not made
+  // by wallet B". The whole list has to be one test.
+  const ownBid = stateWith({
+    health: health({ wallet: "0xaaa", wallets: ["0xaaa", "0xbbb"] }),
+    activity: {
+      data: { assetEvents: [Object.assign(event("0xaaa"), { maker: "0xbbb" })] },
+      meta: null,
+      receivedAt: NOW,
+    },
+  });
+  assert.equal(Model.offerCount(ownBid), 0, "an offer made by one of my own wallets is not incoming");
+  assert.equal(Model.deadlines(ownBid, NOW, {}).length, 0);
+});
+
+// -------------------------------------------------------------------------------------------
+// What the bar shows
+// -------------------------------------------------------------------------------------------
+
+test("the bar starts sparse: the value and the countdown, nothing else", () => {
+  const settings = Model.mergeSettings({});
+  assert.equal(settings.showValue, true);
+  assert.equal(settings.showDeadline, true, "the only item with a clock running out");
+  assert.equal(settings.showChange, false);
+  assert.equal(settings.showOffers, false);
+  assert.equal(settings.showActivity, false);
+
+  // The toggles the panel offers and the items the bar draws come from one list, so they cannot
+  // drift apart — the same argument as `optionalSummary` being derived from the steps.
+  assert.deepEqual(
+    Model.BAR_ITEMS.map((item) => item.key),
+    ["showValue", "showChange", "showOffers", "showDeadline", "showActivity"],
+  );
+  for (const item of Model.BAR_ITEMS) {
+    assert.equal(typeof settings[item.key], "boolean", `${item.key} has to be a real setting`);
+    assert.ok(item.label !== "", "and something to call it in the panel");
+  }
+});
+
+// -------------------------------------------------------------------------------------------
+// The portfolio, broken down
+// -------------------------------------------------------------------------------------------
+
+test("decimal strings are summed digit by digit, never through a float", () => {
+  assert.equal(Model.addDecimals("0.1", "0.2"), "0.3", "the classic float failure");
+  assert.equal(Model.addDecimals("1.005", "2.995"), "4");
+  assert.equal(Model.addDecimals("999", "1"), "1000");
+  assert.equal(Model.addDecimals("9.99", "0.01"), "10");
+  assert.equal(Model.sumDecimals(["1.1", "2.2", "3.3"]), "6.6");
+
+  // Well past what a double can hold exactly, which is the whole reason for the string arithmetic.
+  const huge = "123456789012345678901.55";
+  assert.equal(Model.addDecimals(huge, "0.45"), "123456789012345678902");
+  assert.notEqual(String(Number(huge) + 0.45), "123456789012345678902");
+});
+
+function portfolioState(extra = {}) {
+  return stateWith(
+    Object.assign(
+      {
+        health: health(),
+        portfolio: {
+          data: {
+            totalValueUsd: "1000",
+            nftValueUsd: "700",
+            tokenValueUsd: "300",
+          },
+          meta: { stale: false, ageSeconds: 12 },
+          receivedAt: NOW,
+        },
+      },
+      extra,
+    ),
+  );
+}
+
+test("the type breakdown covers the whole portfolio and says so", () => {
+  const split = Model.portfolioBreakdown(portfolioState(), {}, "type");
+  assert.deepEqual(
+    split.rows.map((r) => [r.label, r.text, Math.round(r.share * 100)]),
+    [
+      ["NFTs", "$700.00", 70],
+      ["Tokens", "$300.00", 30],
+    ],
+  );
+  assert.equal(split.totalText, "$1,000.00");
+  assert.match(split.scope, /everything/);
+});
+
+test("the asset and chain breakdowns say they are the token half, because they are", () => {
+  const state = portfolioState({
+    balances: {
+      data: [
+        { symbol: "AAA", name: "Alpha", chain: "ethereum", usd_value: "200" },
+        { symbol: "BBB", name: "Beta", chain: "base", usd_value: "100" },
+      ],
+      meta: null,
+      receivedAt: NOW,
+    },
+  });
+
+  const assets = Model.portfolioBreakdown(state, {}, "asset");
+  assert.deepEqual(
+    assets.rows.map((r) => [r.label, r.text]),
+    [
+      ["AAA", "$200.00"],
+      ["BBB", "$100.00"],
+    ],
+  );
+  // Its own total, not the headline's: 300, not 1000. A share of an unstated whole is the shape of
+  // a number that cannot be checked — and presenting token rows as shares of the portfolio would
+  // silently claim that NFT value had been distributed among them.
+  assert.equal(assets.totalText, "$300.00");
+  assert.match(assets.scope, /tokens only/);
+  assert.match(assets.scope, /asset/);
+
+  const chains = Model.portfolioBreakdown(state, {}, "chain");
+  assert.deepEqual(
+    chains.rows.map((r) => [r.label, r.text, Math.round(r.share * 100)]),
+    [
+      ["ethereum", "$200.00", 67],
+      ["base", "$100.00", 33],
+    ],
+  );
+  assert.match(chains.scope, /tokens only/);
+  assert.match(chains.scope, /chain/);
+});
+
+test("a long tail folds into one row rather than being dropped", () => {
+  const many = [];
+  for (let i = 0; i < 9; i++) many.push({ symbol: `T${i}`, chain: "ethereum", usd_value: "10" });
+  const split = Model.portfolioBreakdown(
+    portfolioState({ balances: { data: many, meta: null, receivedAt: NOW } }),
+    {},
+    "asset",
+  );
+
+  assert.equal(split.rows.length, 6, "five parts and a fold");
+  assert.equal(split.rows[5].label, "4 more");
+  assert.equal(split.rows[5].text, "$40.00");
+  // The property that matters: the parts still add up to the stated total.
+  const shares = split.rows.reduce((sum, row) => sum + row.share, 0);
+  assert.ok(Math.abs(shares - 1) < 1e-9, `shares sum to ${shares}, not 1`);
+  assert.equal(Model.sumDecimals(split.rows.map((r) => r.value)), "90");
+});
+
+test("balance rows are marketplace content and are sanitised like any other", () => {
+  const state = portfolioState({
+    balances: {
+      data: [
+        { symbol: "<script>", name: "Cool‮Token", chain: "eth\nereum", usd_value: "5" },
+        { symbol: "OK", usd_value: "1" },
+        { symbol: "NOVALUE" },
+      ],
+      meta: null,
+      receivedAt: NOW,
+    },
+  });
+  const rows = Model.balanceRows(state, {});
+  assert.equal(rows.length, 2, "a row with no USD value is not a row");
+  assert.equal(rows[0].label, "CoolToken", "a rejected ticker falls back to the sanitised name");
+  assert.equal(rows[0].chain, "eth ereum");
+  assert.ok(!rows[0].label.includes("‮"));
+});
+
+test("with nothing to break down there is nothing to draw", () => {
+  const blank = stateWith({ health: health() });
+  for (const mode of ["type", "asset", "chain"]) {
+    const split = Model.portfolioBreakdown(blank, {}, mode);
+    assert.deepEqual(split.rows, [], `${mode} must not invent a slice`);
+  }
+  assert.deepEqual(Model.portfolioBreakdown(blank, {}, "nonsense").rows, []);
+});
+
+// -------------------------------------------------------------------------------------------
+// Provenance
+// -------------------------------------------------------------------------------------------
+
+test("the panel says which wallets a total is for, and how old it is", () => {
+  // The line that would have made a fabricated total obvious: it names the addresses behind the
+  // number. Two of them nobody configured is visible; a plausible dollar figure alone is not.
+  const one = portfolioState({ health: health({ wallet: `0x${"a".repeat(40)}` }) });
+  assert.equal(Model.provenance(one, NOW, {}), "0xaaaa…aaaa  ·  as of now");
+
+  const two = portfolioState({ health: health({ wallets: ["0xaa", "0xbb"] }) });
+  assert.match(Model.provenance(two, NOW, {}), /^2 wallets/);
+
+  // Older readings keep saying so rather than quietly presenting as current.
+  const old = portfolioState({
+    health: health({ wallets: ["0xaa"] }),
+    portfolio: { data: { totalValueUsd: "1" }, meta: null, receivedAt: NOW - 3_600_000 },
+  });
+  assert.match(Model.provenance(old, NOW, {}), /as of 1h/);
+
+  // And with nothing to say it says nothing, rather than a line of empty separators.
+  assert.equal(Model.provenance(stateWith({}), NOW, {}), "");
 });
