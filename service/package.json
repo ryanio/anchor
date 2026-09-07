@@ -1,0 +1,23 @@
+{
+  "name": "@anchor/service",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Anchor's local read-only data service. Everything else reads from here.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.6.0"
+  },
+  "bin": {
+    "anchor-service": "./src/index.ts"
+  },
+  "scripts": {
+    "start": "node src/index.ts",
+    "set-api-key": "node src/index.ts --set-api-key",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0"
+  },
+  "license": "MIT"
+}
