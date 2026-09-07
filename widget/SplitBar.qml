@@ -1,6 +1,5 @@
 import QtQuick
 import qs.Commons
-import "PulseModel.js" as Model
 
 // A part-to-whole split: one bar, and a labelled row per part.
 //
@@ -36,8 +35,8 @@ Item {
   /**
    * Strength per rank, darkest first.
    *
-   * Six steps because `Model.BREAKDOWN_LIMIT` folds the tail into one row at five parts plus a
-   * "n more" — past that the steps stop separating and the fold is the answer, not another shade.
+   * Six steps because the model folds the tail into one row at five parts plus an "n more" —
+   * past that the steps stop separating and the fold is the answer, not another shade.
    */
   //
   // The first two steps are deliberately far apart. At 0.85/0.55 a 90/10 split drew two swatches
