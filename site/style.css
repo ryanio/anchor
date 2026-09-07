@@ -175,8 +175,10 @@ footer {
 
 .foot-grid {
   display: grid;
-  grid-template-columns: 1.6fr repeat(3, minmax(0, 1fr));
-  gap: var(--space-5);
+  /* max-content on the link columns: they size to their longest label, so nothing wraps mid-phrase.
+     A footer link broken across two lines reads as two links. */
+  grid-template-columns: minmax(0, 1.5fr) repeat(4, max-content);
+  gap: var(--space-5) var(--space-6);
   align-items: start;
 }
 
@@ -195,6 +197,7 @@ footer {
 }
 .foot-grid nav a {
   display: inline-flex; align-items: center; gap: 4px;
+  white-space: nowrap;
   color: var(--text-muted); text-decoration: none; font-size: 13.5px;
   transition: color .15s var(--ease);
 }
@@ -215,8 +218,8 @@ footer {
 }
 .foot-base .dot { opacity: .5; }
 
-@media (max-width: 720px) {
-  .foot-grid { grid-template-columns: 1fr 1fr; gap: var(--space-5); }
+@media (max-width: 860px) {
+  .foot-grid { grid-template-columns: repeat(2, max-content); justify-content: space-between; }
   .foot-brand { grid-column: 1 / -1; }
 }
 
