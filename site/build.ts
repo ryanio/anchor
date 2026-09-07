@@ -10,6 +10,7 @@ import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, write
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { icon } from "./icons.ts";
+import { LINKS, PATHS } from "./links.ts";
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const OUT = join(ROOT, "dist");
@@ -251,10 +252,10 @@ ${CSS}</style>
   <header class="glass">
     <a class="brand" href="/">${MARK}<span>Anchor</span></a>
     <nav>
-      <a href="/">${icon("book-open", 16)}<span>Diary</span></a>
-      <a href="/changelog.html">${icon("scroll-text", 16)}<span>Changelog</span></a>
-      <a href="https://ryanio.github.io/tidebreak/">${icon("gamepad-2", 16)}<span>Battle</span></a>
-      <a href="https://github.com/ryanio/anchor">${icon("github", 15)}<span>Source</span></a>
+      <a href="${PATHS.home}" aria-label="Diary">${icon("book-open", 16)}<span>Diary</span></a>
+      <a href="${PATHS.changelog}" aria-label="Changelog">${icon("scroll-text", 16)}<span>Changelog</span></a>
+      <a href="${LINKS.game}" aria-label="Tidebreak, a browser game">${icon("gamepad-2", 16)}<span>Battle</span></a>
+      <a href="${LINKS.repo}" aria-label="Source on GitHub">${icon("github", 15)}<span>Source</span></a>
     </nav>
   </header>
   ${opts.subtitle ? `<p class="tagline">${opts.subtitle}</p>` : ""}
@@ -265,34 +266,34 @@ ${CSS}</style>
         <span class="foot-mark">${MARK}<span>Anchor</span></span>
         <p>A wallet-aware Linux desktop. Your art becomes the theme, your watchlist lives in the bar,
            and an agent acts within limits it cannot change.</p>
-        <a class="foot-cta" href="https://github.com/ryanio/anchor">
+        <a class="foot-cta" href="${LINKS.repo}">
           ${icon("github", 15)}<span>Read the source</span>${icon("arrow-up-right", 13)}
         </a>
       </div>
       <div class="foot-links">
         <nav>
           <span class="foot-head">Project</span>
-          <a href="/">Diary</a>
-          <a href="/changelog.html">Changelog</a>
-          <a href="https://github.com/ryanio/anchor/blob/main/AGENTS.md">Agent rules</a>
-          <a href="https://github.com/ryanio/anchor/blob/main/docs/autonomy.md">Autonomy</a>
+          <a href="${PATHS.home}">Diary</a>
+          <a href="${PATHS.changelog}">Changelog</a>
+          <a href="${LINKS.agents}">Agent rules</a>
+          <a href="${LINKS.autonomy}">Autonomy</a>
         </nav>
         <nav>
           <span class="foot-head">Ryan</span>
-          <a href="https://ryanio.com">ryanio.com</a>
-          <a href="https://x.com/r_alx_z">X</a>
-          <a href="https://github.com/ryanio">GitHub</a>
-          <a href="https://ryanio.github.io/tidebreak/">Battle</a>
+          <a href="${LINKS.ryan}">ryanio.com</a>
+          <a href="${LINKS.x}">X</a>
+          <a href="${LINKS.github}">GitHub</a>
+          <a href="${LINKS.game}">Battle</a>
         </nav>
       </div>
     </div>
     <div class="foot-base">
       <span>MIT</span>
       <span class="dot">·</span>
-      <span>Built in the open on <a href="https://omarchy.org">Omarchy</a></span>
+      <span>Built in the open on <a href="${LINKS.omarchy}">Omarchy</a></span>
       <span class="dot">·</span>
       <span>Deployed from <code>main</code></span>
-      <a class="foot-llms" href="/llms.txt">llms.txt</a>
+      <a class="foot-llms" href="${PATHS.llms}">llms.txt</a>
     </div>
   </footer>
 </div>

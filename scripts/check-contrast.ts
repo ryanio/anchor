@@ -78,8 +78,8 @@ const PAIRS: Pair[] = [
   { fg: "text-subtle", bg: "bg", min: 3.0, note: "labels and captions (large/UI)" },
   { fg: "accent", bg: "bg", min: 4.5, note: "links on the page" },
   { fg: "accent", bg: "bg-elevated", min: 4.5, note: "links on a card" },
-  { fg: "coral", bg: "bg", min: 4.5, note: "the counterpoint accent" },
-  { fg: "coral", bg: "bg-elevated", min: 4.5, note: "counterpoint on a card" },
+  { fg: "ember", bg: "bg", min: 4.5, note: "the counterpoint accent" },
+  { fg: "ember", bg: "bg-elevated", min: 4.5, note: "counterpoint on a card" },
   { fg: "border-strong", bg: "bg", min: 1.4, note: "a visible edge" },
 ];
 

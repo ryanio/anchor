@@ -7,7 +7,7 @@
  * Import it and use the semantic names. Never a raw hex in a component.
  *
  * The palette is deep water: a near-black with a blue-green cast rather than neutral grey, an ocean
- * cyan as primary, and coral as a sparing counterpoint — the reef pairing. Neutrals lean warm (sand,
+ * cyan as primary, and ember as a sparing counterpoint — a warm counterpoint to the cold water. Neutrals lean warm (sand,
  * foam) so long-form text reads soft instead of clinical.
  *
  * Every text/background pair is checked by scripts/check-contrast.ts in CI, so a colour that looks
@@ -37,11 +37,11 @@
   --current-rgb-light: 13 107 128;
   --current-rgb-dark:  95 212 228;
 
-  /* ── coral — the counterpoint. Sparingly: one accent per view. ──────── */
-  --coral-light: #b8442e;
-  --coral-dark:  #ff8a6b;
-  --coral-rgb-light: 184 68 46;
-  --coral-rgb-dark:  255 138 107;
+  /* ── ember — the counterpoint. Sparingly: one accent per view. ──────── */
+  --ember-light: #b8442e;
+  --ember-dark:  #ff8a6b;
+  --ember-rgb-light: 184 68 46;
+  --ember-rgb-dark:  255 138 107;
 
   /* ── scale ──────────────────────────────────────────────────────────── */
   --space-1: 4px;  --space-2: 8px;  --space-3: 12px; --space-4: 16px;
@@ -68,8 +68,8 @@
   --border-strong: var(--foam-300);
   --accent:        var(--current-light);
   --accent-rgb:    var(--current-rgb-light);
-  --coral:         var(--coral-light);
-  --coral-rgb:     var(--coral-rgb-light);
+  --ember:         var(--ember-light);
+  --ember-rgb:     var(--ember-rgb-light);
   --code-bg:       var(--foam-100);
 
   --glass-bg:     rgb(255 255 255 / .66);
@@ -79,7 +79,7 @@
   --glass-shadow: 0 1px 2px rgb(6 19 26 / .05), 0 10px 30px -14px rgb(6 19 26 / .18);
 
   --caustic-1: rgb(var(--accent-rgb) / .10);
-  --caustic-2: rgb(var(--coral-rgb) / .05);
+  --caustic-2: rgb(var(--ember-rgb) / .05);
 
   color-scheme: light;
 }
@@ -96,8 +96,8 @@
     --border-strong: #1d4354;
     --accent:        var(--current-dark);
     --accent-rgb:    var(--current-rgb-dark);
-    --coral:         var(--coral-dark);
-    --coral-rgb:     var(--coral-rgb-dark);
+    --ember:         var(--ember-dark);
+    --ember-rgb:     var(--ember-rgb-dark);
     --code-bg:       #0d222c;
 
     --glass-bg:     rgb(95 212 228 / .05);
@@ -106,7 +106,7 @@
     --glass-shadow: 0 1px 2px rgb(0 0 0 / .4), 0 16px 40px -20px rgb(0 0 0 / .7);
 
     --caustic-1: rgb(var(--accent-rgb) / .11);
-    --caustic-2: rgb(var(--coral-rgb) / .06);
+    --caustic-2: rgb(var(--ember-rgb) / .06);
 
     color-scheme: dark;
   }
