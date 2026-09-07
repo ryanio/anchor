@@ -26,7 +26,7 @@ already exists in the same package — `lib/api/walletAuth.js:4` defines
 **What we wrote.** `segment()` in `service/src/opensea.ts:166`, applied at eleven call sites before
 any value is handed to the SDK.
 
-**Status: fixed upstream, unreleased.** OpenSea exported `segment()` from `apiPaths.ts` and applied
+**Status: fixed upstream. Ships in `@opensea/sdk` 12.1.1 / `@opensea/api-types` 0.9.2.** OpenSea exported `segment()` from `apiPaths.ts` and applied
 it to all 100 interpolation sites (61 of 88 builders took a parameter), and dropped the duplicate
 helper in `walletAuth.ts` plus the now-double-encoding wrapper at the one call site in `accounts.ts`.
 It reaches npm on the next SDK release. **Do not bump and delete in separate commits** — see below.
@@ -81,10 +81,14 @@ address on another, which is our property, not the SDK's.
 
 ## 4. No runtime chain list
 
+**Partly fixed upstream.** The `exports` half ships in `@opensea/api-types` 0.9.2: the
+`./opensea-api.json` subpath is declared, and `./package.json` alongside it so the version is
+readable without reaching into the tarball. The runtime chain list is still absent.
+
 **Upstream problem.** `ChainIdentifier` is type-only. There is no runtime array of the 29 slugs, and
-`opensea-api.json` is listed in the package's `files` but absent from its `exports`, so
-`require("@opensea/api-types/opensea-api.json")` fails with `ERR_PACKAGE_PATH_NOT_EXPORTED` — the
-spec ships but cannot be imported.
+`opensea-api.json` was listed in the package's `files` but absent from its `exports`, so
+`require("@opensea/api-types/opensea-api.json")` failed with `ERR_PACKAGE_PATH_NOT_EXPORTED` — the
+spec shipped but could not be imported.
 
 **What we wrote.** `CHANGELOG`-worthy only because of how it's built: `CHAINS` in
 `service/src/chains.ts` is `Object.values(Chain)` from the SDK enum, with a compile-time proof
@@ -109,9 +113,15 @@ than compensating code, which is why there is nothing to delete.
 
 ## 6. No status code on SDK errors
 
-**Upstream problem.** Only `_createRateLimitError` attaches `statusCode` (429 and 599). Every other
-failure throws a bare `Error` whose message is built from a remote-controlled response body —
-`api.js:1013` carries no status at all, `api.js:1015` puts it in prose only.
+**Status: fixed upstream, ships in `@opensea/sdk` 12.1.1.** All four throw sites now go through one
+builder, so `statusCode` is set on every non-OK response and `responseBody` comes along whenever a
+body parsed. The type is `OpenSeaApiError`; `OpenSeaRateLimitError` remains as an alias with the
+identical shape, so existing rate-limit handling compiles unchanged. **On upgrade: build the 5xx
+retry ladder**, keyed off `statusCode` alone.
+
+**Upstream problem.** Only `_createRateLimitError` attached `statusCode` (429 and 599). Every other
+failure threw a bare `Error` whose message was built from a remote-controlled response body —
+`api.js:1013` carried no status at all, `api.js:1015` put it in prose only.
 
 **What we wrote.** Nothing that recovers the status, because there is nothing to recover it from.
 The consequence is a **missing capability**: the service has no 5xx retry ladder, since it cannot
@@ -209,6 +219,35 @@ finding: a finding means "fix this in Privy", and there is nothing to fix.
 **When it's fixed.** If Privy add a Compute Budget condition source, move the ceiling into the remote
 policy and downgrade the local one to defence in depth. Keep the local check regardless, for the same
 reason as entry 9.
+
+## 11. No supported way for a third-party client to obtain a wallet token
+
+**Upstream problem.** `@opensea/sdk` exposes two routes to a wallet token, and neither is open to us.
+
+`OpenSeaAuth.getValidToken()` throws unless `authenticate()` ran in the same process with a signer,
+and `exchangeScopedToken` — the PAT-to-JWT call that needs no signer — is **private**. The other
+route, `OpenSeaOAuth`, has exactly the right shape for a headless desktop client: a device
+authorization flow (`requestDeviceAuthorization` + `pollDeviceToken`), plus `refresh` and the useful
+`extractOpenSeaScopes` / `decodeJwtPayload` helpers.
+
+**But OpenSea has confirmed that third-party clients cannot use OAuth yet.** There is no client ID
+for an application like Anchor. So the device flow is visible in the public API surface and
+unavailable in practice.
+
+**What we wrote.** `service/src/auth.ts` — a hand-rolled reimplementation of
+`exchangeScopedToken`, built by reading the SDK's compiled output because the method is private and
+the endpoint was absent from the spec at the time.
+
+**Why this entry matters more than it looks.** Every other item in this file is a workaround for
+something awkward. This one is a workaround for something with **no supported alternative**: a
+third-party headless client that wants a wallet token today has to reimplement a private method.
+Anchor does not currently need one — no route it calls requires it — but it will for writes, and for
+the fifty wallet-scoped paths in the spec.
+
+**When it's fixed.** Either is sufficient, and either lets us delete the module: make
+`exchangeScopedToken` public, or open OAuth to third-party clients so the device flow becomes usable.
+The second is better, because a device flow is the right shape for a desktop app and the PAT is a
+long-lived secret sitting in a keyring.
 
 ---
 
