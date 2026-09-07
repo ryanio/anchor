@@ -10,6 +10,17 @@ has the facts.
 ## [Unreleased]
 
 ### Added
+- **Privy backend for the executor** — the first `PolicyAuthority` and `Signer` where enforcement is
+  not in Anchor's process. The key lives in Privy's enclave and every signing request is checked
+  against a policy held with them. Anchor audits that remote policy at startup and refuses to run
+  when the local limits claim more than it grants; the kill switch empties the policy over the API,
+  and throws rather than reporting success when Privy does not confirm. Hand-rolled REST client:
+  `fetch` and `node:crypto`, no Privy SDK, no runtime dependencies.
+- Privy credentials read from the OS keyring, with `node executor/src/cli.ts --set-key`. No
+  environment-variable fallback for a credential that can move funds.
+- ERC-721 withdrawals end to end: request → policy → `safeTransferFrom` calldata →
+  `eth_sendTransaction`. Marketplace actions are approved by policy and then refused by the
+  transaction builder, because `ActionRequest` does not model a signed Seaport order yet.
 - Video generation in `scripts/generate-asset.ts` (`--video`), against xAI's async endpoint: the POST
   returns a `request_id`, the job is polled to `done`, and the finished video is downloaded rather
   than left as a temporary URL that will rot. Supports text-to-video and image-to-video
@@ -27,6 +38,13 @@ has the facts.
 - Working agreement for agents and humans (`AGENTS.md`).
 - Test suite on `node --test`, plus CI for typecheck and tests.
 - Build diary and changelog published to anchor.ryanio.com.
+
+### Known limitations
+- Privy's policy engine cannot express Anchor's cumulative caps. Its spend-limit primitive tops out
+  at a 72-hour rolling window, and does not observe `eth_sendTransaction` at all, so the rolling 24h
+  and 7d caps in `docs/autonomy.md` are enforced only by the in-process mirror. The per-transaction
+  cap, the contract and withdrawal allowlists, and the `setApprovalForAll` refusal are enforced by
+  Privy and survive a compromised desktop; the rolling totals do not.
 
 ### Changed (design)
 - Favicon, mask-icon and theme-color moved to the deep-water palette — they still carried the old
