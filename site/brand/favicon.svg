@@ -1,10 +1,11 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Anchor">
   <style>
-    .bg { fill: #1c1b19; }
-    .fg { stroke: #e8905a; }
+    /* Deep water on dark; the accent inverted on light. Matches theme/tokens.css. */
+    .bg { fill: #06131a; }
+    .fg { stroke: #5fd4e4; }
     @media (prefers-color-scheme: light) {
-      .bg { fill: #b4531f; }
-      .fg { stroke: #faf9f7; }
+      .bg { fill: #0d6b80; }
+      .fg { stroke: #f7fafb; }
     }
   </style>
   <rect class="bg" width="64" height="64" rx="14"/>

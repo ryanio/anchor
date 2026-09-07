@@ -1,10 +1,10 @@
 ---
-title: "Day one: an agent, a name, and three self-inflicted outages"
-date: "2026-09-06"
-summary: "Standing up an agent that lives on iMessage, naming it, and discovering that most of the friction was cached state and my own pkill."
+title: "Day one: an agent, an audit, and twenty-two bytes"
+date: "2026-09-07"
+summary: "Standing up an agent that lives on iMessage, then pointing four more at the repo. Most of the friction was cached state, my own pkill, and a claim I made before it was true."
 ---
 
-Day one was plumbing: an agent running on this machine, reachable from my phone, pointed at the right mission. Almost none of the difficulty was where I expected.
+Day one was meant to be plumbing: an agent running on this machine, reachable from my phone, pointed at the right mission. Then four more agents, in parallel, on the codebase. Almost none of the difficulty was where I expected.
 
 ## The bug that looked like every other bug
 
@@ -14,7 +14,7 @@ The file had loaded — a fresh session read it perfectly. But the gateway **cac
 
 The fix is one word: `/new`. Re-asking the question differently, which is the obvious human move, does nothing at all.
 
-Two more in the same family. `pkill -f "gateway run"` killed **my own shell**, twice, because the shell's command line contains the pattern it's searching for. And a backgrounded command that prints an OAuth URL wrote *nothing* to its log, because Python block-buffers when stdout isn't a terminal — the file sat at zero bytes while the process waited for input that would never come.
+Two more in the same family. `pkill -f "gateway run"` killed **my own shell**, twice, because the shell's command line contains the pattern it's searching for. And a backgrounded command that prints an OAuth URL wrote *nothing* to its log, because Python block-buffers when stdout isn't a terminal.
 
 > None of these were hard problems. All three cost real time because each one presents as something else.
 
@@ -22,14 +22,32 @@ Two more in the same family. `pkill -f "gateway run"` killed **my own shell**, t
 
 I asked the agent to name itself. With no mission in its identity file, it looked at its own documentation and proposed names about its own plumbing: *Continuum*, *Custodian*, *Wick*.
 
-After the mission went in, the same question produced **Ledger** — with an argument: a ledger is the literal decentralized record, and also the quiet thing that keeps honest track of what happened. Good reasoning, unusable name, since "approve on your Ledger" is a sentence you'd actually have to say. The runner-up won: **Anchor**.
+After the mission went in, the same question produced **Ledger** — a ledger being both the decentralized record and the quiet thing that keeps honest track. Good reasoning, unusable name, since "approve on your Ledger" is a sentence you'd have to say out loud. The runner-up won: **Anchor**.
 
-An agent asked to reason about purpose will reason about whatever context it actually has. If that context is its own README, you get an answer about its README.
+An agent asked to reason about purpose reasons about whatever context it actually has. If that context is its own README, you get an answer about its README.
 
-## The security model was wrong
+## Twenty-two bytes
 
-The original notes said: agents propose, never execute; a hardware wallet signs everything. Safe, clear, and it makes the product pointless — an agent that can only suggest is an expensive notification.
+I pointed an agent at the repo and told it to be adversarial, verifying every claim by running code rather than reading it. It found twenty defects.
 
-The invariant isn't "the agent cannot transact." It's that **the agent never holds authority it can change.** Policy is enforced at signing time, outside the agent's process. If this desktop is fully compromised, the attacker inherits the *policy budget*, not the balance.
+`new URL(req.url, base)` sat *outside* the handler's `try`. The handler is `async`, so a throw became an unhandled rejection, and Node's default terminates the process:
 
-Two things fall out of that, both non-obvious. The **withdrawal allowlist** is load-bearing — nearly every catastrophic outcome routes through funds leaving to an attacker's address. And **`setApprovalForAll` is not a transfer**: it moves zero value, sails through any spend cap, and hands over everything.
+```
+GET http://[ HTTP/1.1
+```
+
+Any local process, and the data service is gone. It had been there since the first commit, invisible in review, because the bug isn't in what the line does — it's in *where the line is*.
+
+Then I verified the accompanying XSS fix with a regex over the output HTML. It reported a live event handler. I tightened the fix. It reported one again. Both times the regex was wrong: it was matching text *inside* an attribute value. Only a real parser settled it — headless Chromium returned `["href"]`.
+
+## The claim before the fact
+
+Three of my patches asserted their pattern matched before replacing. One didn't, and silently did nothing — `str.replace` with no match returns the original and reports success.
+
+That patch was supposed to pin the GitHub Action that holds our deploy token. The changelog announcing the pin shipped anyway. For a few hours the repo publicly claimed a supply-chain protection it did not have.
+
+The fix isn't "be careful with patches". The version checker now *enforces* SHA-pinning and fails CI on any unpinned action. **A claim nothing verifies is a claim that will eventually be false.**
+
+## Also, a game
+
+Somewhere in there a fifth agent built a Roman battle in the browser — no dependencies, morale tuned until flanking felt decisive. It has [its own repository](https://ryanio.github.io/battle-for-the-ford/) now. Not every part of a day has to be load-bearing.

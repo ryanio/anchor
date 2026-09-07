@@ -19,6 +19,17 @@ has the facts.
 - Build diary and changelog published to anchor.ryanio.com.
 
 ### Changed (design)
+- Favicon, mask-icon and theme-color moved to the deep-water palette — they still carried the old
+  orange after the redesign.
+- The next-entry countdown reads in words ("19 hours, 32 minutes") rather than naming a clock time.
+- Card hover no longer tints the title coral; coral is for prose links, and a card's hover is the
+  lift and the brightened border.
+- One diary entry rather than several: it has been one day of work.
+
+### Changed (ci)
+- Five CI jobs collapsed into one with named steps. Each job was paying about twelve seconds of
+  runner boot and checkout for ten seconds of work, with the setup duplicated five ways.
+
 - Redesigned around a deep-water palette: ocean cyan primary, coral as a sparing counterpoint, warm
   neutrals. Shared tokens now live in `theme/tokens.css` and are reused rather than redefined.
 - Glass surfaces with a lit top edge, procedural caustics and grain, and a generated deep-water hero

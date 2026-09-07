@@ -8,36 +8,13 @@ on:
 permissions:
   contents: read
 
+# One job, named steps. Five separate jobs each paid ~12s of runner boot and checkout for ~10s of
+# actual work, and the setup was duplicated five ways. Steps still attribute failures clearly in the
+# UI, and the whole thing finishes faster than the old jobs took to start.
 jobs:
-  versions:
-    name: node version consistency
+  ci:
+    name: lint, test, build
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version-file: '.node-version'
-      - run: node scripts/check-versions.ts
-
-  lint:
-    name: biome — lint & format
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version-file: '.node-version'
-          cache: npm
-          cache-dependency-path: package-lock.json
-      - run: npm ci
-      - run: npx biome ci .
-
-  service:
-    name: service — typecheck & test
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: service
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -45,35 +22,31 @@ jobs:
           # .node-version is the single source of truth — mise reads it locally too.
           node-version-file: '.node-version'
           cache: npm
-          cache-dependency-path: service/package-lock.json
-      - run: npm ci
-      - run: npm run typecheck
-      - run: npm test
 
-  executor:
-    name: executor — typecheck & test
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: executor
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          # Native TypeScript execution, same reason as the service: no build step.
-          node-version-file: '.node-version'
-          cache: npm
-          cache-dependency-path: executor/package-lock.json
-      - run: npm ci
-      - run: npm run typecheck
-      - run: npm test
+      - name: Install
+        run: |
+          npm ci
+          npm ci --prefix service
+          npm ci --prefix executor
 
-  site:
-    name: site — build
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version-file: '.node-version'
-      - run: node site/build.ts
+      - name: Versions are consistent
+        run: node scripts/check-versions.ts
+
+      - name: Contrast meets WCAG AA
+        run: node scripts/check-contrast.ts
+
+      - name: Lint and format
+        run: npx biome ci .
+
+      - name: Service — typecheck and test
+        run: |
+          npx --prefix service tsc --noEmit --project service
+          npm test --prefix service
+
+      - name: Executor — typecheck and test
+        run: |
+          npx --prefix executor tsc --noEmit --project executor
+          npm test --prefix executor
+
+      - name: Site builds
+        run: node site/build.ts

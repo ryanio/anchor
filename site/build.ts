@@ -232,10 +232,12 @@ function page(title: string, body: string, opts: { subtitle?: string } = {}): st
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${esc(title)}</title>
 <link rel="icon" href="/brand/favicon.svg" type="image/svg+xml">
-<link rel="mask-icon" href="/brand/anchor.svg" color="#b4531f">
+<link rel="mask-icon" href="/brand/anchor.svg" color="#0d6b80">
+<meta name="theme-color" content="#06131a" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f7fafb" media="(prefers-color-scheme: light)">
 <meta name="description" content="Anchor — make your wallet a part of your desktop, not another browser tab.">
 <meta property="og:title" content="${esc(title)}">
-<meta property="og:description" content="An ambient OpenSea experience for Omarchy. Built in the open — dead ends included.">
+<meta property="og:description" content="An ambient OpenSea experience for Omarchy — a wallet-aware desktop, built in the open.">
 <meta property="og:image" content="https://anchor.ryanio.com/assets/og.jpg">
 <meta property="og:url" content="https://anchor.ryanio.com/">
 <meta property="og:type" content="website">
@@ -277,19 +279,33 @@ const COUNTDOWN_JS = `<script>
   var box = document.querySelector(".countdown");
   if (!el || !box) return;
   var latest = box.getAttribute("data-latest");
+
+  function plural(n, word) { return n + " " + word + (n === 1 ? "" : "s"); }
+
+  // Words, not a clock time: "13 hours, 24 minutes" reads as a countdown, "21:00" reads as a
+  // schedule you have to do arithmetic on.
+  function humanize(ms) {
+    var total = Math.floor(ms / 1000);
+    var h = Math.floor(total / 3600);
+    var m = Math.floor((total % 3600) / 60);
+    var s = total % 60;
+    if (h > 0) return plural(h, "hour") + ", " + plural(m, "minute");
+    if (m > 0) return plural(m, "minute") + ", " + plural(s, "second");
+    return plural(s, "second");
+  }
+
   function tick() {
     var now = new Date();
-    var next = new Date(now); next.setHours(21, 0, 0, 0);
+    var next = new Date(now);
+    next.setHours(21, 0, 0, 0);
     if (next <= now) next.setDate(next.getDate() + 1);
-    if (latest === now.toISOString().slice(0, 10)) {
-      el.innerHTML = "Today's entry is up. Next window <b>tomorrow, 21:00</b>.";
-      return;
-    }
-    var ms = next - now;
-    var h = Math.floor(ms / 3.6e6), m = Math.floor((ms % 3.6e6) / 6e4), sec = Math.floor((ms % 6e4) / 1000);
-    el.innerHTML = "Next entry in <b>" + h + "h " + m + "m" + (h === 0 ? " " + sec + "s" : "") +
-      "</b> <span class='skip'>— skipped if nothing worth reading happened</span>";
+    var left = humanize(next - now);
+    var posted = latest === now.toISOString().slice(0, 10);
+    el.innerHTML = posted
+      ? "Today's entry is up. Next one in <b>" + left + "</b>."
+      : "Next entry in <b>" + left + "</b> <span class='skip'>— skipped if nothing worth reading happened</span>";
   }
+
   tick();
   setInterval(tick, 1000);
 })();
@@ -329,7 +345,7 @@ const index = entries
 const latest = entries[0];
 const hero = `<div class="hero">
   <h1>Make your wallet a part of your desktop, not another browser tab.</h1>
-  <p class="tagline">An ambient OpenSea experience for Omarchy. Built in the open — dead ends included.</p>
+  <p class="tagline">An ambient OpenSea experience for Omarchy — a wallet-aware desktop, built in the open.</p>
 </div>
 <div class="countdown glass" data-latest="${latest?.date ?? ""}">
   ${icon("clock", 16)}<span id="countdown-text">Next entry: nightly at 21:00</span>

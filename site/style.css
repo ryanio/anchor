@@ -94,6 +94,7 @@ header nav a:hover { color: var(--accent); background: rgb(var(--accent-rgb) / .
   transition: transform .18s var(--ease), border-color .18s var(--ease);
 }
 .entries a:hover { transform: translateY(-2px); border-color: rgb(var(--accent-rgb) / .45); }
+.entries a:hover .entry-title { color: var(--accent); }
 .entry-date {
   display: block; font: 500 12px/1 var(--font-mono);
   color: var(--accent); letter-spacing: .04em; margin-bottom: 9px;
@@ -129,7 +130,9 @@ article li { margin: 7px 0; }
 article li::marker { color: var(--accent); }
 
 a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 3px; }
-a:hover { color: var(--coral); }
+/* Coral is the counterpoint for prose links only. Card titles are not links to be coloured —
+   the card itself lifts and its border brightens, which is the whole hover affordance. */
+article a:hover, footer a:hover { color: var(--coral); }
 
 code {
   font: 500 13.5px/1.5 var(--font-mono);
