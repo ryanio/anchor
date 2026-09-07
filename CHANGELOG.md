@@ -18,6 +18,21 @@ has the facts.
 - Test suite on `node --test`, plus CI for typecheck and tests.
 - Build diary and changelog published to anchor.ryanio.com.
 
+### Added (executor)
+- `Executor` interface splitting `request → simulate → decide → submit`, so holding one stage does not
+  grant the next. `PolicyDecision` appears only in return types — "here is my own approval, please
+  submit it" is not a sentence the API can express.
+- Approvals are unforgeable two ways: an `ApprovedAction` carries a property keyed by a non-exported
+  `unique symbol`, so constructing one elsewhere fails to compile; and because a cast defeats types,
+  the brand is backed by a module-private `WeakSet` that `Signer.submit` checks. The witness has no
+  runtime representation, so a spread, `structuredClone`, or JSON round-trip fails closed.
+- Reference `PolicyEngine` enforcing per-transaction and rolling caps, contract/action/withdrawal
+  allowlists, and one-way revoke. It signs nothing and submits nothing.
+- `setApprovalForAll` is blocked three ways, including at the type level — it cannot be configured
+  into `allowedActions` at all.
+- Caps charge gross outflow (netting would enable wash-trade drains) and budget is reserved at
+  approval rather than settlement (otherwise never settling means unlimited live approvals).
+
 ### Security
 - The site generator escaped `<`, `>` and `&` but not quotes, so a link URL in a diary entry or
   changelog line could break out of the `href` attribute; `javascript:` URLs rendered as live links.

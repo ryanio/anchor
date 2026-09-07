@@ -5,7 +5,7 @@
   "description": "Policy-bound execution seam. The agent requests; something else decides.",
   "type": "module",
   "engines": {
-    "node": ">=24.0.0"
+    "node": ">=26.0.0"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

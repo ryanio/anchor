@@ -48,7 +48,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           # Native TypeScript execution, same reason as the service: no build step.
-          node-version: '24'
+          node-version-file: '.node-version'
           cache: npm
           cache-dependency-path: executor/package-lock.json
       - run: npm ci
