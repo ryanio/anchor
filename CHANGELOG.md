@@ -18,6 +18,14 @@ has the facts.
 - Test suite on `node --test`, plus CI for typecheck and tests.
 - Build diary and changelog published to anchor.ryanio.com.
 
+### Added (brand)
+- An anchor mark that reads as an **A** — distinctive rather than a stock anchor glyph, and legible at
+  16px. Stroke-based with `currentColor`, so one file themes everywhere. Favicon and solid-fill
+  variants alongside it.
+- `scripts/generate-asset.ts` — image assets from xAI's Grok Imagine, key in the OS keyring, zero
+  dependencies (the endpoint is OpenAI-compatible). For illustration and OG cards only; the logo and
+  icons stay hand-authored SVG.
+
 ### Added (executor)
 - `Executor` interface splitting `request → simulate → decide → submit`, so holding one stage does not
   grant the next. `PolicyDecision` appears only in return types — "here is my own approval, please
