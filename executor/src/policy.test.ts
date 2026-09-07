@@ -13,6 +13,7 @@ import {
   ATTACKER,
   acceptOffer,
   buy,
+  CHAIN,
   COLD_VAULT,
   COLLECTION,
   cancelOwnListing,
@@ -20,13 +21,23 @@ import {
   DENOM,
   limits,
   MARKETPLACE,
+  OTHER_CHAIN,
   OTHER_COLLECTION,
+  on,
+  SOL_ACCOUNT,
+  SOL_ATTACKER,
+  SOL_CHAIN,
+  SOL_COLD_VAULT,
+  SOL_MINT,
+  SOL_OTHER_MINT,
+  solanaLimits,
+  solanaTransfer,
   transfer,
   usd,
 } from "./fixtures.ts";
 import { DeclaredIntentSimulator } from "./inert.ts";
 import { PolicyEngine, type PolicyLimits, tierLimits } from "./policy.ts";
-import { type ActionRequest, address, money, type Simulation } from "./types.ts";
+import { type ActionRequest, evmAddress, HUMAN_ONLY_ACTION_KINDS, money, type Simulation } from "./types.ts";
 
 /** Build an engine plus a cooperative simulator sharing one controllable clock. */
 function engine(over: Partial<PolicyLimits> = {}) {
@@ -148,17 +159,18 @@ describe("contract allowlist", () => {
 
   test("a freshly deployed 'helpful' contract is not special", async () => {
     const { decide } = engine();
-    const fresh = address(`0xfeed${"0".repeat(36)}`);
+    const fresh = evmAddress(`0xfeed${"0".repeat(36)}`);
     assert.equal(
       denied(await decide(buy("r1", 1n, 0, { contract: fresh }))).reason,
       "contract-not-allowlisted",
     );
   });
 
-  test("allowlist matching is case-insensitive on the address", async () => {
+  test("allowlist matching is case-insensitive on an EVM address", async () => {
     const { decide } = engine();
-    // `address()` normalises, so a checksummed string reaches policy as the same value.
-    const checksummed = address(COLLECTION.toUpperCase().replace("0X", "0x"));
+    // `evmAddress()` normalises, so a checksummed string reaches policy as the same value. Note
+    // that this is an EVM-only property: see types.test.ts for why a Solana address is not touched.
+    const checksummed = evmAddress(COLLECTION.toUpperCase().replace("0X", "0x"));
     assert.equal((await decide(buy("r1", 100n, 0, { contract: checksummed }))).outcome, "allow");
   });
 });
@@ -206,8 +218,8 @@ describe("setApprovalForAll is a human-only action class", () => {
   test("it is refused even when the contract and operator are fully allowlisted", async () => {
     // The usual reason a control fails: everything about the request looks legitimate.
     const { decide } = engine({
-      contractAllowlist: [COLLECTION],
-      withdrawalAllowlist: [COLD_VAULT],
+      contractAllowlist: [on(CHAIN, COLLECTION)],
+      withdrawalAllowlist: [on(CHAIN, COLD_VAULT)],
     });
     const request: ActionRequest = {
       kind: "set-approval-for-all",
@@ -275,7 +287,9 @@ describe("withdrawal destination allowlist", () => {
     const lying: Simulation = {
       requestId: "r1",
       ok: true,
-      deltas: [{ direction: "out", value: usd(1_000n), counterparty: ATTACKER, assetType: "erc721" }],
+      deltas: [
+        { direction: "out", value: usd(1_000n), counterparty: on(CHAIN, ATTACKER), assetType: "erc721" },
+      ],
       simulatedAt: 0,
       source: "test",
     };
@@ -327,8 +341,8 @@ describe("simulation is mandatory", () => {
       requestId: "r1",
       ok: true,
       deltas: [
-        { direction: "out", value: usd(2_000n), counterparty: MARKETPLACE, assetType: "erc20" },
-        { direction: "in", value: usd(0n), counterparty: MARKETPLACE, assetType: "erc721" },
+        { direction: "out", value: usd(2_000n), counterparty: on(CHAIN, MARKETPLACE), assetType: "erc20" },
+        { direction: "in", value: usd(0n), counterparty: on(CHAIN, MARKETPLACE), assetType: "erc721" },
       ],
       simulatedAt: 0,
       source: "test",
@@ -341,7 +355,7 @@ describe("simulation is mandatory", () => {
     const decision = await policy.evaluate(cancelOwnListing("r1"), {
       requestId: "r1",
       ok: true,
-      deltas: [{ direction: "out", value: usd(500n), counterparty: ATTACKER, assetType: "erc20" }],
+      deltas: [{ direction: "out", value: usd(500n), counterparty: on(CHAIN, ATTACKER), assetType: "erc20" }],
       simulatedAt: 0,
       source: "test",
     });
@@ -356,8 +370,8 @@ describe("simulation is mandatory", () => {
       requestId: "r1",
       ok: true,
       deltas: [
-        { direction: "out", value: usd(3_000n), counterparty: MARKETPLACE, assetType: "erc20" },
-        { direction: "in", value: usd(3_000n), counterparty: MARKETPLACE, assetType: "erc721" },
+        { direction: "out", value: usd(3_000n), counterparty: on(CHAIN, MARKETPLACE), assetType: "erc20" },
+        { direction: "in", value: usd(3_000n), counterparty: on(CHAIN, MARKETPLACE), assetType: "erc721" },
       ],
       simulatedAt: 0,
       source: "test",
@@ -379,8 +393,13 @@ describe("denominations are never converted", () => {
       requestId: "r1",
       ok: true,
       deltas: [
-        { direction: "out", value: money(5n, "ETH-wei"), counterparty: MARKETPLACE, assetType: "native" },
-        { direction: "in", value: usd(0n), counterparty: MARKETPLACE, assetType: "erc721" },
+        {
+          direction: "out",
+          value: money(5n, "ETH-wei"),
+          counterparty: on(CHAIN, MARKETPLACE),
+          assetType: "native",
+        },
+        { direction: "in", value: usd(0n), counterparty: on(CHAIN, MARKETPLACE), assetType: "erc721" },
       ],
       simulatedAt: 0,
       source: "test",
@@ -458,7 +477,10 @@ describe("status and tiers", () => {
   });
 
   test("tierLimits tracks the value ladder in docs/autonomy.md", () => {
-    const lists = { contractAllowlist: [COLLECTION], withdrawalAllowlist: [COLD_VAULT] };
+    const lists = {
+      contractAllowlist: [on(CHAIN, COLLECTION)],
+      withdrawalAllowlist: [on(CHAIN, COLD_VAULT)],
+    };
     assert.equal(tierLimits(1, lists).perTransaction, 2_500n);
     assert.equal(tierLimits(2, lists).rolling24h, 30_000n);
     assert.equal(tierLimits(3, lists).perTransaction, 100_000n);
@@ -472,5 +494,240 @@ describe("status and tiers", () => {
 
   test("negative caps are rejected at construction", () => {
     assert.throws(() => new PolicyEngine({ limits: limits({ perTransaction: -1n }) }), /negative/);
+  });
+});
+
+// --- Solana ------------------------------------------------------------------------------------
+
+/** The same engine, allowlisting a Solana mint and vault. */
+function solanaEngine(over: Partial<PolicyLimits> = {}) {
+  const c = clock();
+  const policy = new PolicyEngine({ limits: solanaLimits(over), now: c.now, policyVersion: "test/1" });
+  const simulator = new DeclaredIntentSimulator(c.now);
+  const decide = async (request: ActionRequest, sim?: Simulation): Promise<PolicyDecision> =>
+    policy.evaluate(request, sim ?? (await simulator.simulate(request)));
+  return { policy, simulator, decide, clock: c };
+}
+
+describe("Solana is an ordinary chain here, not a special case", () => {
+  test("an SPL transfer to a pre-registered vault is allowed", async () => {
+    const { decide } = solanaEngine();
+    assert.equal((await decide(solanaTransfer("r1", 1_000n))).outcome, "allow");
+  });
+
+  test("an SPL transfer to an attacker is refused like any other", async () => {
+    const { decide } = solanaEngine();
+    assert.equal(
+      denied(await decide(solanaTransfer("r1", 1_000n, SOL_ATTACKER))).reason,
+      "destination-not-allowlisted",
+    );
+  });
+
+  test("a mint that is not allowlisted is refused", async () => {
+    const { decide } = solanaEngine();
+    const request = solanaTransfer("r1", 100n, SOL_COLD_VAULT, 0, { contract: SOL_OTHER_MINT });
+    assert.equal(denied(await decide(request)).reason, "contract-not-allowlisted");
+  });
+
+  test("the cumulative caps hold on Solana exactly as they do on EVM", async () => {
+    const { decide, policy } = solanaEngine();
+    for (let i = 0; i < 60; i++) await decide(solanaTransfer(`r${i}`, 100n));
+    assert.equal((await policy.status()).rolling24hSpent.amount, 5_000n);
+    assert.equal(denied(await decide(solanaTransfer("last", 1n))).reason, "rolling-24h-cap");
+  });
+});
+
+describe("cross-chain confusion is refused", () => {
+  test("an allowlist entry for one chain does not vouch for the same address on another", async () => {
+    // The attack a bare-string allowlist permits: allowlist a collection on Ethereum, then have the
+    // agent act against the same 20 bytes on Base, where `CREATE2` put something else entirely.
+    const { decide } = engine({ contractAllowlist: [on(CHAIN, COLLECTION)] });
+    const elsewhere = buy("r1", 100n, 0, { chain: OTHER_CHAIN });
+    assert.equal(denied(await decide(elsewhere)).reason, "contract-not-allowlisted");
+  });
+
+  test("a withdrawal allowlist entry likewise does not cross chains", async () => {
+    // Worse than the contract case: nobody holds the key to "the same address on another chain"
+    // unless they chose to, so this is a control that must not be inheritable.
+    const { decide } = engine({
+      contractAllowlist: [on(CHAIN, COLLECTION), on(OTHER_CHAIN, COLLECTION)],
+      withdrawalAllowlist: [on(CHAIN, COLD_VAULT)],
+    });
+    const elsewhere = transfer("r1", 100n, COLD_VAULT, 0, { chain: OTHER_CHAIN });
+    assert.equal(denied(await decide(elsewhere)).reason, "destination-not-allowlisted");
+  });
+
+  test("a Solana allowlist never matches an EVM request, or the reverse", async () => {
+    const { decide } = solanaEngine();
+    assert.equal(denied(await decide(buy("r1", 100n))).reason, "contract-not-allowlisted");
+
+    const evmSide = engine();
+    assert.equal(denied(await evmSide.decide(solanaTransfer("r2", 100n))).reason, "contract-not-allowlisted");
+  });
+
+  test("a Solana address on an EVM request is malformed, not merely unallowlisted", async () => {
+    // Fail-closed either way; the point is that the *reason* names the field, so an operator reading
+    // the alert learns "your config is wrong" rather than "add it to the allowlist".
+    // Evaluated against a hand-built simulation, because the simulator cannot produce one for a
+    // request whose addresses contradict its chain — it throws, which in the real pipeline becomes
+    // a `simulation-failed` denial. Either way it fails closed; this asserts the sharper reason.
+    const { policy } = engine();
+    const confused = transfer("r1", 100n, SOL_COLD_VAULT);
+    const sim: Simulation = { requestId: "r1", ok: true, deltas: [], simulatedAt: 0, source: "test" };
+    assert.equal(denied(await policy.evaluate(confused, sim)).reason, "malformed-request");
+  });
+
+  test("a simulation that lands value on another chain is refused", async () => {
+    // The bridge case. The request is an ordinary allowlisted transfer; the *effect* is a delta on a
+    // chain the withdrawal allowlist says nothing about, and the allowlist must not be inherited.
+    const { policy } = engine({ withdrawalAllowlist: [on(CHAIN, COLD_VAULT)] });
+    const bridged: Simulation = {
+      requestId: "r1",
+      ok: true,
+      deltas: [
+        {
+          direction: "out",
+          value: usd(100n),
+          counterparty: on(OTHER_CHAIN, COLD_VAULT),
+          assetType: "erc20",
+        },
+      ],
+      simulatedAt: 0,
+      source: "test",
+    };
+    const decision = await policy.evaluate(transfer("r1", 100n, COLD_VAULT), bridged);
+    assert.equal(denied(decision).reason, "simulation-mismatch");
+  });
+});
+
+describe("Solana's human-only action classes", () => {
+  test("naming an SPL delegate is refused, with its own reason code, before any cap", async () => {
+    // Built inline and nowhere else, exactly as the setApprovalForAll request is: this exists to be
+    // refused, and a fixture for it could be lifted into working code (AGENTS.md invariant 3).
+    const { decide, policy } = solanaEngine();
+    const request: ActionRequest = {
+      kind: "approve-delegate",
+      id: "r1",
+      requestedAt: 0,
+      chain: "solana",
+      account: SOL_ACCOUNT,
+      contract: SOL_MINT,
+      tokenAccount: SOL_ACCOUNT,
+      delegate: SOL_ATTACKER,
+      amount: (1n << 64n) - 1n, // u64::MAX — unlimited
+    };
+    assert.equal(denied(await decide(request)).reason, "human-only-action");
+    // It moves no value, which is exactly why a spend cap cannot see it: nothing was charged.
+    assert.equal((await policy.status()).rolling24hSpent.amount, 0n);
+  });
+
+  test("a bounded delegate amount is still a delegation", async () => {
+    // The bound is enforced by the token program against a delegate Anchor does not control, and
+    // "small allowance now, top it up later" is a delegation rather than a spend.
+    const { decide } = solanaEngine();
+    const request: ActionRequest = {
+      kind: "approve-delegate",
+      id: "r1",
+      requestedAt: 0,
+      chain: "solana",
+      account: SOL_ACCOUNT,
+      contract: SOL_MINT,
+      tokenAccount: SOL_ACCOUNT,
+      delegate: SOL_COLD_VAULT,
+      amount: 1n,
+    };
+    assert.equal(denied(await decide(request)).reason, "human-only-action");
+  });
+
+  test("revoking a delegate is equally not delegable", async () => {
+    // Same reasoning as `setApprovalForAll(false)`: an agent that holds the switch can turn it on.
+    const { decide } = solanaEngine();
+    const request: ActionRequest = {
+      kind: "approve-delegate",
+      id: "r1",
+      requestedAt: 0,
+      chain: "solana",
+      account: SOL_ACCOUNT,
+      contract: SOL_MINT,
+      tokenAccount: SOL_ACCOUNT,
+      delegate: null,
+      amount: 0n,
+    };
+    assert.equal(denied(await decide(request)).reason, "human-only-action");
+  });
+
+  test("every authority type is refused, including relinquishing one permanently", async () => {
+    const authorities = [
+      "account-owner",
+      "close-account",
+      "mint-tokens",
+      "freeze-account",
+      "program-upgrade",
+    ] as const;
+    for (const authorityType of authorities) {
+      const { decide } = solanaEngine();
+      const request: ActionRequest = {
+        kind: "set-authority",
+        id: "r1",
+        requestedAt: 0,
+        chain: "solana",
+        account: SOL_ACCOUNT,
+        contract: SOL_MINT,
+        authorityType,
+        newAuthority: authorityType === "program-upgrade" ? null : SOL_ATTACKER,
+      };
+      assert.equal(denied(await decide(request)).reason, "human-only-action", authorityType);
+    }
+  });
+
+  test("they are refused even when everything about them is allowlisted", async () => {
+    // The usual reason a control fails: the request looks entirely legitimate.
+    const { decide } = solanaEngine({
+      contractAllowlist: [on(SOL_CHAIN, SOL_MINT)],
+      withdrawalAllowlist: [on(SOL_CHAIN, SOL_COLD_VAULT)],
+    });
+    const request: ActionRequest = {
+      kind: "set-authority",
+      id: "r1",
+      requestedAt: 0,
+      chain: "solana",
+      account: SOL_ACCOUNT,
+      contract: SOL_MINT,
+      authorityType: "account-owner",
+      newAuthority: SOL_COLD_VAULT,
+    };
+    assert.equal(denied(await decide(request)).reason, "human-only-action");
+  });
+
+  test("neither can be configured onto an action allowlist, at compile time or run time", () => {
+    assert.throws(
+      () =>
+        new PolicyEngine({
+          // @ts-expect-error every HumanOnlyActionKind is excluded from DelegableActionKind.
+          limits: limits({ allowedActions: ["buy", "approve-delegate"] }),
+        }),
+      /human-only action class/,
+    );
+    assert.throws(
+      () =>
+        new PolicyEngine({
+          // @ts-expect-error every HumanOnlyActionKind is excluded from DelegableActionKind.
+          limits: limits({ allowedActions: ["buy", "set-authority"] }),
+        }),
+      /human-only action class/,
+    );
+  });
+
+  test("the tier presets never contain one", () => {
+    const lists = {
+      contractAllowlist: [on(CHAIN, COLLECTION)],
+      withdrawalAllowlist: [on(CHAIN, COLD_VAULT)],
+    };
+    for (const tier of [1, 2, 3] as const) {
+      const allowed = tierLimits(tier, lists).allowedActions as readonly string[];
+      for (const kind of HUMAN_ONLY_ACTION_KINDS) {
+        assert.equal(allowed.includes(kind), false, `${kind} at tier ${tier}`);
+      }
+    }
   });
 });

@@ -20,8 +20,12 @@ before touching anything near keys, signing, or the network.
    that belongs in the executor backend, not here.
 2. **Withdrawals go only to pre-registered addresses.** Never add a path that transfers to an arbitrary
    destination, however convenient for testing.
-3. **`setApprovalForAll` is human-only.** It is never delegated, never scripted, never in a fixture that
-   could be copy-pasted into production.
+3. **Delegating standing authority is human-only.** An action that moves no value but grants an
+   authority outliving the transaction is never delegated, never scripted, and never in a fixture that
+   could be copy-pasted into production. On EVM that is `setApprovalForAll`; on Solana it is the SPL
+   `Approve`/`ApproveChecked`/`Revoke` delegate and `SetAuthority`, which hands over the account
+   outright. The list lives in one place — `HUMAN_ONLY_ACTION_KINDS` in `executor/src/types.ts` — and
+   both the type-level and run-time refusals read it. Adding a member is a security change; ask first.
 4. **The data service stays read-only.** Non-GET is refused before routing. Keep it that way.
 5. **Secrets live in the OS keyring or CI secrets.** Never in config, argv, logs, tests, fixtures, or a
    commit. If you need a credential to test, mock it.
@@ -73,9 +77,16 @@ was not actually asking.
 
 **Make the control fail before you trust it.** If you are proving a credential works by calling an
 endpoint, first call it *without* the credential and confirm it breaks. We once proved an API key was
-valid with `/collections/{slug}/stats`, which is public and returns 200 for anyone — so the control
-passed for the wrong reason, and turned an absent measurement into a confident one. An architectural
-decision, a module, a published diary entry and an upstream bug report were all built on it.
+valid with `/collections/{slug}/stats` returning 200 — and that response never reached OpenSea at all.
+A CDN sits in front of the API with a cache key that does not include the API key, so a popular path
+already warmed by someone else is served to anyone, credential or not. The control passed for the
+wrong reason and turned an absent measurement into a confident one. An architectural decision, a
+module, a published diary entry and an upstream bug report were all built on it.
+
+**Defeat the cache when you are testing auth.** Append a unique query parameter to every credential
+test and read `cf-cache-status`: `MISS` or `BYPASS` means the origin actually judged your key, `HIT`
+means nothing did. `anchor-service --check-credentials` does this; copy it rather than hand-rolling a
+probe.
 
 A control that cannot be made to fail is not evidence.
 

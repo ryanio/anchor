@@ -7,8 +7,15 @@
  * The original claim was that account-scoped reads need a wallet JWT in addition to the API key,
  * "measured, not assumed". The measurement was taken with a credential that was not a credential —
  * the keyring held a shell command, because an interactive prompt read its own command line off a
- * non-TTY stdin — and the control endpoint used to prove the key was valid, `/collections/{slug}/stats`,
- * turns out to be public and returns 200 with no key header at all.
+ * non-TTY stdin — and the control used to prove the key was valid did not test the key at all.
+ *
+ * That control was `/collections/{slug}/stats` returning 200. OpenSea explained why, and it is not
+ * that the endpoint is public: Cloudflare fronts api.opensea.io with a cache key built from the URL,
+ * the query string and `Accept`. The API key is not part of that key, and a custom cache key makes
+ * Cloudflare ignore the origin's `Vary: X-API-KEY`. So any GET someone has already warmed is served
+ * to anyone, including a caller sending no key. That path is popular; our 200 was a cache HIT that
+ * never reached the service. The account routes missed cache, reached the origin, and the origin
+ * correctly rejected the junk key.
  *
  * Re-measured with a real API key and no `Authorization` header:
  *
@@ -153,10 +160,19 @@ export class WalletTokenProvider {
 
     if (!res.ok) {
       await res.body?.cancel().catch(() => undefined);
+      // A 403 here is deliberately opaque upstream: an unknown, revoked, rotated or non-scoped
+      // token and a disabled integration all return the same "Token exchange is not available".
+      // So the message says what to try, and does not pretend to know which of those it was — a
+      // confident wrong diagnosis attached to a real failure sends people down the wrong path.
+      // 422 covers malformed JSON, a missing field and an unsupported subjectTokenType; 400 is a
+      // validation failure such as a subjectToken outside 10–8192 characters.
       const hint =
         res.status === 401 || res.status === 403
-          ? " — the PAT is expired, revoked, or lacks the scopes this read needs. Re-run: anchor-service --set-pat"
-          : "";
+          ? " — the token was not accepted, and the reason is not distinguishable from here. " +
+            "Check it is a current scoped token, then re-run: anchor-service --set-pat"
+          : res.status === 400 || res.status === 422
+            ? " — the request or the token was malformed rather than rejected. Re-run: anchor-service --set-pat"
+            : "";
       throw new WalletTokenError(`OpenSea token exchange rejected the PAT (${res.status})${hint}`);
     }
 

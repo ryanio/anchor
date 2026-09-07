@@ -22,4 +22,5 @@ export * from "./inert.ts";
 export * from "./policy.ts";
 export * from "./privy.ts";
 export * from "./privy-api.ts";
+export * from "./solana.ts";
 export * from "./types.ts";

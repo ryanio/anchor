@@ -290,6 +290,35 @@ describe("request shape", () => {
     });
   });
 
+  // Encoding is necessary but not sufficient, which is the part that is easy to get wrong.
+  // `encodeURIComponent` leaves `.` and `..` untouched, and the URL parser strips percent-escapes
+  // before it removes dot segments, so no encoding of them survives. They have to be refused.
+  test("a bare dot segment is refused rather than encoded", async () => {
+    const h = harness(ok);
+    await using(h, async () => {
+      for (const probe of [".", ".."]) {
+        await assert.rejects(
+          () => h.client.collectionStats(probe, NO_TTL),
+          /relative path reference/,
+          `${JSON.stringify(probe)} must be refused`,
+        );
+      }
+      assert.equal(h.calls.length, 0, "a refused slug must never reach the network");
+    });
+  });
+
+  // Rejection is sufficient as well as necessary: after encoding, nothing else is a dot segment.
+  test("values that merely look like dot segments still encode safely", async () => {
+    for (const probe of ["...", "%2e%2e", ".%2e", "..a", "a..", "....//"]) {
+      const path = `/api/v2/collections/${encodeURIComponent(probe)}/stats`;
+      assert.equal(
+        new URL(path, "https://api.opensea.io").pathname,
+        path,
+        `${JSON.stringify(probe)} must survive as a literal segment`,
+      );
+    }
+  });
+
   test("repeatable and optional query params are built as documented", async () => {
     const h = harness(withExchange(ok));
     await using(h, async () => {

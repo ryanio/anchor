@@ -26,7 +26,19 @@ already exists in the same package — `lib/api/walletAuth.js:4` defines
 **What we wrote.** `segment()` in `service/src/opensea.ts:166`, applied at eleven call sites before
 any value is handed to the SDK.
 
-**When it's fixed — read this carefully.** Do **not** simply delete `segment()` the moment the SDK
+**Status: fixed upstream, unreleased.** OpenSea exported `segment()` from `apiPaths.ts` and applied
+it to all 100 interpolation sites (61 of 88 builders took a parameter), and dropped the duplicate
+helper in `walletAuth.ts` plus the now-double-encoding wrapper at the one call site in `accounts.ts`.
+It reaches npm on the next SDK release. **Do not bump and delete in separate commits** — see below.
+
+**Encoding alone was not enough, on either side.** `encodeURIComponent` leaves `.` and `..` untouched,
+so they survive encoding and still traverse, and percent-encoding them does not help because the
+WHATWG URL parser strips escapes *before* removing dot segments. Both `segment()` implementations now
+reject the two bare forms rather than encoding them. Rejection is sufficient as well as necessary:
+after encoding, nothing else is still a dot segment. Ours is in `service/src/opensea.ts` with tests
+covering both the refusal and the near-misses (`"..."`, `"%2e%2e"`, `".%2e"`).
+
+**When the bump lands — read this carefully.** Do **not** simply delete `segment()` the moment the SDK
 starts encoding. We would then encode twice, and a slug containing a space would go out as `%2520`
 rather than `%20`. In practice this is narrow: for ordinary slugs and for hex or base58 addresses
 `encodeURIComponent` is the identity, so double-encoding is a no-op — it bites only on exactly the
@@ -123,11 +135,86 @@ when filtered, fine when small, fails when large and unfiltered.
 **When it's fixed.** Nothing to delete. If it persists, the workaround is to always send a
 parameter, and that belongs here as its own entry when we write it.
 
+## 8. No Solana adapter in `@opensea/wallet-adapters`
+
+**Upstream problem.** [`ProjectOpenSea/wallet-adapters`](https://github.com/ProjectOpenSea/wallet-adapters)
+is the package Anchor would otherwise use for managed signing: adapters for Privy, Turnkey,
+Fireblocks, Bankr and local keys, with bridges for ethers and viem. Every one of them is EVM. There
+is no Solana adapter, no Solana bridge, and no non-EVM signing abstraction in the repository.
+
+**What we wrote.** `PrivySolanaSigner` and the Solana half of `privy-api.ts` in
+`executor/src/`, plus a hand-rolled transaction parser in `executor/src/solana.ts`. The parser is
+*not* really a workaround for this gap — it exists because refusing a delegation is a security
+property Anchor owns rather than something an adapter would provide — but the Privy plumbing around
+it is exactly what an adapter would have supplied.
+
+**When it's fixed.** Replace the transport half with the adapter and keep the guard. Note that an
+adapter shipping does not close the *other* gap: Anchor still cannot **compile** a Solana
+transaction, which needs associated token account derivation (ed25519 on-curve arithmetic) and a
+live blockhash. If `wallet-adapters` grows a Solana adapter that also builds transactions, both go.
+
+## 9. Privy's Solana policy engine cannot express an approval refusal
+
+Not an OpenSea gap, but it belongs in the same register because it is the same failure mode: a
+capability that exists on one chain and silently does not on another.
+
+**Upstream problem.** Privy's Solana condition sources are `solana_program_instruction` (`programId`
+only), `solana_system_program_instruction`, and `solana_token_program_instruction` — whose decoder
+covers `Transfer`, `TransferChecked`, `Burn`, `MintTo`, `CloseAccount` and `InitializeAccount3`.
+`Approve`, `ApproveChecked` and `SetAuthority` are reachable by no condition at all, so a policy
+*cannot* refuse the two instructions Anchor treats as human-only. There is also no aggregation
+(cumulative spend) support for any Solana method, and a condition needing an address loaded from an
+address lookup table causes evaluation to fail.
+
+**What we wrote.** `auditSolanaRule` in `executor/src/privy.ts` treats a rule that permits a token
+program by `programId` alone as a finding and refuses to start, because the only remote control is an
+`instructionName` allowlist plus default-deny — a control that vanishes silently when that one
+condition is omitted. `guardSolanaTransaction` in `executor/src/solana.ts` adds a local refusal that
+does not depend on Privy at all.
+
+**When it's fixed.** If Privy add `Approve`/`SetAuthority` to their token decoder, the audit can
+check for an explicit DENY rule instead of relying on inverted default-deny, and the finding becomes
+a weaker note. Keep the local guard regardless: it is the layer that holds when the vendor is
+compromised or compelled.
+
+**One correction to an earlier draft of this entry.** `solana_system_program_instruction` *does*
+support an `instructionName` field — verified against Privy's Solana policy examples on 2026-09-07,
+where it appears with values `Create` and `Transfer`. An in-flight comment in `privy.ts` said this
+was not established while the code already relied on it; the code was right and the comment was
+stale. So the System Program hole, unlike the token program one, can be closed remotely as well as
+locally.
+
+## 10. Privy has no Compute Budget condition source, so a priority fee cannot be bounded
+
+Same vendor, and the starkest of the set: entry 9 is a control weaker than its EVM counterpart, and
+this is a control with **no remote expression at all**.
+
+**Upstream problem.** Privy's only condition that reaches the Compute Budget program is
+`solana_program_instruction`'s `programId`, which says the program may be invoked and nothing about
+what it is invoked with. There is no `solana_compute_budget_instruction` source, and no example
+bounds a priority fee. `SetComputeUnitPrice` names a price in micro-lamports *per compute unit* as a
+`u64`; multiplied by the unit limit (up to 1,400,000) that is the payer's entire native balance,
+paid to a validator as a tip. A Solana policy therefore cannot refuse a transaction that drains the
+account through fees — and because a fee produces no asset delta, no value condition sees it either.
+The EVM side does not have this problem in the same way: a gas price is denominated in the asset the
+value cap counts.
+
+**What we wrote.** A priority-fee ceiling in `guardSolanaTransaction` (`executor/src/solana.ts`),
+default 0.01 SOL and overridable per call, which reads both operands out of the instruction data.
+This is one of the few checks in that module that is *exact* — the operands are inline `u32`/`u64`
+literals, so no address lookup table can move the answer. `auditSolanaRule` states the gap in
+`unverified` on every startup where a policy permits the program, and deliberately **not** as a
+finding: a finding means "fix this in Privy", and there is nothing to fix.
+
+**When it's fixed.** If Privy add a Compute Budget condition source, move the ceiling into the remote
+policy and downgrade the local one to defence in depth. Keep the local check regardless, for the same
+reason as entry 9.
+
 ---
 
 ## Reporting
 
-The full write-up handed to OpenSea on 2026-09-07 covers eight findings, of which the six above
+The full write-up handed to OpenSea on 2026-09-07 covers eight findings, of which findings 1-6 above
 affect this repository. Two others — the four wallet-scoped operations that 401 while declaring only
 `ApiKeyAuth`, and the absent `POST /api/v2/auth/tokens/exchange` — are documented in
 `service/src/auth.ts` instead, because they shaped that module's whole design rather than leaving a

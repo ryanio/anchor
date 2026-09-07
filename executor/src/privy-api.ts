@@ -114,6 +114,15 @@ export interface SendTransactionArgs {
   readonly idempotencyKey?: string;
 }
 
+export interface SendSolanaTransactionArgs {
+  readonly walletId: string;
+  /** CAIP-2 chain id, e.g. `solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp`. */
+  readonly caip2: string;
+  /** The serialized transaction, base64. Privy's `params.transaction` with `encoding: "base64"`. */
+  readonly transaction: string;
+  readonly idempotencyKey?: string;
+}
+
 /**
  * The slice of Privy that Anchor depends on.
  *
@@ -125,8 +134,10 @@ export interface PrivyWalletApi {
   getPolicy(policyId: string): Promise<PrivyPolicyDocument>;
   /** Replace a policy's rules wholesale. An empty array is the kill-switch state: nothing resolves. */
   replacePolicyRules(args: { policyId: string; rules: readonly PrivyPolicyRule[] }): Promise<void>;
-  /** Sign and broadcast. Returns the transaction hash. */
+  /** Sign and broadcast an EVM transaction. Returns the transaction hash. */
   sendTransaction(args: SendTransactionArgs): Promise<string>;
+  /** Sign and broadcast a Solana transaction. Returns the signature, base58. */
+  sendSolanaTransaction(args: SendSolanaTransactionArgs): Promise<string>;
 }
 
 // --- Errors ------------------------------------------------------------------------------------
@@ -161,6 +172,9 @@ export class PrivyPolicyViolation extends PrivyApiError {
 
 /** Only codes shaped like an identifier are repeated. A remote string is not a format string. */
 const CODE_RE = /^[a-z][a-z0-9_]{0,63}$/;
+
+/** 64 bytes of base58 — the base58 alphabet, at the two lengths 64 bytes can encode to. */
+const SOLANA_SIGNATURE_RE = /^[1-9A-HJ-NP-Za-km-z]{86,88}$/;
 
 function readErrorCode(body: unknown): string | null {
   if (typeof body !== "object" || body === null) return null;
@@ -319,6 +333,37 @@ export class PrivyClient implements PrivyWalletApi {
     const userOp = response.data?.user_operation_hash;
     if (typeof userOp === "string" && /^0x[0-9a-fA-F]{64}$/.test(userOp)) return userOp;
     throw new Error("Privy accepted the request but returned no transaction hash");
+  }
+
+  /**
+   * Solana's `signAndSendTransaction`.
+   *
+   * Request: `{ method, caip2, params: { transaction, encoding } }`, transaction base64-encoded.
+   * Response: the signature is at `data.hash` — the same field name as the EVM method, holding a
+   * base58 signature rather than a `0x` hash, which is the sort of detail that is only obvious once
+   * someone has read the page. Verified against Privy's API reference for `signAndSendTransaction`.
+   *
+   * The shape is checked rather than trusted: a Solana signature is 64 bytes of base58, 86 or 88
+   * characters, so a truthy-but-wrong field cannot pass for one and be logged as a submission that
+   * happened.
+   */
+  async sendSolanaTransaction(args: SendSolanaTransactionArgs): Promise<string> {
+    const body = {
+      method: "signAndSendTransaction",
+      caip2: args.caip2,
+      params: { transaction: args.transaction, encoding: "base64" },
+    };
+    const idempotencyKey = (args.idempotencyKey ?? this.#newIdempotencyKey()).slice(0, 256);
+    const response = (await this.#request(
+      "POST",
+      `/v1/wallets/${segment(args.walletId)}/rpc`,
+      body,
+      idempotencyKey,
+    )) as { data?: { hash?: unknown } };
+
+    const hash = response.data?.hash;
+    if (typeof hash === "string" && SOLANA_SIGNATURE_RE.test(hash)) return hash;
+    throw new Error("Privy accepted the request but returned no Solana signature");
   }
 
   async #request(

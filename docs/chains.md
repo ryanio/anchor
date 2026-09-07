@@ -101,16 +101,39 @@ data, which is the boundary the service exists to hold.
 
 ### Wallets
 
-*Unverified.* Privy documents support for Solana wallets alongside EVM, including server wallets and
-policy enforcement. Anchor's executor currently implements the EVM path only, and nobody here has
-exercised the Solana one — treat "Privy supports Solana" as a reason to expect the abstraction to
-hold, not as a tested claim. `ProjectOpenSea/wallet-adapters` is the other thing to look at before
-committing to a shape.
-
 The `Executor` interface in `docs/autonomy.md` was written so the enforcement backend is swappable.
-Chain architecture is a second axis of the same idea: an executor that can sign an EVM transaction
-and one that can sign a Solana v0 message should be the same interface with different
-implementations, not two products.
+Chain architecture is a second axis of the same idea, and it held: the executor now speaks both
+architectures behind one interface, with a chain-scoped address type, one `PolicyAuthority`, and a
+signer per architecture. Nothing about the policy model needed a second version.
+
+What did *not* hold is the assumption that a vendor's policy engine is the same product on both
+chains. **Privy supports Solana; Privy does not enforce the same policy on Solana.** The differences
+are named in [autonomy.md](autonomy.md) and in `executor/README.md`, and the short version is:
+
+| | EVM | Solana |
+|---|---|---|
+| Refuse a specific token instruction by name | `ethereum_calldata` + `function_name` | **not possible** — the token decoder covers six instructions and `Approve`/`SetAuthority` are not among them |
+| Refuse a specific *System Program* instruction by name | n/a | possible — `solana_system_program_instruction` does carry `instructionName` |
+| Cumulative spend cap | 72-hour window, two methods | **none at all** — no Solana method is supported by aggregations |
+| Bound an address a v0 transaction loads from a lookup table | n/a | evaluation *fails* and the transaction is rejected |
+| Bound the fee | the gas price is denominated in the asset the value cap counts | **no condition source exists** — `SetComputeUnitPrice` can commit the whole native balance and no rule can see it |
+
+*Verified* against Privy's policy and API documentation; the table was re-read on **2026-09-07** and
+two rows changed as a result. `solana_system_program_instruction` does support `instructionName` —
+an earlier draft said that was unestablished — so the System Program hole, unlike the token program
+one, is closable remotely. And the fee row is new, and is the worst of the set: the other rows are
+controls weaker than their EVM counterparts, that one is a control with no remote expression at all.
+
+The token row is the one that changes a design: on Solana the only way to keep a delegation out is an
+ALLOW rule that positively lists the instructions you do send, so Privy's default-deny refuses the
+rest — an omitted condition removes the control with no error anywhere, which is why Anchor's startup
+audit treats its absence as a refusal to start. The fee row changes a different thing: it is stated
+on every startup rather than refused, because no policy edit would fix it, and the ceiling in
+`executor/src/solana.ts` is the only enforcement there is.
+
+*Verified.* `ProjectOpenSea/wallet-adapters` has adapters for Privy, Turnkey, Fireblocks, Bankr and
+local keys, and bridges for ethers and viem — all EVM. There is no Solana adapter today. That is a
+gap worth closing upstream, since it is the package Anchor would otherwise use.
 
 ## `setApprovalForAll` has no Solana analogue — which is not the same as being safe
 
@@ -139,6 +162,30 @@ OpenSea-specific and we have not exercised any of it in Anchor.*
 None of these change the shape of Anchor's answer, which is that authority is bounded somewhere the
 agent cannot reach. They change what has to be on the human-only list, and the list is not the same
 list.
+
+### What the executor concluded
+
+*Implemented.* `HUMAN_ONLY_ACTION_KINDS` in `executor/src/types.ts` now has three members:
+`set-approval-for-all`, `approve-delegate` (SPL `Approve`/`ApproveChecked`/`Revoke`) and
+`set-authority` (SPL `SetAuthority`, and a program's upgrade authority). `DelegableActionKind` is
+derived by excluding them, so no policy can allowlist one — the compiler refuses, and a run-time
+check reads the same constant for limits that arrived as JSON.
+
+Two of the hazards above are deliberately *not* on the list, and the reasoning matters as much as the
+list does:
+
+- **Closing an account moves value**, so it fails the "moves nothing" test that defines the class. It
+  is a transfer wearing a different hat, and it belongs under the withdrawal-destination allowlist.
+  `executor/src/solana.ts` permits it and flags it, because a wrapped-SOL close sends the entire
+  lamport balance to a destination named by an operand — which on a v0 transaction may be unreadable.
+- **Arbitrary program invocation is not an action kind**, it is the absence of one. The type-level
+  answer is that `ActionRequest` carries intent — a mint, an amount, a destination — and has no member
+  that can hold instructions or bytes. An agent cannot ask for "sign these bytes" because the request
+  type cannot express it. At the signer, a program allowlist is default-deny on top of that.
+
+**Upgradeable programs remain unsolved**, and honestly so: an allowlisted program id says which code
+runs, not what it does, and "is this program still immutable" is a chain read Anchor does not make.
+The guard says as much in its `unverified` output rather than implying an allowlist settles it.
 
 ## Configuration
 
