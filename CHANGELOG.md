@@ -115,9 +115,31 @@ deadlines and an activity count, in the Omarchy top bar, read from the local ser
 - **Every degraded state is a designed state.** Service down, no API key, no wallet, offline — each
   renders as a calm dimmed mark and a panel saying what is missing and offering the button that
   fixes it, never as an error. A red box on a fresh install is a bad first impression.
-- **The panel opens on a few things.** Hero, the number, what is closing, one row of controls.
-  The NFT/token split, the age of a current reading, the floor list, the raw command behind each
-  setup step and the read-only note are behind a `details` disclosure — deferred, not deleted.
+- **The panel opens on a few things.** Hero, the number and where it came from, what is closing,
+  one row of controls. The breakdown, the floor list, the raw command behind each setup step and
+  the bar-item toggles are behind a `details` disclosure — deferred, not deleted.
+- **The bar starts sparse and is widened by the person who wants more.** The mark, the value and
+  the countdown to the next offer that closes. The change, the offer count and the activity count
+  are off by default and switch on from the panel's details view or with `omarchy bar set`.
+- **The number says where it came from**: which wallets, and how old, in one line under the total.
+  A total is a claim about specific addresses at a specific moment, and a panel that prints the
+  figure without either is asking to be believed rather than read.
+- **A portfolio breakdown**, behind the disclosure, as a labelled split bar rather than a pie —
+  part-to-whole is a stacked bar, and a pie of two slices is the canonical way to make a ratio
+  harder to read than the sentence it replaced. Three views: `type` (the whole portfolio, from
+  `nftValueUsd`/`tokenValueUsd`), `assets` and `chains` (from `/balances`). The last two are the
+  *token* half and say so, with their own total: NFT value is not broken down by chain or by asset
+  by any endpoint, and distributing it across token rows would print a number that is not true.
+- **USD always carries two decimal places.** `$125,430.5` reached the bar. The rule is keyed on the
+  denomination and applies only to it — ETH at eight places must not become `1.50000000` — and to
+  amounts rather than magnitudes, so `$125K` is not padded and `$11.10` is.
+- **Collections are called by their name.** `/collections` now returns each collection's display
+  name alongside its stats, and the panel shows "Bored Ape Yacht Club" where it showed
+  `boredapeyachtclub`. Slugs stay where the exact identifier is the point: links, and the config.
+- **Every configured wallet is watched.** `wallets` is a list in the config and `wallet: "0x…"` is
+  read as a one-element one. Anchor still cannot *discover* a person's wallets — it holds no wallet
+  credential and no endpoint maps a human to their addresses — so the setup step is widened rather
+  than deleted, and the no-wallets state is unchanged.
 - **Depth comes from the active Omarchy theme.** The panel draws on three surfaces — ground, raised
   and sunken — read from the theme's own `colors.toml` (`lighter_background`, `dark_background`,
   `selection`), three keys the shell's `Color` singleton does not expose. Where a theme's value is
@@ -134,6 +156,20 @@ deadlines and an activity count, in the Omarchy top bar, read from the local ser
   you can press. Each step says what it gets you rather than what it configures. The "Set up
   Anchor · step 2 of 3" header was removed: between it, the counter, the segments and the numbered
   discs, the panel was saying one fact four ways.
+- **The bar's open-panel underline tracks what the widget paints.** `Bar.qml` looks for an
+  `openPanelIndicatorWidth` on a module and otherwise falls back to 55% of the slot, a figure
+  calibrated for a text label in a padded slot. Measured on the running bar: a 172px slot drew a
+  96px underline against 154px of content.
+- **The scrollbar has its own lane.** An attached `ScrollBar.vertical` reserves nothing — measured,
+  10px wide at `flick.width - 10` — so it painted over the right edge of the panel's cards the
+  moment a flick made it appear. The content column is inset by that width on both sides,
+  unconditionally, so the bar has somewhere to be and nothing moves when a list gets longer.
+- **The bar's hover tooltip is one line.** The shell owns a single shared tooltip whose label is
+  hardcoded centre-aligned with one weight and no per-module override, so a four-line paragraph
+  handed to it read as a centred block with nothing leading. The alignment was never the widget's
+  to set; the paragraph was.
+- **Something leads in every row.** The value is bold, the name is regular, the sub-line is dimmed.
+  A list where the label and the value are the same weight and colour reads as a wall.
 - **The step marker is aligned by measurement.** The numeral sits on the step title's own baseline
   and the disc is centred on the numeral's ink, both derived from `FontMetrics`/`TextMetrics` at
   runtime. It was a fixed 1px top margin against a metric-derived label, which put the disc 2.1px
@@ -165,6 +201,11 @@ delete but be willing to delete, a step does the thing rather than describing it
 dividers, and never a colour at a call site. It also records where a future NFT-driven theme plugs
 in — `tokens.css` for the web, the Omarchy theme's `colors.toml` for the widget — and there is no
 third seam, because no colour the widget draws is a literal.
+
+**`widget/SplitBar.qml`** — a part-to-whole split as a bar plus one labelled row per part, on a
+sequential single-hue scale taken from the live theme. Documented in `theme/README.md` as a house
+rule: never a pie, never a legend that is the only way to read the chart, and text never wears a
+segment's colour.
 
 **`packaging/anchor-service.service`** — the data service as a systemd *user* unit, so starting it
 is a button in the bar rather than a command to copy. Installed to `/usr/lib/systemd/user/` by the

@@ -25,7 +25,11 @@
       "activityWindowHours": 24,
       "staleAfter": 900,
       "maxNameLength": 28,
-      "timeout": 6
+      "timeout": 6,
+      "showChange": false,
+      "showOffers": false,
+      "showDeadline": true,
+      "showActivity": false
     },
     "schema": [
       {
@@ -62,7 +66,31 @@
         "key": "showValue",
         "type": "boolean",
         "label": "Show portfolio value",
-        "description": "Turn off to keep the number off the bar while screen sharing. Offers and deadlines still show, and the value stays available in the panel."
+        "description": "Show the portfolio value on the bar. Turn off to keep the number off it while screen sharing; the value stays available in the panel."
+      },
+      {
+        "key": "showChange",
+        "type": "boolean",
+        "label": "Show the change",
+        "description": "Add the percentage change beside the value. Off by default — the bar starts sparse and you add what you want, from the panel's details view or here."
+      },
+      {
+        "key": "showOffers",
+        "type": "boolean",
+        "label": "Show the offer count",
+        "description": "Add the number of incoming offers. Off by default; the panel always lists them."
+      },
+      {
+        "key": "showDeadline",
+        "type": "boolean",
+        "label": "Show the next countdown",
+        "description": "Add the countdown to the next offer that closes. On by default — it is the only bar item with a clock running out."
+      },
+      {
+        "key": "showActivity",
+        "type": "boolean",
+        "label": "Show the activity count",
+        "description": "Add the number of events in the activity window. Off by default; it needs no decision."
       },
       {
         "key": "deadlineWindowHours",

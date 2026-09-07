@@ -115,7 +115,10 @@ export function createApp(config: Config, client: OpenSeaClient, deps: ServerDep
           200,
           {
             ok: true,
-            wallet: config.wallet || null,
+            // Both spellings. `wallets` is the truth; `wallet` is its first element, kept so a
+            // widget or script written against the singular keeps working.
+            wallets: config.wallets,
+            wallet: config.wallets[0] ?? null,
             chains: config.chains,
             /** The chain used by endpoints whose path carries one. See docs/chains.md. */
             primaryChain: config.chains[0],
@@ -128,12 +131,14 @@ export function createApp(config: Config, client: OpenSeaClient, deps: ServerDep
         return;
       }
 
-      if (!config.wallet && WALLET_ROUTES.has(path)) {
+      const primaryWallet = config.wallets[0] ?? "";
+
+      if (!primaryWallet && WALLET_ROUTES.has(path)) {
         send(
           res,
           428,
           {
-            error: "No wallet configured. Set `wallet` in the config file.",
+            error: "No wallet configured. Add one to `wallets` in the config file.",
             config: "~/.config/anchor/config.json",
           },
           headOnly,
@@ -146,7 +151,7 @@ export function createApp(config: Config, client: OpenSeaClient, deps: ServerDep
         send(
           res,
           200,
-          envelope(await client.nftsByAccount(config.wallet, config.ttl.nfts, { collection })),
+          envelope(await client.nftsByAccount(primaryWallet, config.ttl.nfts, { collection })),
           headOnly,
         );
         return;
@@ -159,7 +164,7 @@ export function createApp(config: Config, client: OpenSeaClient, deps: ServerDep
         send(
           res,
           200,
-          envelope(await client.portfolioStats(config.wallet, config.ttl.portfolio, chosen)),
+          envelope(await client.portfolioStats(primaryWallet, config.ttl.portfolio, chosen)),
           headOnly,
         );
         return;
@@ -170,7 +175,7 @@ export function createApp(config: Config, client: OpenSeaClient, deps: ServerDep
           res,
           200,
           envelope(
-            await client.tokenBalances(config.wallet, config.ttl.tokens, {
+            await client.tokenBalances(primaryWallet, config.ttl.tokens, {
               limit: intParam(url.searchParams.get("limit"), 200),
               cursor: url.searchParams.get("cursor") ?? undefined,
             }),
@@ -186,7 +191,7 @@ export function createApp(config: Config, client: OpenSeaClient, deps: ServerDep
           res,
           200,
           envelope(
-            await client.eventsByAccount(config.wallet, config.ttl.events, {
+            await client.eventsByAccount(primaryWallet, config.ttl.events, {
               eventTypes: types.length ? types : undefined,
             }),
           ),
@@ -234,10 +239,24 @@ export function createApp(config: Config, client: OpenSeaClient, deps: ServerDep
         const results: Array<{ slug: string } & Record<string, unknown>> = [];
         for (const slug of config.collections) {
           try {
-            results.push({ slug, ...envelope(await client.collectionStats(slug, config.ttl.stats)) });
+            const stats = envelope(await client.collectionStats(slug, config.ttl.stats));
+            // The collection's own display name, so consumers can stop showing people a slug.
+            // Secondary and non-fatal: the floor is what this route is for, and a row that has a
+            // price but no name is far better than one with neither. Cached at the same ttl, and a
+            // name changes about as often as a collection is renamed, which is never.
+            let name: string | null = null;
+            try {
+              const info = (await client.collection(slug, config.ttl.stats)).data as {
+                name?: unknown;
+              };
+              if (typeof info?.name === "string" && info.name !== "") name = info.name;
+            } catch (nameErr) {
+              if (isCredentialError(nameErr)) throw nameErr;
+            }
+            results.push({ slug, name, ...stats });
           } catch (err) {
             if (isCredentialError(err)) throw err;
-            results.push({ slug, error: (err as Error).message });
+            results.push({ slug, name: null, error: (err as Error).message });
           }
         }
         send(res, 200, { data: results, meta: { count: results.length } }, headOnly);

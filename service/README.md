@@ -108,7 +108,7 @@ to paste into an issue:
 ```json
 {
   "chains": ["ethereum"],
-  "wallet": "0x...",
+  "wallets": ["0x...", "0x..."],
   "collections": ["your-collection-slug"],
   "tokens": [],
   "port": 8787,
@@ -119,6 +119,11 @@ to paste into an issue:
   "requestsPerSecond": 2
 }
 ```
+
+`wallets` is a list and every entry is watched. The older `wallet: "0x…"` is still read, as a
+one-element list, the same way `chain` is read as a one-element `chains`. Anchor cannot *discover*
+a person's wallets — it holds no wallet credential and no endpoint maps a human to their addresses
+— so watching all the configured ones is as far as this goes until a wallet adapter is connected.
 
 `chains` is validated against OpenSea's own chain union, so a typo fails at load with a suggestion
 rather than a 400 later. The older single `"chain": "base"` string still works and is read as a

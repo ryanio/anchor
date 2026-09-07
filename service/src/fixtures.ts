@@ -34,7 +34,7 @@ export function tempCache(): Cache {
 export function testConfig(overrides: Partial<Config> = {}): Config {
   return {
     chains: ["ethereum"],
-    wallet: "",
+    wallets: [],
     collections: [],
     tokens: [],
     port: 0,

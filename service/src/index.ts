@@ -166,7 +166,7 @@ async function main(): Promise<void> {
       `wallet PAT ${present.pat ? "present" : "MISSING (--set-pat; account routes will refuse)"}`,
   );
   console.error(`anchor-service chains: ${config.chains.join(", ")} (path-scoped reads use the first)`);
-  if (!config.wallet) {
+  if (config.wallets.length === 0) {
     console.error(`Warning: no wallet set. Edit ${configPath()}`);
   }
 

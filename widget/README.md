@@ -63,6 +63,10 @@ omarchy bar set anchor.pulse showValue false
 | Key | Default | What it does |
 |---|---|---|
 | `port` | `8787` | Loopback port of the data service. Must match `port` in `~/.config/anchor/config.json`. |
+| `showChange` | `false` | Add the percentage change to the bar. |
+| `showOffers` | `false` | Add the incoming-offer count to the bar. |
+| `showDeadline` | `true` | Add the countdown to the next offer that closes. |
+| `showActivity` | `false` | Add the count of recent events to the bar. |
 | `timeframe` | `DAY` | Window the percentage change is measured across: `HOUR`, `DAY`, `WEEK`, `MONTH`. |
 | `showValue` | `true` | Show the portfolio number on the bar. Turn off while screen sharing — offers and deadlines still show, and the value stays in the panel. |
 | `deadlineWindowHours` | `48` | Only count down offers closing within this many hours. Further out is not news. |
@@ -87,6 +91,7 @@ hand-edit.
 | `r` in the panel | Refresh |
 | `v` in the panel | Toggle the value |
 | `d` in the panel | Show or hide the details view |
+| `b` in the panel | Cycle the portfolio breakdown: type · assets · chains |
 | `s` in the panel | Run the current setup step's action — the same thing its button does |
 | `Esc` | Close |
 
@@ -131,8 +136,14 @@ subtitle were all saying it already.
    `systemctl --user start` / `enable --now` on `anchor-service.service`.
 2. **Add your OpenSea API key** — an **Enter the key** button that opens a terminal on the
    interactive prompt.
-3. **Say which wallet to follow** — an **Open config** button that opens
+3. **Add a wallet to watch** — an **Open config** button that opens
    `~/.config/anchor/config.json` in the editor Omarchy is configured to use.
+
+**Every configured wallet is watched.** `wallets` is a list and `wallet: "0x…"` is still read as a
+one-element one. What Anchor cannot do is *discover* a person's wallets: it holds no wallet
+credential by design, and no endpoint maps a human to their addresses. So the step is widened
+rather than deleted, and it comes back if the list is emptied. Auto-discovery arrives with a wallet
+adapter, not here.
 
 Optional, collapsed behind a pill you can press: **watch a few collections**, for floor prices.
 
@@ -173,9 +184,22 @@ function are different claims. `anchor-service --check-credentials` settles it.
 Start with the "Design principles" section of [../theme/README.md](../theme/README.md) — it governs
 this widget and the site alike. What follows is what those principles cost in this file.
 
-- **The default panel is a few things.** Hero, the number, what is closing, one row of controls.
-  The NFT/token split, the age of a *current* reading, the floor list, the raw command behind each
-  setup step and the read-only note are all behind `details` — deferred, not deleted.
+- **The default panel is a few things.** Hero, the number and where it came from, what is closing,
+  one row of controls. The breakdown, the floor list, the raw command behind each setup step and
+  the bar-item toggles are all behind `details` — deferred, not deleted.
+- **The bar starts sparse and you add to it.** The mark, the value and the countdown to the next
+  offer that closes. The change, the offer count and the activity count are off by default and go
+  on from the `details` view or with `omarchy bar set`. A bar reading
+  `⚓ $125K ▲1% ◆3 ◷1h 36m ·5` is six things competing in a 26px strip.
+- **The number says where it came from.** Which wallets, and how old, in one line under the total.
+  Not a debug line: a total is a claim about specific addresses at a specific moment, and a panel
+  that prints the figure without either is asking to be believed rather than read.
+- **A breakdown is a labelled split bar, never a pie**, and each of its three views states what it
+  covers. `type` is the whole portfolio; `assets` and `chains` come from `/balances` and are the
+  *token* half, which they say, with their own total. Drawing NFT value into a chain split would
+  need per-chain NFT valuation the endpoint does not return.
+- **USD always carries two decimal places.** `$125,430.5` is not a dollar amount. The rule is keyed
+  on the denomination and applies only to it: ETH at 8 places must not become `1.50000000`.
 - **Depth comes from the theme, not from Anchor.** `OmarchyPalette` reads the active theme's
   `colors.toml` for `lighter_background`, `dark_background` and `selection` — three keys the shell's
   own `Color` singleton drops — and `Model.panelSurfaces` decides per theme whether each is a usable

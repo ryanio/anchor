@@ -17,8 +17,19 @@ export interface Config {
    * take a list get all of them, and endpoints whose path carries a single chain use the first.
    */
   chains: ChainIdentifier[];
-  /** The wallet Anchor follows. Read-only: Anchor never holds its keys. */
-  wallet: string;
+  /**
+   * Every wallet Anchor watches. Read-only: Anchor never holds their keys.
+   *
+   * A list, and `wallet: "0x…"` is still read as a one-element one — the same shape `chain` →
+   * `chains` already has, and for the same reason: asking someone to pick *the* wallet is a
+   * configuration step, and watching all of the ones they name removes the choice.
+   *
+   * It does not remove the *typing*. Anchor cannot discover a person's wallets: it holds no wallet
+   * credential by design (the PAT step was removed once it was measured to be unnecessary), and
+   * there is no endpoint that maps a human to their addresses. True auto-discovery arrives with a
+   * wallet adapter, not here — see docs/upstream.md.
+   */
+  wallets: string[];
   /** Collection slugs to watch. Users should pin only what they care about. */
   collections: string[];
   /** Fungible token contract addresses to watch, on the first configured chain. */
@@ -42,7 +53,7 @@ export interface Config {
 
 const DEFAULTS: Config = {
   chains: ["ethereum"],
-  wallet: "",
+  wallets: [],
   collections: [],
   tokens: [],
   port: 8787,
@@ -67,6 +78,8 @@ interface ConfigInput extends Partial<Omit<Config, "chains">> {
   chains?: unknown;
   /** @deprecated Superseded by `chains`. A single slug is read as a one-element `chains`. */
   chain?: unknown;
+  /** @deprecated Superseded by `wallets`. A single address is read as a one-element `wallets`. */
+  wallet?: unknown;
 }
 
 export function configDir(): string {
@@ -174,10 +187,20 @@ export function validate(parsed: ConfigInput): Config {
   const chains = validateChains(parsed);
   const collections = strings(parsed.collections, DEFAULTS.collections, "collections");
   const tokens = strings(parsed.tokens, DEFAULTS.tokens, "tokens");
-  const wallet = str(parsed.wallet, DEFAULTS.wallet, "wallet");
+  // `wallets` wins; a bare `wallet` string is read as a one-element list so an existing config
+  // keeps working. Both present is not an error and not a merge — the list is the newer spelling
+  // and silently appending the singular to it would watch an address the user thought they had
+  // replaced.
+  const wallets =
+    parsed.wallets === undefined
+      ? (() => {
+          const single = str(parsed.wallet as string | undefined, "", "wallet");
+          return single === "" ? [] : [single];
+        })()
+      : strings(parsed.wallets, DEFAULTS.wallets, "wallets");
 
   // Address shape depends on the chain, so this can only run once `chains` is known.
-  assertAddressForChains(wallet, chains, "wallet");
+  for (const [i, wallet] of wallets.entries()) assertAddressForChains(wallet, chains, `wallets[${i}]`);
   for (const [i, token] of tokens.entries()) assertAddressForChains(token, chains, `tokens[${i}]`);
 
   const ttlIn = parsed.ttl ?? {};
@@ -190,7 +213,7 @@ export function validate(parsed: ConfigInput): Config {
 
   return {
     chains,
-    wallet,
+    wallets,
     collections,
     tokens,
     port: num(parsed.port, DEFAULTS.port, "port", 0),

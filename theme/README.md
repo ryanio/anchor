@@ -33,7 +33,15 @@ widget. They are here rather than in a PR description because they are standing 
 5. **Depth instead of dividers.** Three surfaces — ground, raised, sunken — do the work that a
    stack of hairlines does badly. A separator says where a group ends; a surface says that *and*
    gives the eye somewhere to rest.
-6. **Never a colour at a call site.** Every colour resolves through a token here, or — in the
+6. **Provenance is not reassurance.** Principle 2 says a freshness line on a current reading is
+   reassurance and can be hidden. It stops being reassurance the moment it is attached to a number
+   and names its source: *which* wallets, and *how old*. That line stays in the default view. It is
+   the difference between "trust me" and "here is what to check", and this project has already had
+   one afternoon of a plausible number being taken for a true one.
+7. **Say what a view covers, on the view.** A share of an unstated whole cannot be checked. Every
+   breakdown states its own total and its own scope, even when that scope is narrower than the
+   headline it sits under — especially then.
+8. **Never a colour at a call site.** Every colour resolves through a token here, or — in the
    widget — through the live Omarchy theme. A hex value in a `.qml` file or a component rule is the
    thing to avoid, and it is what keeps a future re-theme a one-file change (see below).
 
@@ -139,6 +147,24 @@ almost every list here: floors, deadlines, diary entries, activity.
 **defence** on a collection name, so it is the default rather than something each caller remembers
 to opt into. `.row--faded` is for data we have but can no longer vouch for — faded, never hidden,
 because removing a stale row reads as one the user deleted.
+
+### Splits — a bar, never a pie
+
+Part-to-whole is a **stacked bar with a labelled row per part**, and this is a house rule rather
+than a preference. A pie of two or three slices is the canonical way to make a ratio harder to read
+than the sentence it replaced: nobody compares angles, the labels end up in a legend, and the
+legend becomes the only way to read the chart.
+
+The parts are magnitudes, not identities, so the scale is **sequential — one hue at descending
+strengths** — not a categorical palette. There is nothing to tell apart that the labels do not
+already say, and a desktop theme offers one accent, not six. Segments are separated by a gap of the
+surface behind them rather than by a border. Text never wears a segment's colour: values and labels
+stay in the text tokens, and the swatch beside a row carries identity.
+
+The first two strengths are far apart on purpose. A smooth ramp draws two swatches that read as one
+grey at 7px, which is the failure mode of a sequential scale on a small mark.
+
+The widget's `SplitBar.qml` is the implementation; there is no CSS counterpart yet.
 
 ### Surfaces — `.card`, `.card--raised`, `.well`, `.lift`
 

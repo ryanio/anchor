@@ -259,17 +259,50 @@ function groupDigits(value) {
  * rule (`executor/src/types.ts`) is that denominations do not implicitly convert, and a read-only
  * widget has even less business inventing a rate than the thing that spends money does.
  */
+/**
+ * Pad a decimal string out to exactly `places` fraction digits.
+ *
+ * A *display* rule, applied after rounding and grouping and never to the value itself: nothing
+ * downstream reads this string back. It exists because USD has exactly two decimal places by
+ * definition, and `$125,430.5` is not a dollar amount — it is a number that happens to be in
+ * dollars. Denominations without a fixed minor unit must not get this: ETH quoted to 8 places
+ * would become `1.50000000`, which claims a precision the response never made.
+ */
+function padFraction(value, places) {
+  const text = String(value ?? "");
+  const dot = text.indexOf(".");
+  const digits = dot === -1 ? 0 : text.length - dot - 1;
+  if (digits >= places) return text;
+  return (dot === -1 ? `${text}.` : text) + "0".repeat(places - digits);
+}
+
+/** Fixed minor units, by denomination. Only currencies whose minor unit is part of the unit. */
+const FIXED_DECIMALS = { USD: 2 };
+
 function formatMoney(amount, options) {
   const opts = options ?? {};
   const decimal = typeof amount === "string" ? amount : null;
   if (decimal === null || DECIMAL_RE.exec(decimal.trim()) === null) return "";
 
   const symbol = sanitizeSymbol(opts.symbol);
+  const fixed = FIXED_DECIMALS[symbol];
+
   // `exact` shows the figure the API gave rather than a magnitude, but still caps the fraction:
   // a response with eighteen decimal places would otherwise run off the edge of the panel. The cap
-  // is a display limit, not arithmetic — nothing downstream reads this string back.
-  const body =
-    opts.exact === true ? groupDigits(roundDecimal(decimal, 8) ?? decimal) : compactDecimal(decimal);
+  // is a display limit, not arithmetic — nothing downstream reads this string back. A denomination
+  // with a fixed minor unit is rounded and padded to it; everything else keeps the 8-place cap and
+  // its trailing zeros trimmed.
+  let body = null;
+  if (opts.exact === true) {
+    const places = fixed === undefined ? 8 : fixed;
+    body = groupDigits(roundDecimal(decimal, places) ?? decimal);
+    if (body !== null && fixed !== undefined) body = padFraction(body, fixed);
+  } else {
+    body = compactDecimal(decimal);
+    // The compact form is a magnitude *once it has a unit on it*: "$125.00K" would pad a rounding
+    // rather than a cent. Below the first unit it is still an amount, and $11.1 is not a price.
+    if (body !== null && fixed !== undefined && !/[KMBT]$/.test(body)) body = padFraction(body, fixed);
+  }
   if (body === null) return "";
 
   if (symbol === "USD") return body.startsWith("-") ? `-$${body.slice(1)}` : `$${body}`;
@@ -692,6 +725,8 @@ function emptyState() {
     portfolio: null,
     activity: null,
     collections: null,
+    /** Token holdings, for the asset and chain breakdowns. Never on the bar. */
+    balances: null,
     /** Wall-clock ms of the last read of any kind that succeeded. */
     updatedAt: 0,
     /**
@@ -705,6 +740,29 @@ function emptyState() {
 /** Fold a `systemctl show` result into state. Its own function so a test can drive it. */
 function applyUnitState(state, raw) {
   return Object.assign({}, state ?? emptyState(), { unit: parseUnitState(raw) });
+}
+
+/**
+ * Every wallet Anchor is watching, as a list.
+ *
+ * The config used to name one wallet and the widget read one field. `wallets` is the list and
+ * `wallet` is kept as its first element for anything that still asks — the same shape the project
+ * already uses for `chain` → `chains`, so a hand-edited config with either spelling works.
+ *
+ * Watching all of them by default is as far as this goes: Anchor cannot *discover* a person's
+ * wallets, because it holds no wallet credential and there is no endpoint that maps a human to
+ * their addresses. Until a wallet adapter is connected, "all of them" means "all of the ones in the
+ * config", and the setup step is widened rather than deleted. See widget/README.md.
+ */
+function walletList(health) {
+  const list = health?.wallets;
+  if (Array.isArray(list)) {
+    const out = [];
+    for (const entry of list) if (typeof entry === "string" && entry !== "") out.push(entry);
+    if (out.length > 0) return out;
+  }
+  const single = health?.wallet;
+  return typeof single === "string" && single !== "" ? [single] : [];
 }
 
 function credentials(health) {
@@ -914,10 +972,10 @@ function setupSteps(state) {
     },
     {
       key: "wallet",
-      label: "Say which wallet to follow",
-      detail: "Anchor watches it. It never holds its keys.",
+      label: "Add a wallet to watch",
+      detail: "Anchor watches every wallet you list, and never holds their keys.",
       missing: "no wallet configured",
-      done: reachable && typeof health.wallet === "string" && health.wallet.length > 0,
+      done: reachable && walletList(health).length > 0,
       action: { id: ACTION.EDIT_CONFIG, label: "Open config" },
       secondary: null,
       // The button opens this file, so the footnote is the path rather than a sentence about it.
@@ -1063,8 +1121,12 @@ function statusDetail(state, nowMs, settings) {
       if (status === STATUS.READY) {
         const events = activityCount(s, now, settings);
         const hours = Number(settings?.activityWindowHours) || 24;
-        parts.push(`${events} event${events === 1 ? "" : "s"} in ${hours}h`);
+        // Zero is not news. "0 events in 24h" is a line that costs a reader something and tells
+        // them nothing they did not already get from the absence of a list.
+        if (events > 0) parts.push(`${events} event${events === 1 ? "" : "s"} in ${hours}h`);
       }
+      // A healthy, quiet wallet still deserves a subtitle that says the widget is working.
+      if (parts.length === 0 && status === STATUS.READY) return "up to date";
       return parts.join(" · ");
     }
   }
@@ -1074,6 +1136,209 @@ function statusDetail(state, nowMs, settings) {
 function statusSummary(state, nowMs, settings) {
   const detail = statusDetail(state, nowMs, settings);
   return detail === "" ? "Anchor" : `Anchor — ${detail}`;
+}
+
+// -------------------------------------------------------------------------------------------
+// The portfolio, broken down
+// -------------------------------------------------------------------------------------------
+//
+// Three views of one number, and each says what it covers, because they do not all cover the same
+// thing:
+//
+//   **Type** is the whole portfolio. `/portfolio/value` returns `nftValueUsd` and `tokenValueUsd`
+//   and they sum to the total, so this is the only view that accounts for everything.
+//
+//   **Assets** and **Chains** come from `/balances`, which is the *token* half. They are labelled
+//   as such and their own total is shown, rather than being presented as shares of the portfolio.
+//   Drawing NFT value into a chain split would need per-chain NFT valuation, which the endpoint
+//   does not return; inventing it from what is available is exactly the kind of plausible number
+//   this widget exists not to print.
+//
+// The form is a labelled split bar, never a pie. Two or three parts of a whole is a ratio, and a
+// pie of two slices is the canonical way to make a ratio harder to read than the sentence it
+// replaced. Every segment carries its own name, value and share as text; the bar is the shape of
+// the answer and the rows are the answer.
+
+const BREAKDOWNS = [
+  { key: "type", label: "type" },
+  { key: "asset", label: "assets" },
+  { key: "chain", label: "chains" },
+];
+
+/** Sum a list of decimal strings without going through a float. See rule 2 in the module comment. */
+function sumDecimals(values) {
+  let total = "0";
+  for (const value of values) total = addDecimals(total, value);
+  return total;
+}
+
+/** `a + b` on two non-negative decimal strings, digit by digit with a carry. */
+function addDecimals(a, b) {
+  const ma = DECIMAL_RE.exec(String(a ?? "").trim());
+  const mb = DECIMAL_RE.exec(String(b ?? "").trim());
+  if (!ma || !mb || ma[1] === "-" || mb[1] === "-") return ma && ma[1] !== "-" ? String(a) : "0";
+
+  const fracLen = Math.max((ma[3] ?? "").length, (mb[3] ?? "").length);
+  const pad = (m) => m[2] + (m[3] ?? "").padEnd(fracLen, "0");
+  const da = pad(ma);
+  const db = pad(mb);
+  const width = Math.max(da.length, db.length);
+  const xa = da.padStart(width, "0");
+  const xb = db.padStart(width, "0");
+
+  let carry = 0;
+  let out = "";
+  for (let i = width - 1; i >= 0; i--) {
+    const sum = Number(xa[i]) + Number(xb[i]) + carry;
+    out = String(sum % 10) + out;
+    carry = sum >= 10 ? 1 : 0;
+  }
+  if (carry > 0) out = "1" + out;
+
+  const cut = out.length - fracLen;
+  const int = out.slice(0, cut).replace(/^0+(?=\d)/, "");
+  const frac = out.slice(cut);
+  return fracLen === 0 ? int : trimZeros(`${int}.${frac}`);
+}
+
+/**
+ * A share, 0–1, as a float.
+ *
+ * The one place a float is allowed, and only because nothing is printed from it: it sets the width
+ * of a rectangle. The percentage beside it is rounded from the same number and is a share, not an
+ * amount — `Model.formatMoney` still prints every figure from the decimal string.
+ */
+function share(part, total) {
+  const p = Number(part);
+  const t = Number(total);
+  if (!isFinite(p) || !isFinite(t) || t <= 0) return 0;
+  return Math.min(1, Math.max(0, p / t));
+}
+
+/** Token holdings from `/balances`, largest first. Every string here is remote and sanitised. */
+function balanceRows(state, settings) {
+  const data = state?.balances?.data ?? null;
+  const list = Array.isArray(data) ? data : (data?.tokens ?? data?.balances ?? data?.items ?? null);
+  if (!Array.isArray(list)) return [];
+  const maxName = Number(settings?.maxNameLength) || DEFAULT_MAX_NAME;
+
+  const out = [];
+  for (const row of list) {
+    const usd = pickDecimal(row, ["usdValue", "usd_value"]);
+    if (usd === null) continue;
+    const symbol = sanitizeSymbol(pickString(row, ["symbol"]));
+    const name = sanitize(pickString(row, ["name"]), maxName);
+    out.push({
+      // The ticker is the shortest true name and the one people read; the long name is the
+      // fallback, and the address never appears — it is an identifier, not a label.
+      label: symbol !== "" ? symbol : name !== "" ? name : "token",
+      chain: sanitize(pickString(row, ["chain"]), 16) || "unknown",
+      usd,
+    });
+  }
+  out.sort((a, b) => Number(b.usd) - Number(a.usd));
+  return out;
+}
+
+/** How many rows a split can carry before the tail stops being readable. */
+const BREAKDOWN_LIMIT = 5;
+
+/**
+ * One view of the portfolio: rows, their shares, and what the view actually covers.
+ *
+ * `scope` is not decoration. It is the sentence that would have made a fabricated total obvious,
+ * and it is why every view states its own total rather than borrowing the headline's.
+ */
+function portfolioBreakdown(state, settings, mode) {
+  const portfolio = readPortfolio(state?.portfolio ?? null);
+  const usd = { symbol: "USD" };
+
+  if (mode === "type") {
+    const parts = [];
+    if (portfolio.nftValue !== null) parts.push({ label: "NFTs", value: portfolio.nftValue });
+    if (portfolio.tokenValue !== null) parts.push({ label: "Tokens", value: portfolio.tokenValue });
+    if (parts.length === 0) return { rows: [], total: null, scope: "", symbol: "USD" };
+    const total = portfolio.total ?? sumDecimals(parts.map((p) => p.value));
+    return {
+      rows: parts.map((p) => ({
+        label: p.label,
+        value: p.value,
+        text: formatMoney(p.value, usd),
+        share: share(p.value, total),
+      })),
+      total,
+      totalText: formatMoney(total, { symbol: "USD", exact: true }),
+      scope: "everything Anchor can see",
+      symbol: "USD",
+    };
+  }
+
+  const balances = balanceRows(state, settings);
+  if (balances.length === 0) return { rows: [], total: null, scope: "", symbol: "USD" };
+
+  let grouped = balances;
+  if (mode === "chain") {
+    const byChain = {};
+    const order = [];
+    for (const row of balances) {
+      if (byChain[row.chain] === undefined) {
+        byChain[row.chain] = "0";
+        order.push(row.chain);
+      }
+      byChain[row.chain] = addDecimals(byChain[row.chain], row.usd);
+    }
+    grouped = order.map((chain) => ({ label: chain, usd: byChain[chain] }));
+    grouped.sort((a, b) => Number(b.usd) - Number(a.usd));
+  }
+
+  const total = sumDecimals(grouped.map((row) => row.usd));
+
+  // Past the limit the tail is folded into one row rather than dropped: a split whose parts do not
+  // add up to its own stated total is worse than a coarse one.
+  const head = grouped.slice(0, BREAKDOWN_LIMIT);
+  const tail = grouped.slice(BREAKDOWN_LIMIT);
+  const rows = head.map((row) => ({
+    label: row.label,
+    value: row.usd,
+    text: formatMoney(row.usd, usd),
+    share: share(row.usd, total),
+  }));
+  if (tail.length > 0) {
+    const rest = sumDecimals(tail.map((row) => row.usd));
+    rows.push({
+      label: `${tail.length} more`,
+      value: rest,
+      text: formatMoney(rest, usd),
+      share: share(rest, total),
+    });
+  }
+
+  return {
+    rows,
+    total,
+    totalText: formatMoney(total, { symbol: "USD", exact: true }),
+    // Said on every view that is not the whole portfolio, every time it is drawn.
+    scope: "tokens only — NFT value is not broken down by " + (mode === "chain" ? "chain" : "asset"),
+    symbol: "USD",
+  };
+}
+
+/**
+ * Where the number on screen came from, in one line.
+ *
+ * A total is a claim about specific addresses at a specific moment, and a panel that shows the
+ * figure without either is asking to be believed rather than read. This is the line that would
+ * have made two addresses nobody configured obvious at a glance.
+ */
+function provenance(state, nowMs, settings) {
+  const wallets = walletList(state?.health);
+  const parts = [];
+  if (wallets.length === 1) parts.push(shortAddress(wallets[0]));
+  else if (wallets.length > 1) parts.push(`${wallets.length} wallets`);
+
+  const age = ageSeconds(state?.portfolio, nowMs);
+  if (age !== null) parts.push(`as of ${relativeAge(age)}`);
+  return parts.join("  ·  ");
 }
 
 // -------------------------------------------------------------------------------------------
@@ -1186,10 +1451,18 @@ function isIncomingOffer(event, wallet) {
   if (!orderType.includes("offer") && !orderType.includes("bid")) return false;
 
   const maker = String(event?.maker ?? "").toLowerCase();
-  const owner = String(wallet ?? "").toLowerCase();
+  // Takes one wallet or the whole watched list. It has to be the list, not one call per wallet
+  // OR-ed together: with two wallets, an offer *made* by the first is "not made by the second",
+  // so any per-wallet test combined with `some` counts a person's own bid as incoming to them.
+  const owners = [];
+  for (const entry of Array.isArray(wallet) ? wallet : [wallet]) {
+    const owner = String(entry ?? "").toLowerCase();
+    if (owner !== "") owners.push(owner);
+  }
   // An offer the user made themselves is not an incoming offer. An unknown maker is counted:
   // under-reporting a deadline is worse than over-reporting one.
-  return maker === "" || owner === "" || maker !== owner;
+  if (maker === "" || owners.length === 0) return true;
+  return owners.indexOf(maker) === -1;
 }
 
 /**
@@ -1202,12 +1475,13 @@ function isIncomingOffer(event, wallet) {
 function deadlines(state, nowMs, settings) {
   const now = Number(nowMs) || Date.now();
   const windowMs = (Number(settings?.deadlineWindowHours) || 48) * 3600000;
-  const wallet = state?.health?.wallet ?? "";
+  const wallets = walletList(state?.health);
   const maxName = Number(settings?.maxNameLength) || DEFAULT_MAX_NAME;
+  const names = collectionNames(state, settings);
 
   const out = [];
   for (const event of eventList(state?.activity?.data)) {
-    if (!isIncomingOffer(event, wallet)) continue;
+    if (!isIncomingOffer(event, wallets)) continue;
 
     const expiry = pickTime(event, EXPIRY_KEYS);
     if (expiry === null) continue;
@@ -1227,7 +1501,7 @@ function deadlines(state, nowMs, settings) {
       name:
         sanitize(nft.name, maxName) ||
         (identifier === "" ? "Collection offer" : `#${sanitize(identifier, 12)}`),
-      collection: sanitize(slug, maxName),
+      collection: displayName(slug, names, maxName),
       url: collectionUrl(slug),
       amount: paymentAmount(event.payment),
       expiresAt: expiry,
@@ -1260,10 +1534,10 @@ function paymentAmount(payment) {
  * is still an offer, it just has no clock on it.
  */
 function offerCount(state) {
-  const wallet = state?.health?.wallet ?? "";
+  const wallets = walletList(state?.health);
   let count = 0;
   for (const event of eventList(state?.activity?.data)) {
-    if (isIncomingOffer(event, wallet)) count++;
+    if (isIncomingOffer(event, wallets)) count++;
   }
   return count;
 }
@@ -1290,10 +1564,41 @@ const FLOOR_SYMBOL_KEYS = ["floorPriceSymbol", "floor_price_symbol"];
  * partial state. Rows the service could not fetch keep their slug and say so, rather than
  * vanishing — a collection that silently disappears reads as one the user removed.
  */
+/**
+ * Slug → display name, learned from `/collections`.
+ *
+ * A slug is an identifier and reads like one: nobody calls it "boredapeyachtclub". The service
+ * returns the collection's own `name` alongside its stats, and this is the one place that mapping
+ * is built, so a deadline row and a floor row cannot end up disagreeing about what to call the same
+ * collection. A name is marketplace content like any other and is sanitised on the way in.
+ *
+ * Slugs are *not* replaced everywhere: `Model.collectionUrl` still takes the slug, and the config
+ * file still names slugs, because those are the places the exact identifier is the point.
+ */
+function collectionNames(state, settings) {
+  const out = {};
+  const data = state?.collections?.data;
+  if (!Array.isArray(data)) return out;
+  const maxName = Number(settings?.maxNameLength) || DEFAULT_MAX_NAME;
+  for (const row of data) {
+    if (typeof row?.slug !== "string" || row.slug === "") continue;
+    const name = sanitize(row?.name, maxName);
+    if (name !== "") out[row.slug] = name;
+  }
+  return out;
+}
+
+/** The prettiest true name for a slug: the collection's own, else the slug itself. */
+function displayName(slug, names, maxName) {
+  const known = names && typeof names[slug] === "string" ? names[slug] : "";
+  return known !== "" ? known : sanitize(slug, maxName);
+}
+
 function collectionRows(state, settings) {
   const data = state?.collections?.data;
   if (!Array.isArray(data)) return [];
   const maxName = Number(settings?.maxNameLength) || DEFAULT_MAX_NAME;
+  const names = collectionNames(state, settings);
 
   return data.map((row) => {
     const slug = typeof row?.slug === "string" ? row.slug : "";
@@ -1303,7 +1608,7 @@ function collectionRows(state, settings) {
 
     return {
       slug,
-      name: sanitize(slug, maxName) || "collection",
+      name: displayName(slug, names, maxName) || "collection",
       url: collectionUrl(slug),
       floor: floor === null ? null : formatMoney(floor, { symbol }),
       error: typeof row?.error === "string" ? sanitize(row.error, 80) : null,
@@ -1392,6 +1697,7 @@ function serializeSnapshot(state) {
       portfolio: s.portfolio,
       activity: s.activity,
       collections: s.collections,
+      balances: s.balances,
       updatedAt: s.updatedAt,
     },
     null,
@@ -1424,6 +1730,7 @@ function parseSnapshot(raw) {
     portfolio: entryOrNull(parsed.portfolio),
     activity: entryOrNull(parsed.activity),
     collections: entryOrNull(parsed.collections),
+    balances: entryOrNull(parsed.balances),
     updatedAt: Number.isFinite(parsed.updatedAt) ? parsed.updatedAt : 0,
   });
 }
@@ -1489,11 +1796,20 @@ function applyRead(state, key, response, nowMs) {
 
 // -------------------------------------------------------------------------------------------
 
+// What the bar shows. Sparse by default and widened by the person who wants more: a bar reading
+// `⚓ $125K ▲1% ◆3 ◷1h 36m ·5` is six things competing in a 26px strip, and five of them are
+// answers to questions nobody asked while looking at a clock. The value is the headline and the
+// countdown is the only item with a deadline attached; everything else is one press away in the
+// panel, and one press away from being on the bar permanently.
 const DEFAULT_SETTINGS = {
   port: DEFAULT_PORT,
   timeout: 6,
   timeframe: "DAY",
   showValue: true,
+  showChange: false,
+  showOffers: false,
+  showDeadline: true,
+  showActivity: false,
   maxNameLength: DEFAULT_MAX_NAME,
   deadlineWindowHours: 48,
   activityWindowHours: 24,
@@ -1502,6 +1818,20 @@ const DEFAULT_SETTINGS = {
 };
 
 const TIMEFRAMES = ["HOUR", "DAY", "WEEK", "MONTH"];
+
+/**
+ * The bar's optional items, in the order they are drawn and offered.
+ *
+ * One list, so the toggles in the panel and the things on the bar cannot drift apart — the same
+ * argument as `optionalSummary` being derived from the steps rather than written beside them.
+ */
+const BAR_ITEMS = [
+  { key: "showValue", label: "value" },
+  { key: "showChange", label: "change" },
+  { key: "showOffers", label: "offers" },
+  { key: "showDeadline", label: "closing" },
+  { key: "showActivity", label: "activity" },
+];
 
 /** Settings come from `shell.json`, which a person edits by hand. Every field is untrusted. */
 function mergeSettings(settings) {
@@ -1547,6 +1877,7 @@ if (typeof module !== "undefined") {
     compactDecimal,
     groupDigits,
     formatMoney,
+    padFraction,
     formatChange,
     relativeAge,
     countdown,
@@ -1571,6 +1902,10 @@ if (typeof module !== "undefined") {
     credentials,
     apiKeyRejected,
     setupSteps,
+    walletList,
+    collectionNames,
+    displayName,
+    BAR_ITEMS,
     optionalSummary,
     setupProgress,
     statusOf,
@@ -1578,6 +1913,12 @@ if (typeof module !== "undefined") {
     statusSummary,
     numberToDecimal,
     readPortfolio,
+    addDecimals,
+    sumDecimals,
+    balanceRows,
+    portfolioBreakdown,
+    provenance,
+    BREAKDOWNS,
     paymentAmount,
     eventList,
     isIncomingOffer,

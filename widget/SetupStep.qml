@@ -182,7 +182,11 @@ Item {
       text: root.label
       wrapMode: Text.WrapAtWordBoundaryOrAnywhere
       color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, root._labelAlpha)
-      font: labelMetrics.font
+      font.family: labelMetrics.font.family
+      font.pixelSize: labelMetrics.font.pixelSize
+      // The step you are on is the one thing to read here. `_labelAlpha` already separates it from
+      // the rest; weight is what makes that legible at a glance rather than on comparison.
+      font.bold: root.isCurrent
     }
 
     // The detail earns its line only on the step being worked on, and on the optional steps, where

@@ -80,9 +80,9 @@ describe("config: chains", () => {
   });
 
   test("a Solana-only config is valid", () => {
-    const config = validate({ chains: ["solana"], wallet: SOL_MINT, tokens: [SOL_PROGRAM] });
+    const config = validate({ chains: ["solana"], wallets: [SOL_MINT], tokens: [SOL_PROGRAM] });
     assert.deepEqual(config.chains, ["solana"]);
-    assert.equal(config.wallet, SOL_MINT);
+    assert.deepEqual(config.wallets, [SOL_MINT]);
   });
 
   test("the older single `chain` string still works, normalised to one element", () => {
@@ -116,14 +116,14 @@ describe("config: chains", () => {
 
 describe("config: addresses are checked against the configured chains", () => {
   test("an EVM wallet on an EVM chain is fine", () => {
-    assert.equal(validate({ chains: ["base"], wallet: EVM }).wallet, EVM);
+    assert.deepEqual(validate({ chains: ["base"], wallets: [EVM] }).wallets, [EVM]);
   });
 
   test("an EVM wallet on a Solana-only config is refused at load", () => {
     assert.throws(
-      () => validate({ chains: ["solana"], wallet: EVM }),
+      () => validate({ chains: ["solana"], wallets: [EVM] }),
       (err: Error) => {
-        assert.match(err.message, /`wallet`/);
+        assert.match(err.message, /`wallets\[0\]`/);
         assert.match(err.message, /base58/);
         assert.match(err.message, /solana/);
         return true;
@@ -133,9 +133,9 @@ describe("config: addresses are checked against the configured chains", () => {
 
   test("a Solana wallet on an EVM-only config is refused at load", () => {
     assert.throws(
-      () => validate({ chains: ["ethereum"], wallet: SOL_MINT }),
+      () => validate({ chains: ["ethereum"], wallets: [SOL_MINT] }),
       (err: Error) => {
-        assert.match(err.message, /`wallet`/);
+        assert.match(err.message, /`wallets\[0\]`/);
         assert.match(err.message, /40 hex/);
         return true;
       },
@@ -143,8 +143,13 @@ describe("config: addresses are checked against the configured chains", () => {
   });
 
   test("with both chains configured, either shape is accepted", () => {
-    assert.equal(validate({ chains: ["ethereum", "solana"], wallet: EVM }).wallet, EVM);
-    assert.equal(validate({ chains: ["ethereum", "solana"], wallet: SOL_MINT }).wallet, SOL_MINT);
+    assert.deepEqual(validate({ chains: ["ethereum", "solana"], wallets: [EVM] }).wallets, [EVM]);
+    assert.deepEqual(validate({ chains: ["ethereum", "solana"], wallets: [SOL_MINT] }).wallets, [SOL_MINT]);
+    // And both at once, which is the point of the plural: one config, two chains, two wallets.
+    assert.deepEqual(validate({ chains: ["ethereum", "solana"], wallets: [EVM, SOL_MINT] }).wallets, [
+      EVM,
+      SOL_MINT,
+    ]);
   });
 
   test("token addresses are checked the same way, and the message names the entry", () => {
@@ -152,6 +157,15 @@ describe("config: addresses are checked against the configured chains", () => {
   });
 
   test("an unset wallet is not a mismatch", () => {
-    assert.equal(validate({ chains: ["solana"] }).wallet, "");
+    assert.deepEqual(validate({ chains: ["solana"] }).wallets, []);
+  });
+
+  test("the singular `wallet` is still read, as a one-element list", () => {
+    // The older spelling has to keep working: this is a file people hand-edited before `wallets`
+    // existed, and a config that silently stops watching anything is worse than one that errors.
+    assert.deepEqual(validate({ chains: ["base"], wallet: EVM }).wallets, [EVM]);
+    // `wallets` present means `wallets` wins outright — appending the singular would quietly watch
+    // an address the user believed they had replaced.
+    assert.deepEqual(validate({ chains: ["base"], wallet: EVM, wallets: [] }).wallets, []);
   });
 });
