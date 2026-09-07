@@ -1,0 +1,150 @@
+/* Anchor — Battle for the Ford. UI chrome only; everything in the field is three.js. */
+:root {
+  --ink: #f2ece0;
+  --muted: #b3a894;
+  --panel: rgba(20, 17, 13, 0.72);
+  --line: rgba(224, 200, 158, 0.18);
+  --rome: #d8503a;
+  --gaul: #4d86c6;
+  --gold: #e0b566;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0; overflow: hidden; background: #0d0f0c; color: var(--ink);
+  font: 13px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased; user-select: none; cursor: default;
+}
+#stage { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+
+/* ── panels ─────────────────────────────────────────────────────────────── */
+#topbar, #help, #selection {
+  position: fixed; z-index: 3; background: var(--panel); border: 1px solid var(--line);
+  border-radius: 10px; backdrop-filter: blur(7px); -webkit-backdrop-filter: blur(7px);
+}
+
+#topbar {
+  top: 14px; left: 50%; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 14px; padding: 9px 16px;
+}
+.army { display: flex; align-items: center; gap: 10px; }
+.army-name {
+  font-size: 12px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase;
+}
+.army[data-side="0"] .army-name { color: var(--rome); }
+.army[data-side="1"] .army-name { color: var(--gaul); }
+.army-men {
+  font: 600 12px/1 ui-monospace, Menlo, Consolas, monospace;
+  color: var(--muted); min-width: 58px;
+}
+.army[data-side="1"] .army-men { text-align: right; }
+.bar {
+  width: 190px; height: 9px; border-radius: 5px; overflow: hidden;
+  background: rgba(255, 255, 255, 0.09);
+}
+.bar i { display: block; height: 100%; width: 100%; transition: width .25s linear; }
+#bar0 { background: linear-gradient(90deg, #a8341f, var(--rome)); }
+#bar1 { background: linear-gradient(90deg, var(--gaul), #2f5f96); float: right; }
+.clash { color: var(--muted); font-size: 11px; letter-spacing: .1em; }
+
+#help { top: 14px; right: 14px; padding: 11px 14px; max-width: 300px; cursor: pointer; }
+#help.collapsed ul, #help.collapsed .tip { display: none; }
+#help.collapsed b { margin-bottom: 0; }
+#help b { display: block; font-size: 11px; letter-spacing: .14em; text-transform: uppercase;
+          color: var(--gold); margin-bottom: 7px; }
+#help ul { margin: 0; padding: 0; list-style: none; }
+#help li { color: var(--muted); margin: 4px 0; }
+#help .tip { margin: 9px 0 0; padding-top: 9px; border-top: 1px solid var(--line);
+             color: var(--muted); font-size: 12px; }
+kbd {
+  font: 600 11px/1 ui-monospace, Menlo, Consolas, monospace; color: var(--ink);
+  background: rgba(255, 255, 255, 0.08); border: 1px solid var(--line);
+  border-radius: 4px; padding: 2px 5px;
+}
+
+#selection {
+  left: 14px; bottom: 14px; padding: 10px; display: flex; gap: 8px; flex-wrap: wrap;
+  max-width: min(760px, calc(100vw - 28px));
+}
+#selection:empty { display: none; }
+.card {
+  width: 146px; padding: 8px 10px; border-radius: 8px;
+  background: rgba(255, 255, 255, 0.045); border: 1px solid var(--line);
+}
+.card.routing { border-color: rgba(216, 80, 58, .7); background: rgba(216, 80, 58, .13); }
+.card h4 { margin: 0 0 5px; font-size: 12.5px; font-weight: 650; letter-spacing: -.01em; }
+.card .row { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted);
+             font-family: ui-monospace, Menlo, monospace; }
+.card .meter { height: 5px; border-radius: 3px; background: rgba(255, 255, 255, .1);
+               margin: 5px 0 3px; overflow: hidden; }
+.card .meter i { display: block; height: 100%; }
+.card .state { font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--gold); }
+.card.routing .state { color: #ff8a72; }
+
+/* ── field markers (unit strength pips above each formation) ─────────────── */
+#markers { position: fixed; inset: 0; z-index: 2; pointer-events: none; }
+.marker { position: absolute; transform: translate(-50%, -100%); text-align: center; }
+.marker .m-bar {
+  width: 44px; height: 4px; border-radius: 2px; background: rgba(0, 0, 0, .55);
+  outline: 1px solid rgba(0, 0, 0, .5); overflow: hidden;
+}
+.marker .m-bar i { display: block; height: 100%; }
+.marker .m-tag {
+  margin-top: 2px; font: 700 9.5px/1 ui-monospace, Menlo, monospace;
+  letter-spacing: .12em; color: #ff9c86; text-shadow: 0 1px 2px #000;
+}
+.marker.sel .m-bar { outline-color: var(--gold); box-shadow: 0 0 0 1px var(--gold); }
+
+/* ── selection marquee ──────────────────────────────────────────────────── */
+#marquee {
+  position: fixed; z-index: 4; pointer-events: none;
+  border: 1px solid var(--gold); background: rgba(224, 181, 102, 0.13);
+}
+
+/* ── result ─────────────────────────────────────────────────────────────── */
+#result {
+  position: fixed; z-index: 6; inset: 0; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 6px; text-align: center;
+  background: radial-gradient(ellipse at center, rgba(10, 8, 6, .55), rgba(10, 8, 6, .9));
+}
+#result[hidden] { display: none; }
+#result h1 { margin: 0; font-size: 58px; letter-spacing: .1em; text-transform: uppercase;
+             font-weight: 800; text-shadow: 0 3px 24px rgba(0, 0, 0, .8); }
+#result.win h1 { color: var(--gold); }
+#result.lose h1 { color: #d8503a; }
+#result p { margin: 0 0 20px; color: var(--muted); max-width: 46ch; }
+#restart {
+  font: 600 14px/1 inherit; color: #17130d; background: var(--gold);
+  border: 0; border-radius: 8px; padding: 12px 26px; cursor: pointer;
+}
+#restart:hover { background: #f0c87c; }
+
+#toast {
+  position: fixed; z-index: 5; left: 50%; bottom: 82px; transform: translateX(-50%);
+  padding: 9px 18px; border-radius: 999px; background: var(--panel);
+  border: 1px solid var(--line); color: var(--gold); letter-spacing: .04em;
+  transition: opacity .4s ease; pointer-events: none;
+}
+#toast[hidden] { display: none; }
+
+#boot, #boot.fatal {
+  position: fixed; z-index: 9; inset: 0; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 6px;
+  background: #0d0f0c; color: var(--muted); text-align: center; padding: 24px;
+}
+#boot p { margin: 0; }
+#boot .boot-sub { font-size: 11.5px; opacity: .6; }
+#boot.fatal { color: #ff8a72; font-family: ui-monospace, Menlo, monospace; }
+#boot[hidden] { display: none; }
+
+#home {
+  position: fixed; z-index: 3; left: 14px; top: 14px; color: var(--muted);
+  text-decoration: none; font-size: 12px;
+}
+#home:hover { color: var(--gold); }
+
+@media (max-width: 720px) {
+  #help { display: none; }
+  #topbar { gap: 8px; padding: 7px 10px; }
+  .bar { width: 96px; }
+}

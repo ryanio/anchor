@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Anchor — Battle for the Ford</title>
+<meta name="description" content="A small Total War: Rome-inspired real-time battle, played in formations. Flank or be flanked.">
+<link rel="stylesheet" href="./style.css">
+</head>
+<body>
+<canvas id="stage"></canvas>
+
+<div id="marquee" hidden></div>
+<div id="markers"></div>
+
+<header id="topbar">
+  <div class="army" data-side="0">
+    <span class="army-name">Rome</span>
+    <div class="bar"><i id="bar0"></i></div>
+    <span class="army-men" id="men0">—</span>
+  </div>
+  <div class="clash">vs</div>
+  <div class="army" data-side="1">
+    <span class="army-men" id="men1">—</span>
+    <div class="bar"><i id="bar1"></i></div>
+    <span class="army-name">Gauls</span>
+  </div>
+</header>
+
+<aside id="help">
+  <b>Orders</b>
+  <ul>
+    <li><kbd>Left-click</kbd> select · <kbd>drag</kbd> box-select · <kbd>Shift</kbd> add</li>
+    <li><kbd>Right-click</kbd> move · <kbd>right-drag</kbd> to set the facing of the line</li>
+    <li><kbd>WASD</kbd> / screen edge pan · <kbd>Q</kbd><kbd>E</kbd> rotate · <kbd>wheel</kbd> zoom</li>
+    <li><kbd>Space</kbd> pause · <kbd>Tab</kbd> select all</li>
+  </ul>
+  <p class="tip">Hit a formation in the flank or the rear and it will break long before it dies. That is the whole game.</p>
+</aside>
+
+<section id="selection"></section>
+
+<div id="result" hidden>
+  <h1 id="result-title"></h1>
+  <p id="result-sub"></p>
+  <button id="restart" type="button">Fight again</button>
+</div>
+
+<div id="toast" hidden></div>
+
+<div id="boot">
+  <p>Mustering the legion…</p>
+  <p class="boot-sub">loading three.js from cdnjs</p>
+</div>
+
+<a id="home" href="/">&larr; anchor.ryanio.com</a>
+
+<script>
+  // Registered before anything else loads, so a broken script or a CDN that will not answer shows up
+  // on the page rather than only in a console nobody has open.
+  (function () {
+    var say = function (msg) {
+      var boot = document.getElementById("boot");
+      if (!boot) return;
+      boot.hidden = false;
+      boot.className = "fatal";
+      boot.textContent = "The battle would not start: " + msg;
+    };
+    addEventListener("error", function (e) { say(e.message || "script error"); }, true);
+    addEventListener("unhandledrejection", function (e) { say(String(e.reason)); });
+  })();
+</script>
+
+<!--
+  Loaded as classic scripts on purpose. Chrome refuses to fetch ES modules over file://
+  (opaque origin, CORS), and this page has to work when it is double-clicked as well as when it is
+  served. Classic scripts have no such restriction, so each file hangs its exports off `Anchor` and
+  the one inline module below — inline, so nothing is fetched from disk — pulls three.js off the CDN,
+  publishes it as a global and starts the battle.
+-->
+<script src="./js/rng.js"></script>
+<script src="./js/geometry.js"></script>
+<script src="./js/terrain.js"></script>
+<script src="./js/units.js"></script>
+<script src="./js/combat.js"></script>
+<script src="./js/ai.js"></script>
+<script src="./js/controls.js"></script>
+<script src="./js/hud.js"></script>
+<script src="./js/game.js"></script>
+
+<script type="importmap">
+{ "imports": { "three": "https://cdnjs.cloudflare.com/ajax/libs/three.js/0.169.0/three.module.min.js" } }
+</script>
+<script type="module">
+  import * as THREE from "three";
+  window.THREE = THREE;
+  window.Anchor.boot();
+</script>
+</body>
+</html>

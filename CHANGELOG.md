@@ -10,6 +10,13 @@ has the facts.
 ## [Unreleased]
 
 ### Added
+- **Battle for the Ford** — a small Rome: Total War-inspired real-time battle at
+  [anchor.ryanio.com/game/](https://anchor.ryanio.com/game/). Two armies of formations (~40 men each,
+  drawn with `InstancedMesh`), box-select and right-click orders, continuous melee whose damage and
+  morale pressure both scale with flanking angle, units that rout and flee, and a restart button.
+  Self-contained static files under `site/game/`; three.js comes from a CDN via an import map, so the
+  repository still has no npm dependency and the site generator stays dependency-free.
+- `site/build.ts` copies `site/game/` into the published site, and the nav links to it.
 - Local read-only data service: cache-first OpenSea API v2 client, SQLite response cache with explicit
   freshness, keyring-backed credentials, loopback-only HTTP API.
 - Autonomy and spend-control model — bounded authority, value tiers from $100 to $100k+, vendor versus

@@ -209,6 +209,7 @@ function page(title: string, body: string, opts: { subtitle?: string } = {}): st
     <nav>
       <a href="/">Diary</a>
       <a href="/changelog.html">Changelog</a>
+      <a href="/game/">Battle</a>
       <a href="https://github.com/ryanio/anchor">Source</a>
     </nav>
   </header>
@@ -227,8 +228,9 @@ function page(title: string, body: string, opts: { subtitle?: string } = {}): st
 rmSync(OUT, { recursive: true, force: true });
 mkdirSync(join(OUT, "diary"), { recursive: true });
 
-// Static assets ship as-is.
-for (const dir of ["brand"]) {
+// Static assets ship as-is — including the battle game under game/, which is hand-written
+// files with no build step of its own.
+for (const dir of ["brand", "game"]) {
   if (existsSync(join(ROOT, dir))) cpSync(join(ROOT, dir), join(OUT, dir), { recursive: true });
 }
 
