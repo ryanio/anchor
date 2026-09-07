@@ -42,3 +42,6 @@ site/dist/
 
 # Agent worktrees live here; they are checkouts, never content.
 .claude/worktrees/
+
+# Screenshot review output — regenerate with `node scripts/review.ts`
+review/
