@@ -23,10 +23,10 @@ Item {
    * Stroke weight in the artwork's own 64-unit grid.
    *
    * The brand's solid variant is 6, and the default here is much lighter, because fitting to the
-   * artwork bounds enlarges the stroke along with everything else. Rendered at 15–20px and
-   * compared side by side, 4.5 and above close the ring into a dot and the mark stops reading as
-   * an anchor; 3.5 keeps it open at every size a bar uses. Callers drawing the mark large — the
-   * panel hero — pass the brand's own weight instead.
+   * artwork bounds enlarges the stroke along with everything else. Compared side by side, 4.5 and
+   * above close the ring into a dot and the mark stops reading as an anchor; 3.5 keeps it open at
+   * every size a bar uses, which is 12px on this one. Callers drawing the mark large — the panel
+   * hero — pass the brand's own weight instead.
    */
   property real strokeUnits: 3.5
 

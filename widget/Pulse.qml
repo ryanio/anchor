@@ -316,10 +316,27 @@ Panel {
 
       AnchorMark {
         anchors.verticalCenter: parent.verticalCenter
-        // A shade larger than the standard icon canvas, which this widget can afford because it
-        // sets its own width rather than sitting in a fixed icon slot. Judged against the tray and
-        // network glyphs beside it: smaller and the ring closes, larger and it towers over them.
-        iconSize: Math.round(Style.bar.iconCanvas * 1.14)
+        // `iconSize` is the mark's DRAWN height, not a canvas it sits inside: AnchorMark fits the
+        // artwork's height to this number, and the artwork is taller than it is wide (32×45 on its
+        // own grid), so height is always the binding dimension and there is no padding to absorb.
+        //
+        // Every neighbour is a Nerd Font glyph in a `Style.bar.iconCanvas` slot, and a glyph draws
+        // to roughly its cap height inside that slot. Measured off the running bar, tray, monitor,
+        // grid, bluetooth and network draw 9–11px inside a 16px canvas. The mark was asking for
+        // `iconCanvas * 1.14` and drew 20px — nearly double, which is what read as "too tall".
+        //
+        // So the canvas is scaled by the fraction a glyph actually fills. The anchor takes the top
+        // of the neighbours' range rather than the mean, because it is a narrow glyph among square
+        // ones: at equal height it covers much less area, and matching the mean makes it read small.
+        //
+        // The result measures 12px against neighbours drawing 9–11, with top edges aligned. The
+        // extra pixel is deliberate and stays: the mark is 8px wide where they are 9–12, and a
+        // narrow glyph at equal height reads smaller than a square one.
+        //
+        // Raising `strokeUnits` to compensate for the smaller size was tried and reverted — it
+        // moved two pixels on screen, and the apparent thinness was the deliberate dim of the
+        // "service not running" state rather than the stroke.
+        iconSize: Math.round(Style.bar.iconCanvas * 0.72)
         color: root.foreground
         // Dimmed whenever the numbers beside it cannot be fully trusted — starting up, offline,
         // stale, or not yet configured. This is the widget's whole first impression on a fresh
