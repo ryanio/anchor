@@ -11,7 +11,8 @@ pkgdesc="Ambient OpenSea experience for Omarchy — a wallet-aware desktop"
 arch=('x86_64')
 url="https://github.com/ryanio/anchor"
 license=('MIT')
-depends=()
+# node:sqlite unflagged and native TypeScript execution both require Node 24+.
+depends=('nodejs>=24')
 makedepends=('git')
 source=("git+https://github.com/ryanio/anchor.git#tag=v$pkgver")
 sha256sums=('SKIP')
