@@ -5,7 +5,7 @@
  *   anchor-service                 start the local API
  *   anchor-service --set-api-key   store the OpenSea API key in the OS keyring
  */
-import { createInterface } from "node:readline/promises";
+import { readSecret } from "../../scripts/read-secret.ts";
 import { Cache } from "./cache.ts";
 import { configPath, loadConfig } from "./config.ts";
 import { getApiKey, keyringAvailable, setApiKey } from "./keyring.ts";
@@ -17,18 +17,7 @@ async function promptForApiKey(): Promise<void> {
     console.error("secret-tool not found. Install libsecret and try again.");
     process.exit(1);
   }
-  // Do not echo: setApiKey goes to lengths to keep the key out of argv, and echoing it into
-  // scrollback (and any terminal recording) would undo that.
-  const rl = createInterface({ input: process.stdin, output: process.stderr, terminal: true });
-  const onKeypress = () => {
-    /* suppressed while typing the secret */
-  };
-  const prompt = "OpenSea API key: ";
-  process.stderr.write(prompt);
-  (rl as unknown as { _writeToOutput: (s: string) => void })._writeToOutput = onKeypress;
-  const key = (await rl.question("")).trim();
-  rl.close();
-  process.stderr.write("\n");
+  const key = await readSecret("OpenSea API key: ");
   if (!key) {
     console.error("Nothing entered; no change made.");
     process.exit(1);

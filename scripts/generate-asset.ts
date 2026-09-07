@@ -16,8 +16,8 @@
 import { execFile } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { createInterface } from "node:readline/promises";
 import { promisify } from "node:util";
+import { readSecret } from "./read-secret.ts";
 
 const run = promisify(execFile);
 const ATTRS = ["service", "anchor", "key", "xai-api-key"] as const;
@@ -35,12 +35,7 @@ async function getKey(): Promise<string | null> {
 }
 
 async function setKey(): Promise<void> {
-  const rl = createInterface({ input: process.stdin, output: process.stderr });
-  process.stderr.write("xAI API key: ");
-  (rl as unknown as { _writeToOutput: (s: string) => void })._writeToOutput = () => {};
-  const key = (await rl.question("")).trim();
-  rl.close();
-  process.stderr.write("\n");
+  const key = await readSecret("xAI API key: ");
   if (!key) {
     console.error("Nothing entered.");
     process.exit(1);
