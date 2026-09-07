@@ -151,6 +151,35 @@ any size, and costs a few hundred bytes. `site/brand/` is hand-drawn and stays t
 If you delegate visual work, put the command and the re-encode step in the child's `context` — a
 subagent sees nothing of your conversation and will not know the capability exists.
 
+## Use OpenSea's own tooling
+
+**Prefer official packages and sources over anything hand-rolled.** The platform changes; official
+tooling changes with it, and hand-written copies quietly rot.
+
+| Need | Use |
+|---|---|
+| API calls | `@opensea/sdk` |
+| Response types | `@opensea/api-types` — generated from the OpenAPI spec, zero dependencies |
+| Wallet integration | `@opensea/wallet-adapters` |
+| Agent flows, including swaps | [`ProjectOpenSea/opensea-skill`](https://github.com/ProjectOpenSea/opensea-skill) |
+| One-off queries and exploration | `@opensea/cli` |
+| Endpoint truth | `docs.opensea.io`, and `docs.opensea.io/llms.txt` for the machine-readable index |
+
+**Never write an endpoint path from memory or by pattern-matching other routes.** Two were wrong in
+this repo within a single afternoon: balances are `/account/{address}/tokens`, not
+`/token_balances_by_account`, and a token is `/chain/{chain}/token/{address}`, not `/tokens/{address}`.
+Both looked plausible. Generated types turn that class of mistake into a compile error.
+
+This is also why `unknown` is not an acceptable response type here. If the SDK or `api-types` can
+describe a shape, use it.
+
+**When official tooling is missing something, say so rather than working around it silently.** Ryan
+works on these packages: a gap is worth reporting to him, because a fix upstream helps everyone and a
+local workaround helps once and then drifts. Note the gap in the PR body, and prefer a small
+documented fallback over a parallel implementation.
+
+Pin versions. Update deliberately, not incidentally.
+
 ## Formatting and linting
 
 **Biome, always. Never ESLint or Prettier.** One tool, one config, one pass — it formats and lints
