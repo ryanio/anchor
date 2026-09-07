@@ -8,27 +8,21 @@ Day one was meant to be plumbing: an agent on this machine, reachable from my ph
 
 ## Bugs that present as something else
 
-I gave the agent a mission, then asked it over iMessage what its mission was. It described the old one in detail.
+I gave the agent a mission, then asked it over iMessage what its mission was. It described the old one in detail. The file had loaded — a fresh session read it perfectly — but the gateway caches the agent, system prompt included, **per session**, and this conversation had run `cat SOUL.md` earlier in the thread, so it was quoting its own history. The fix is one word: `/new`. Rephrasing the question, which is the obvious human move, does nothing.
 
-The file had loaded — a fresh session read it perfectly. But the gateway caches the agent, system prompt included, **per session**. A conversation started before the edit serves the stale prompt forever, and this one had run `cat SOUL.md` earlier in the thread, so it was quoting its own history. The fix is one word: `/new`. Rephrasing the question, which is the obvious human move, does nothing.
+Two more in the same family: `pkill -f "gateway run"` killed my own shell, twice, because the shell's command line contains the pattern it is searching for; and a backgrounded command that prints an OAuth URL wrote nothing to its log, because Python block-buffers when stdout is not a terminal. Meanwhile an agent told to verify every claim by running code found `new URL(req.url, base)` sitting *outside* an async handler's `try` — a malformed request line became an unhandled rejection, and Node's default terminates the process. Twenty-two bytes from any local process and the data service is gone.
 
-Two more in the same family. `pkill -f "gateway run"` killed my own shell, twice, because the shell's command line contains the pattern it is searching for. And a backgrounded command that prints an OAuth URL wrote nothing at all to its log, because Python block-buffers when stdout is not a terminal.
-
-> None of these were hard. All three cost real time because each one presents as something else.
-
-An agent pointed at the repo with instructions to verify every claim by running code, not reading it, found twenty defects. The best was `new URL(req.url, base)` sitting *outside* an async handler's `try`: a malformed request line became an unhandled rejection, and Node's default terminates the process. Twenty-two bytes from any local process and the data service is gone. It had survived since the first commit because the bug is not in what the line does — it is in where the line is.
+> None of these were hard. All of them cost real time because each presents as something else.
 
 ## Every path in the docs was wrong
 
-The service had a hand-rolled OpenSea client. Zero dependencies, which felt like a virtue, and every response typed `unknown`, which was not. Replacing it with `@opensea/sdk` was supposed to be an argument about types. It turned into an argument about facts.
-
-Our own `docs/tokens.md` listed the token API in a confident table: `token_balances_by_account`, `token_price_history`, `swap_quote`. Nine rows. Not one of them is an endpoint. The table had been written from memory, read as authoritative, and nothing would have caught it until a widget rendered a 404.
+The service had a hand-rolled OpenSea client. Zero dependencies, which felt like a virtue, and every response typed `unknown`, which was not. Replacing it with `@opensea/sdk` was supposed to be an argument about types and turned into an argument about facts: our own `docs/tokens.md` listed the token API in a confident table of nine rows, and not one of them was an endpoint. Written from memory, read as authoritative, and nothing would have caught it until a widget rendered a 404.
 
 > A hand-written copy of someone else's evolving API is not thrift. It is a slow bug that documents itself confidently.
 
-The old client had a `segment()` helper that percent-encoded path parameters, and a test asserting a hostile slug stays one segment. I kept the test, aimed it at the SDK, and it failed — `getCollectionStatsPath(slug)` is a bare template literal. Adopting an official package does not retire your tests. It re-aims them.
+The old client had a `segment()` helper that percent-encoded path parameters, and a test asserting a hostile slug stays one segment. I kept the test, aimed it at the SDK, and it failed. Adopting an official package does not retire your tests; it re-aims them.
 
-I reported that upstream. OpenSea fixed it, and then told me my proposed fix was insufficient: `encodeURIComponent` leaves `.` and `..` completely untouched, and percent-encoding them does not help either, because the URL parser strips escapes *before* it removes dot segments. There is no spelling of a bare dot segment that survives. They have to be refused, not encoded. Our copy had the same hole.
+I reported it upstream. OpenSea fixed it, then told me my proposed fix was insufficient: `encodeURIComponent` leaves `.` and `..` untouched, and percent-encoding them does not help either, because the URL parser strips escapes *before* removing dot segments. They have to be refused, not encoded. Our copy had the same hole.
 
 ## The control that never ran
 
@@ -69,6 +63,20 @@ Both holes were the same mistake: a program on a list, and nobody reading what i
 ## The smaller version, same day
 
 The lint gate is `npx biome ci .`, and the repo root's `node_modules` had never been installed — so `npx` quietly fetched an unrelated package called `biome`, version 0.3.3 rather than `@biomejs/biome` 2.5.12, and ran that. Every local "lint passed" for a day was a different program reporting success. CI kept rejecting code I had already cleared, and I kept assuming CI was stricter.
+
+## The step that should not have existed
+
+The desktop widget landed the same day, and the best fix in it was a deletion.
+
+The complaint was that setup had too many steps in a row. The instinct is to make the list easier to read. The actual fix was that one step should never have been there: it asked for a wallet token, and it existed only because of the credential mistake above. Delete the premise, delete the step. Three steps instead of four, and one of them leaves the list as soon as it's done.
+
+Two more things that were not what they looked like. The icon read as too tall next to its neighbours — measured rather than judged, the mark's artwork is 32×45, so its *drawn* height always binds, while the neighbouring icons are font glyphs filling about 70% of the same canvas. 20px became 12px and the top edges lined up. Thickening the stroke to compensate moved two pixels and was reverted; the apparent thinness was the deliberate dim state doing its job.
+
+And a test file contained a literal NUL byte, so `file` called it `data` and `grep` skipped it in silence. Searches came back empty and empty looked like an answer.
+
+> A tool that declines to read a file and a tool that finds nothing in it produce the same output.
+
+Which is the day's theme again, in the smallest possible form.
 
 ## What I actually changed
 

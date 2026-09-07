@@ -1,0 +1,105 @@
+{
+  "schemaVersion": 1,
+  "id": "anchor.pulse",
+  "name": "Anchor",
+  "version": "0.0.1",
+  "author": "Ryan Ghods",
+  "license": "MIT",
+  "description": "Portfolio pulse, incoming offers and closing deadlines from Anchor's local read-only data service",
+  "kinds": ["bar-widget"],
+  "entryPoints": {
+    "barWidget": "Pulse.qml"
+  },
+  "barWidget": {
+    "displayName": "Anchor",
+    "description": "Portfolio value, incoming offers, closing deadlines and recent activity, read from Anchor's local data service on loopback. Read-only: it never signs, writes or holds a key.",
+    "category": "Status",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "port": 8787,
+      "timeframe": "DAY",
+      "showValue": true,
+      "deadlineWindowHours": 48,
+      "urgentHours": 6,
+      "activityWindowHours": 24,
+      "staleAfter": 900,
+      "maxNameLength": 28,
+      "timeout": 6
+    },
+    "schema": [
+      {
+        "key": "port",
+        "type": "number",
+        "label": "Service port",
+        "description": "Loopback port Anchor's data service listens on. Must match `port` in ~/.config/anchor/config.json."
+      },
+      {
+        "key": "timeframe",
+        "type": "select",
+        "label": "Change over",
+        "description": "Window the percentage change is measured across.",
+        "options": [
+          {
+            "value": "HOUR",
+            "label": "Hour"
+          },
+          {
+            "value": "DAY",
+            "label": "Day"
+          },
+          {
+            "value": "WEEK",
+            "label": "Week"
+          },
+          {
+            "value": "MONTH",
+            "label": "Month"
+          }
+        ]
+      },
+      {
+        "key": "showValue",
+        "type": "boolean",
+        "label": "Show portfolio value",
+        "description": "Turn off to keep the number off the bar while screen sharing. Offers and deadlines still show, and the value stays available in the panel."
+      },
+      {
+        "key": "deadlineWindowHours",
+        "type": "number",
+        "label": "Deadline window (hours)",
+        "description": "Only count down offers closing within this many hours. Further out is not news."
+      },
+      {
+        "key": "urgentHours",
+        "type": "number",
+        "label": "Urgent within (hours)",
+        "description": "A countdown inside this window is drawn in the theme's attention colour."
+      },
+      {
+        "key": "maxNameLength",
+        "type": "number",
+        "label": "Name length",
+        "description": "Characters of a collection or item name to show before truncating."
+      },
+      {
+        "key": "activityWindowHours",
+        "type": "number",
+        "label": "Activity window (hours)",
+        "description": "How far back the activity count on the bar looks."
+      },
+      {
+        "key": "staleAfter",
+        "type": "number",
+        "label": "Call it stale after (seconds)",
+        "description": "A reading older than this is shown as stale even if the service has not said so."
+      },
+      {
+        "key": "timeout",
+        "type": "number",
+        "label": "Read timeout (seconds)",
+        "description": "How long a read waits for the local service before it counts as a failure."
+      }
+    ]
+  }
+}

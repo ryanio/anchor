@@ -196,26 +196,11 @@ footer {
 }
 .foot-mark .mark { color: var(--accent); }
 
-/* One thing to click, given real contrast so the eye lands somewhere. */
-.foot-cta {
-  display: inline-flex; align-items: center; gap: 8px;
-  padding: 8px 14px; border-radius: 999px;
-  background: rgb(var(--accent-rgb) / .11);
-  border: 1px solid rgb(var(--accent-rgb) / .28);
-  color: var(--accent); text-decoration: none;
-  font-size: 13.5px; font-weight: 550;
-  transition: background .16s var(--ease), border-color .16s var(--ease);
-}
-.foot-cta:hover { background: rgb(var(--accent-rgb) / .18); border-color: rgb(var(--accent-rgb) / .5); }
-
 /*
- * Flex centres on the line box, but text reads as centred on its cap height, which sits higher, so
- * a line-box-aligned icon looks low. A one-pixel lift fixes what the geometry cannot.
- *
- * The earlier filled GitHub mark also needed shrinking to match the strokes around it; the stroke
- * octocat needs no such hack, which is the better sign that it belongs.
+ * The one thing to click is `.btn.btn--strong` from theme/components.css — the fill, the border, the
+ * hover and the icon's one-pixel optical lift all live there now, because they were never specific
+ * to this footer. Only the trailing arrow's fade is.
  */
-.foot-cta .icon { transform: translateY(-1px); }
 .foot-cta .icon:last-child { opacity: .6; }
 
 .foot-links { display: grid; grid-template-columns: repeat(2, max-content); gap: var(--space-6); justify-content: end; }

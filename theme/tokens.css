@@ -81,6 +81,25 @@
   --caustic-1: rgb(var(--accent-rgb) / .10);
   --caustic-2: rgb(var(--ember-rgb) / .05);
 
+  /* ── component surfaces — consumed by components.css ────────────────── */
+
+  /*
+   * An inset well: hint blocks, progress tracks, code. One step *away* from the reader rather than
+   * toward them, which is what distinguishes "supporting detail" from "another card".
+   */
+  --surface-sunken: var(--foam-100);
+
+  /*
+   * The one thing on a view asking for a decision. Opaque rather than a translucent ember tint,
+   * because check-contrast.ts can only measure a real colour — a tint over an unknown backdrop is
+   * exactly the kind of "looked fine to whoever chose it" that the gate exists to catch.
+   *
+   * `--attention-fg` is `--ember`, so this stays one accent rather than a second palette.
+   */
+  --attention-bg:     #f8ecea;
+  --attention-fg:     var(--ember);
+  --attention-border: #eac7c0;
+
   color-scheme: light;
 }
 
@@ -107,6 +126,12 @@
 
     --caustic-1: rgb(var(--accent-rgb) / .11);
     --caustic-2: rgb(var(--ember-rgb) / .06);
+
+    /* Sunken goes *down* here, not up: on a dark ground the inset well is darker than the card. */
+    --surface-sunken: #071820;
+
+    --attention-bg:     #27292d;
+    --attention-border: #583f3b;
 
     color-scheme: dark;
   }
