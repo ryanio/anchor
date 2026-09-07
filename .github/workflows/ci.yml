@@ -9,6 +9,16 @@ permissions:
   contents: read
 
 jobs:
+  versions:
+    name: node version consistency
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.node-version'
+      - run: node scripts/check-versions.ts
+
   service:
     name: service — typecheck & test
     runs-on: ubuntu-latest
@@ -19,9 +29,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          # Native TypeScript execution and node:sqlite. Both are why this
-          # project has no build step and no native dependencies.
-          node-version: '24'
+          # .node-version is the single source of truth — mise reads it locally too.
+          node-version-file: '.node-version'
           cache: npm
           cache-dependency-path: service/package-lock.json
       - run: npm ci
@@ -53,7 +62,5 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '24'
-      # Without this, a PR touching site/ merged green and deploy.yml failed after the fact —
-      # the site would silently stop updating with no signal on the PR.
+          node-version-file: '.node-version'
       - run: node site/build.ts
