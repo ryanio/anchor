@@ -42,7 +42,8 @@ has the facts.
   reaching it but not a browser: a page whose DNS rebinds to `127.0.0.1` was same-origin and could
   read the wallet inventory.
 - `cloudflare/wrangler-action` is pinned to a commit rather than the mutable `v3` tag, since it
-  receives the deploy token.
+  receives the deploy token. (The first attempt at this silently did nothing — the patch pattern
+  did not match and no one checked. The claim was in this file before the change was in the repo.)
 
 ### Fixed
 - A malformed request URL crashed the whole service. `new URL()` sat outside the handler's `try`, so
