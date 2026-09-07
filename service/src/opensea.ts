@@ -278,15 +278,18 @@ export interface ClientOptions {
 }
 
 /**
- * Endpoints measured to return 401 with a valid API key but no wallet JWT. Refusing these up front
- * turns "everything is 401" into one message naming the credential that is missing.
+ * Whether a call needs the API key only, or is account-scoped.
  *
- * This is the *measured* list, not a guess: `/account/{address}/portfolio`,
- * `/account/{address}/tokens`, `/chain/{chain}/account/{address}/nfts` and `/tokens/trending` were
- * checked against the live API. Other account-scoped reads may well behave the same way; they get
- * the hint on failure rather than a pre-flight refusal, because we did not verify them.
+ * There used to be a third, narrower scope for reads believed to require a wallet JWT as a second
+ * credential, and those reads were refused up front when no PAT was stored. That belief was wrong —
+ * it came from measurements taken with a credential that was actually a shell command, against a
+ * control endpoint that turns out to be public. Re-measured with a real API key, every one of them
+ * returns 200. See the header of auth.ts.
+ *
+ * The distinction that remains is only about error messages: an account-scoped call needs a wallet
+ * address configured, and saying so beats a bare upstream error.
  */
-type WalletScoped = "portfolio" | "balances" | "nfts" | "trending";
+type Scope = "account" | "public";
 
 export class OpenSeaClient {
   #chains: readonly ChainIdentifier[];
@@ -318,14 +321,14 @@ export class OpenSeaClient {
    * The SDK fixes both credentials at construction, so a refreshed wallet JWT means a new instance.
    * That happens about twice a day; the constructor only allocates.
    */
-  async #resolveApi(scope: WalletScoped | "account" | "public", what: string): Promise<ReadOnlyOpenSeaAPI> {
+  async #resolveApi(scope: Scope, what: string): Promise<ReadOnlyOpenSeaAPI> {
     const apiKey = await this.#getApiKey();
     if (!apiKey) throw new MissingApiKeyError();
 
     let authToken: string | null = null;
     if (scope !== "public") {
+      // Sent when we have one, never required. No read this service makes needs it.
       authToken = await this.#walletToken.token();
-      if (authToken === null && scope !== "account") throw new MissingPatError(what);
     }
 
     if (this.#api === null || this.#apiFor?.apiKey !== apiKey || this.#apiFor.authToken !== authToken) {
@@ -347,7 +350,7 @@ export class OpenSeaClient {
    */
   async #call<T>(
     ttl: number,
-    scope: WalletScoped | "account" | "public",
+    scope: Scope,
     what: string,
     fn: (api: ReadOnlyOpenSeaAPI) => Promise<T>,
   ): Promise<CacheEntry<T>> {
@@ -358,14 +361,8 @@ export class OpenSeaClient {
       data = await callScope.run(store, () => fn(api));
     } catch (err) {
       if (err instanceof MissingPatError || err instanceof WalletTokenError) throw err;
-      if (scope !== "public" && !(await this.#walletToken.available())) {
-        // The unmeasured account-scoped reads land here. Say what is probably wrong without
-        // claiming to know: the failure is real, the diagnosis is a hint.
-        throw new Error(
-          `${(err as Error).message} — ${what} is account-scoped and no OpenSea PAT is stored, ` +
-            "which is the usual cause. Run: anchor-service --set-pat",
-        );
-      }
+      // Deliberately no "you are probably missing a PAT" hint here. That hint was wrong, and a
+      // confident wrong diagnosis attached to a real failure costs more than no diagnosis.
       throw err;
     }
     const meta = store.meta ?? { fetchedAt: Math.floor(Date.now() / 1000), ageSeconds: 0, stale: false };
@@ -386,7 +383,7 @@ export class OpenSeaClient {
     // The SDK's `getNFTsByAccount` has no `collection` filter, though the endpoint documents one,
     // so a collection-scoped request uses `getNFTsByCollection` — which is the same data, filtered
     // server-side by collection rather than by owner.
-    return this.#call(ttl, "nfts", "/portfolio", (api) =>
+    return this.#call(ttl, "account", "/portfolio", (api) =>
       opts.collection === undefined
         ? api.getNFTsByAccount(segment(address), opts.limit ?? 50, opts.next, chain)
         : api.getNFTsByCollection(segment(opts.collection), opts.limit ?? 50, opts.next),
@@ -444,7 +441,7 @@ export class OpenSeaClient {
 
   /** Net worth and P&L across every configured chain. GET /account/{address}/portfolio */
   portfolioStats(address: string, ttl: number, timeframe?: "HOUR" | "DAY" | "WEEK" | "MONTH") {
-    return this.#call(ttl, "portfolio", "/portfolio/value", (api) =>
+    return this.#call(ttl, "account", "/portfolio/value", (api) =>
       // `PortfolioArgs` omits `chains`, though the endpoint documents and accepts it. The SDK
       // forwards args verbatim to the query builder, so widening the object is enough.
       api.getPortfolioStats(segment(address), {
@@ -456,7 +453,7 @@ export class OpenSeaClient {
 
   /** Fungible balances across every configured chain. GET /account/{address}/tokens */
   tokenBalances(address: string, ttl: number, opts: { limit?: number; cursor?: string } = {}) {
-    return this.#call(ttl, "balances", "/balances", (api) =>
+    return this.#call(ttl, "account", "/balances", (api) =>
       api.getAccountTokens(segment(address), {
         chains: [...this.#chains],
         limit: opts.limit ?? 50,
@@ -467,7 +464,7 @@ export class OpenSeaClient {
 
   /** GET /tokens/trending */
   trendingTokens(ttl: number, limit = 20) {
-    return this.#call(ttl, "trending", "/tokens/trending", (api) =>
+    return this.#call(ttl, "account", "/tokens/trending", (api) =>
       // As with portfolio: `GetTokensArgs` omits the `chains` the endpoint documents.
       api.getTrendingTokens({ limit, ...({ chains: [...this.#chains] } as object) }),
     );

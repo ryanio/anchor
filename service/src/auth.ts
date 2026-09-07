@@ -1,33 +1,45 @@
 /**
- * OpenSea wallet-token auth.
+ * OpenSea wallet-token auth. **Not currently required by anything this service calls.**
  *
- * OpenSea auth is not one credential. Measured against the live API with a valid key:
+ * This module was written on a false premise, and the header is worth keeping accurate because the
+ * premise was load-bearing for a while.
+ *
+ * The original claim was that account-scoped reads need a wallet JWT in addition to the API key,
+ * "measured, not assumed". The measurement was taken with a credential that was not a credential —
+ * the keyring held a shell command, because an interactive prompt read its own command line off a
+ * non-TTY stdin — and the control endpoint used to prove the key was valid, `/collections/{slug}/stats`,
+ * turns out to be public and returns 200 with no key header at all.
+ *
+ * Re-measured with a real API key and no `Authorization` header:
  *
  *   200  /api/v2/collections/{slug}/stats
- *   401  /api/v2/chain/ethereum/account/{addr}/nfts
- *   401  /api/v2/account/{addr}/tokens
- *   401  /api/v2/account/{addr}/portfolio
- *   401  /api/v2/tokens/trending
+ *   200  /api/v2/chain/ethereum/account/{addr}/nfts
+ *   200  /api/v2/account/{addr}/tokens
+ *   200  /api/v2/tokens/trending
+ *   500  /api/v2/account/{addr}/portfolio   (server-side bug, unrelated to auth; see docs/upstream.md)
  *
- * So account-scoped reads need a wallet JWT (`Authorization: Bearer …`) *in addition to* the API
- * key. The JWT lasts about twelve hours and is minted from a scoped personal access token (PAT).
+ * So every route this service calls needs the API key and nothing else, and the OpenAPI spec —
+ * which declares only `ApiKeyAuth` for those operations — was right all along.
  *
- * Anchor deliberately implements only the last step of that chain. Creating a PAT needs a SIWE
- * signature, which is a one-time human action and sits badly with a read-only service that holds
- * no keys — so the user creates a PAT themselves, stores it with `anchor-service --set-pat`, and
- * this module exchanges it for a JWT and keeps the JWT fresh.
+ * ## Why this module still exists
+ *
+ * The spec declares `WalletAuth` on fifty paths that this service does not currently call:
+ * favourites, watchlists, profile, saved tools, order cancellation, drops. Anything that writes will
+ * need it too. So a wallet token is a real thing Anchor will need — it is simply not the second half
+ * of a credential pair required for ordinary reads.
+ *
+ * Nothing in `server.ts` should gate a route on this. If you find yourself adding a "needs a PAT"
+ * refusal to a read path, re-measure first.
  *
  * ## What is verified and what is not
  *
- * - The 401s above were **measured**.
+ * - The 200s above were **measured** with a real key.
  * - The exchange request and response shapes are taken from `@opensea/sdk`'s own
- *   `OpenSeaAuth.exchangeScopedToken` (`lib/auth/index.js`) — `POST /api/v2/auth/tokens/exchange`
+ *   `OpenSeaAuth.exchangeScopedToken` (`lib/auth/index.js:145`) — `POST /api/v2/auth/tokens/exchange`
  *   with `{subjectToken, subjectTokenType: "ACCESS_TOKEN"}`, answered with
- *   `{accessToken, expiresIn?, tokenScopes?}`. That is the SDK's code rather than prose docs, but
- *   **this path has never been run end to end here**, because we have no PAT to test with.
- * - The OpenAPI spec shipped with `@opensea/api-types` declares only `ApiKeyAuth` for every one of
- *   the endpoints that measurably 401, and does not describe `/auth/tokens/exchange` at all. The
- *   spec and the live API disagree; we follow the live API.
+ *   `{accessToken, expiresIn?, tokenScopes?}`. That is the SDK's code rather than prose docs, and
+ *   **this path has still never been run end to end**, because no route we call needs it.
+ * - `/auth/tokens/exchange` is absent from the OpenAPI spec entirely.
  *
  * Raw `fetch` here rather than the SDK: `OpenSeaAuth.getValidToken()` throws unless
  * `authenticate()` ran in the same process with a signer, so the SDK has no PAT-only path even
