@@ -1,0 +1,377 @@
+/*
+ * Anchor components — the layer above theme/tokens.css.
+ *
+ * Tokens say what the colours are. This says what the *things* are, so the site, the widget and the
+ * standalone pages in ~/Documents compose from one vocabulary instead of each inventing its own
+ * buttons and chips. See theme/README.md for what each one is for.
+ *
+ * Rules this file follows, and that anything extending it must follow too:
+ *
+ *   1. **Never a raw colour.** Every value here is a token from tokens.css. A component that needs
+ *      a colour the tokens do not have needs a *token*, added there and gated by
+ *      scripts/check-contrast.ts — not a hex escaping into a rule.
+ *   2. **One accent per view.** Exactly one variant of each component carries the attention colour
+ *      (`.pill--required`, `.btn--strong`, `.step.is-current`). Everything else distinguishes
+ *      itself by *weight* — border, fill, text strength — never by inventing a second hue. This is
+ *      what keeps the rule enforceable rather than aspirational: a screen full of shouting is not
+ *      expressible in this vocabulary.
+ *   3. **Motion is optional.** Every transition and animation is inside a
+ *      `prefers-reduced-motion: no-preference` guard, so the reduced-motion path is the *absence*
+ *      of a rule rather than an override that has to be remembered.
+ *
+ * Load order is tokens.css, then this file, then the page's own stylesheet.
+ */
+
+/* ═══ surfaces ═══════════════════════════════════════════════════════════
+ *
+ * `.surface` and `.glass` live in tokens.css because they are as primitive as a colour. These are
+ * the three things every consumer then built by hand on top of them.
+ */
+
+/* A surface with the padding it almost always wants. `.surface` alone is the unpadded escape hatch. */
+.card {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-5);
+}
+
+/*
+ * An inset well — one step away from the reader. Hints, commands, quoted output, progress tracks.
+ * Deliberately borderless: an inset that also has an edge reads as a card that failed to raise.
+ */
+.well {
+  background: var(--surface-sunken);
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4);
+}
+
+/* A surface that responds to the pointer. Composes onto `.card`, `.surface` or `.glass`. */
+.lift {
+  transition: none;
+}
+
+.lift:hover {
+  border-color: rgb(var(--accent-rgb) / .45);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .lift {
+    transition: transform .18s var(--ease), border-color .18s var(--ease);
+  }
+
+  .lift:hover {
+    transform: translateY(-2px);
+  }
+}
+
+/* ═══ pills ══════════════════════════════════════════════════════════════
+ *
+ * A small semantic label. The variant chooses *weight*, never hue — see rule 2 above.
+ *
+ * `required`   the one thing that must happen. The only pill that carries the accent.
+ * `recommended` worth doing, and the view is not blocked on it.
+ * `optional`   permission, not warning. Drawn quietly because it is how you *skip* something.
+ * `done`       a fact about the past. Quietest of all; it needs no decision.
+ */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  font: 500 12px/1.5 var(--font-sans);
+  letter-spacing: .01em;
+  white-space: nowrap;
+  color: var(--text-muted);
+  background: none;
+}
+
+.pill--required {
+  color: var(--attention-fg);
+  background: var(--attention-bg);
+  border-color: var(--attention-border);
+  font-weight: 600;
+}
+
+.pill--recommended {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
+.pill--optional {
+  color: var(--text-muted);
+  border-color: var(--border);
+}
+
+.pill--done {
+  color: var(--text-subtle);
+  border-color: transparent;
+}
+
+/* The tick is generated rather than typed, so no caller can forget it or use a different glyph. */
+.pill--done::before {
+  content: "✓";
+  font-size: .9em;
+}
+
+/*
+ * An interactive pill — `<button class="pill pill--optional">Skip</button>`.
+ *
+ * `optional` is the variant this exists for. A pill that only labels a step is a caption; a pill
+ * you can press is the affordance that lets someone leave the step behind, which is the whole
+ * reason the optional ones are not simply hidden.
+ */
+button.pill,
+a.pill {
+  cursor: pointer;
+  text-decoration: none;
+  font-family: inherit;
+  transition: none;
+}
+
+button.pill::after,
+a.pill::after {
+  content: "›";
+  opacity: .7;
+}
+
+button.pill:hover,
+a.pill:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  button.pill,
+  a.pill {
+    transition: color .15s var(--ease), border-color .15s var(--ease);
+  }
+}
+
+/* ═══ buttons ════════════════════════════════════════════════════════════
+ *
+ * Two weights, and only two. A third is how a design ends up with no hierarchy at all.
+ */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  background: none;
+  color: var(--text-muted);
+  font: 550 13.5px/1 var(--font-sans);
+  text-decoration: none;
+  cursor: pointer;
+  transition: none;
+}
+
+.btn:hover {
+  color: var(--text);
+  border-color: var(--text-subtle);
+}
+
+/* The one thing to click on a view. Accent-tinted, never a solid slab — a filled button at this
+   scale outweighs the content it sits under. */
+.btn--strong {
+  background: rgb(var(--accent-rgb) / .11);
+  border-color: rgb(var(--accent-rgb) / .28);
+  color: var(--accent);
+}
+
+.btn--strong:hover {
+  background: rgb(var(--accent-rgb) / .18);
+  border-color: rgb(var(--accent-rgb) / .5);
+  color: var(--accent);
+}
+
+.btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/*
+ * Flex centres on the line box, but text reads as centred on its cap height, which sits higher, so
+ * a line-box-aligned icon looks low. A one-pixel lift fixes what the geometry cannot.
+ */
+.btn .icon {
+  flex: 0 0 auto;
+  transform: translateY(-1px);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .btn {
+    transition: background .16s var(--ease), border-color .16s var(--ease), color .16s var(--ease);
+  }
+}
+
+/* ═══ list rows ══════════════════════════════════════════════════════════
+ *
+ * A name on the left, a value on the right, an optional second line under the name. The shape of
+ * almost every list in this project: floors, deadlines, diary entries, activity.
+ */
+.rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-4);
+  padding: var(--space-2) var(--space-3);
+  margin-inline: calc(var(--space-3) * -1);
+  border-radius: var(--radius-sm);
+  color: inherit;
+  text-decoration: none;
+}
+
+.row-label {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/*
+ * Every list in this project renders at least one string that came off a marketplace. Truncating
+ * is a layout choice on a diary title and a *defence* on a collection name, so it is the default
+ * here rather than something each caller opts into.
+ */
+.row-name,
+.row-sub {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row-sub {
+  color: var(--text-muted);
+  font-size: 13px;
+  margin-top: 2px;
+}
+
+.row-value {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Data we have but can no longer vouch for. Faded, never hidden: removing a stale row reads as
+   one the user deleted, and showing it undimmed is the lie this project exists to avoid. */
+.row--faded {
+  opacity: .55;
+}
+
+a.row:hover,
+.row--interactive:hover {
+  background: rgb(var(--accent-rgb) / .08);
+}
+
+a.row:hover .row-name {
+  color: var(--accent);
+}
+
+/* ═══ steps ══════════════════════════════════════════════════════════════
+ *
+ * A sequence with a position in it. Numbering is decoration on most lists; here it is true, so it
+ * is shown — and a completed step *leaves* the list, with `.progress` below keeping the record.
+ *
+ * States: `.is-done`, `.is-current`, `.is-upcoming`.
+ */
+.steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-4);
+}
+
+.step {
+  display: grid;
+  grid-template-columns: 22px 1fr;
+  gap: var(--space-3);
+  align-items: start;
+}
+
+/* The marker is the whole emphasis budget for this component. */
+.step-marker {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1px solid var(--border-strong);
+  color: var(--text-muted);
+  font: 600 11px/1 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.step.is-current .step-marker {
+  background: var(--attention-fg);
+  border-color: var(--attention-fg);
+  /* Knocked out of the filled disc, so the number stays legible whatever the ground is. */
+  color: var(--bg-elevated);
+}
+
+.step.is-done .step-marker {
+  border-color: var(--border);
+  color: var(--text-subtle);
+}
+
+.step-title {
+  font-weight: 550;
+  color: var(--text-muted);
+}
+
+.step.is-current .step-title {
+  color: var(--text);
+}
+
+/* The detail earns its line on the step being worked on. On an upcoming step it is noise. */
+.step-detail {
+  color: var(--text-muted);
+  font-size: 14px;
+  margin-top: 2px;
+}
+
+.step.is-upcoming .step-detail {
+  display: none;
+}
+
+/* ═══ progress ═══════════════════════════════════════════════════════════
+ *
+ * Segments, not a continuous bar. A continuous bar answers "how far", which is a guess; segments
+ * answer "how many, and which" — countable, and true.
+ *
+ * Mark it up as `<div class="progress" role="img" aria-label="Step 2 of 3">` with one
+ * `<span class="progress-seg">` per step, `is-filled` on the completed ones.
+ */
+.progress {
+  display: flex;
+  gap: 3px;
+}
+
+.progress-seg {
+  flex: 1 1 0;
+  height: 3px;
+  border-radius: 999px;
+  background: var(--surface-sunken);
+  transition: none;
+}
+
+.progress-seg.is-filled {
+  background: var(--text-subtle);
+}
+
+/* The one moment of motion: a segment filling as its step completes. Slow enough to notice, small
+   enough to ignore, and nothing around it competes. */
+@media (prefers-reduced-motion: no-preference) {
+  .progress-seg {
+    transition: background .42s var(--ease);
+  }
+}

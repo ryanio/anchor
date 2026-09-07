@@ -211,8 +211,11 @@ function parseEntry(file: string): Entry {
 }
 
 // ── layout ─────────────────────────────────────────────────────────────────
-// The token layer is shared with the rest of the project; the site stylesheet builds on it.
+// Shared with the rest of the project, in cascade order: tokens are the palette, components are
+// the named things built from it, and the site stylesheet is only what is specific to this site.
+// Anything general enough for the widget or a standalone page belongs one layer up, not here.
 const TOKENS = readFileSync(join(ROOT, "..", "theme", "tokens.css"), "utf8");
+const COMPONENTS = readFileSync(join(ROOT, "..", "theme", "components.css"), "utf8");
 const CSS = readFileSync(join(ROOT, "style.css"), "utf8");
 
 /**
@@ -244,6 +247,7 @@ function page(title: string, body: string, opts: { subtitle?: string } = {}): st
 <meta property="og:type" content="website">
 <meta name="twitter:card" content="summary_large_image">
 <style>${TOKENS}
+${COMPONENTS}
 ${CSS}</style>
 </head>
 <body class="ambient">

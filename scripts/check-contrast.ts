@@ -81,6 +81,16 @@ const PAIRS: Pair[] = [
   { fg: "ember", bg: "bg", min: 4.5, note: "the counterpoint accent" },
   { fg: "ember", bg: "bg-elevated", min: 4.5, note: "counterpoint on a card" },
   { fg: "border-strong", bg: "bg", min: 1.4, note: "a visible edge" },
+
+  // Component tokens (theme/components.css). Every colour pair a component can produce is checked
+  // here, because the components are the layer people actually copy — a pill that fails AA gets
+  // reproduced on every page that reaches for it.
+  { fg: "attention-fg", bg: "attention-bg", min: 4.5, note: ".pill--required — the one that asks" },
+  { fg: "bg-elevated", bg: "attention-fg", min: 4.5, note: "the number knocked out of .is-current" },
+  { fg: "attention-border", bg: "bg-elevated", min: 1.4, note: ".pill--required's edge" },
+  { fg: "text", bg: "surface-sunken", min: 4.5, note: "body text in a .well" },
+  { fg: "text-muted", bg: "surface-sunken", min: 4.5, note: "a hint in a .well" },
+  { fg: "text-subtle", bg: "surface-sunken", min: 3.0, note: ".progress-seg.is-filled on its track" },
 ];
 
 let failed = 0;

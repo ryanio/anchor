@@ -19,10 +19,10 @@ import "PulseModel.js" as Model
 //   detached process. Nothing in this file blocks, because this file runs inside the process that
 //   draws the entire desktop.
 //
-//   **Every degraded state is a designed state.** The service can be down, the API key absent, the
-//   wallet PAT absent, the network gone, and no wallet configured at all — five conditions that are
-//   all *normal* on a fresh install. None of them renders as an error: the widget stays a calm
-//   dimmed mark with a panel that says what is missing and the command that fixes it.
+//   **Every degraded state is a designed state.** The service can be down, the API key absent or
+//   rejected, the network gone, and no wallet configured at all — four conditions that are all
+//   *normal* on a fresh install. None of them renders as an error: the widget stays a calm dimmed
+//   mark with a panel that says what is missing and the command that fixes it.
 Panel {
   id: root
 
@@ -47,15 +47,15 @@ Panel {
   readonly property var portfolio: Model.readPortfolio(state.portfolio)
   readonly property var collections: Model.collectionRows(state, config)
   readonly property var progress: Model.setupProgress(state)
-  readonly property bool needsSetup: status === Model.STATUS.SETUP || status === Model.STATUS.PARTIAL
+  readonly property bool needsSetup: status === Model.STATUS.SETUP
 
   /**
    * Whether the optional steps are expanded.
    *
    * Bound rather than fixed, so it defaults open exactly when the optional steps *are* the point —
-   * the partial state, where the required path is already done and the only thing left to show is
-   * what a wallet token would add. Clicking the pill breaks the binding, which is the intended
-   * QML idiom here: after that the choice is the user's.
+   * once the required path is done and they are all that is left. While setup is unfinished they
+   * stay collapsed, which is what keeps the required path short. Clicking the pill breaks the
+   * binding, which is the intended QML idiom here: after that the choice is the user's.
    */
   property bool optionalOpen: root.progress.complete
 
@@ -173,7 +173,8 @@ Panel {
     id: collectionsRead
     path: "/collections"
     settings: root.config
-    // The one read that survives a missing wallet token, so it keeps running in the partial state.
+    // Needs no wallet, so this is the one read that still produces something on a machine that
+    // has an API key and nothing else configured.
     interval: 180000
     startDelay: 1200
     onFinished: (response) => root.apply("collections", response)

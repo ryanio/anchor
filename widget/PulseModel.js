@@ -525,8 +525,6 @@ const STATUS = {
   OFFLINE: "offline",
   /** The service answered, but Anchor is not configured far enough to show anything. */
   SETUP: "setup",
-  /** Public data only: an API key but no wallet PAT, so the account routes are closed. */
-  PARTIAL: "partial",
   /** Everything is configured; some of what is on screen has outlived its TTL. */
   STALE: "stale",
   READY: "ready",
@@ -555,6 +553,25 @@ function credentials(health) {
 }
 
 /**
+ * Whether the API key we are told is *present* is actually *working*.
+ *
+ * `/health` reports a credential present when the keyring returned a non-empty string, which is
+ * how a shell command once passed as an API key for a day (AGENTS.md, "Measuring things"). The only
+ * evidence the widget has of a key that authenticates is a read that did not come back 401.
+ *
+ * So a 401 on any data route demotes the API key step from done back to current, with copy that
+ * says the key is being rejected rather than missing. Presence and function are different claims
+ * and the panel should not make the first one while meaning the second.
+ */
+function apiKeyRejected(state) {
+  const s = state ?? emptyState();
+  for (const key of ["portfolio", "activity", "collections"]) {
+    if (s[key] && s[key].status === 401) return true;
+  }
+  return false;
+}
+
+/**
  * What the user still has to do, in the order they have to do it.
  *
  * A fresh install is missing all of this, and the honest answer is a short sequence rather than an
@@ -571,6 +588,7 @@ function setupSteps(state) {
   const health = state?.health ?? null;
   const creds = credentials(health);
   const reachable = health !== null;
+  const rejected = creds.apiKey && apiKeyRejected(state);
 
   return [
     {
@@ -585,12 +603,17 @@ function setupSteps(state) {
       optional: false,
     },
     {
+      // Presence and function are separate claims. A key OpenSea is rejecting sends this step back
+      // to `current` with copy that says so, rather than ticking it and leaving the user to wonder
+      // why a fully configured Anchor shows nothing.
       key: "apiKey",
-      label: "Add your OpenSea API key",
-      detail: "Unlocks collection floors, volume and sales.",
-      missing: "needs an OpenSea API key",
-      done: reachable && creds.apiKey,
-      hint: "anchor-service --set-api-key",
+      label: rejected ? "Replace your OpenSea API key" : "Add your OpenSea API key",
+      detail: rejected
+        ? "The stored key is being rejected. Nothing will load until it is replaced."
+        : "This is the only credential Anchor needs.",
+      missing: rejected ? "the stored API key is being rejected" : "needs an OpenSea API key",
+      done: reachable && creds.apiKey && !rejected,
+      hint: rejected ? "anchor-service --check-credentials" : "anchor-service --set-api-key",
       optional: false,
     },
     {
@@ -602,15 +625,11 @@ function setupSteps(state) {
       hint: "set `wallet` in ~/.config/anchor/config.json",
       optional: false,
     },
-    {
-      key: "pat",
-      label: "See your portfolio and offers",
-      detail: "A wallet token opens the account-scoped reads: value, offers, activity.",
-      missing: "no wallet token",
-      done: reachable && creds.pat,
-      hint: "anchor-service --set-pat",
-      optional: true,
-    },
+    // There is deliberately no wallet-PAT step here. Anchor used to ask for one and call the
+    // account routes "closed" without it; re-measured with a key that actually authenticates, every
+    // route this service calls needs the API key and nothing else (service/src/auth.ts). Removing
+    // that step is the single biggest thing that shortened this sequence — the fix for "a lot of
+    // setup steps in a row" was a step that never needed to exist, not a better way to draw it.
     {
       key: "collections",
       label: "Watch a few collections",
@@ -681,10 +700,9 @@ function statusOf(state, nowMs, settings) {
   }
   if (s.healthError !== null) return STATUS.OFFLINE;
 
-  const creds = credentials(s.health);
-  const hasWallet = typeof s.health.wallet === "string" && s.health.wallet.length > 0;
-  if (!creds.apiKey || !hasWallet) return STATUS.SETUP;
-  if (!creds.pat) return STATUS.PARTIAL;
+  // Derived from the steps rather than re-tested here, so "what the panel asks for" and "what the
+  // bar says is wrong" can never disagree — they did, while the PAT step existed.
+  if (setupSteps(s).some((step) => !step.optional && !step.done)) return STATUS.SETUP;
 
   const staleAfter = Number(settings?.staleAfter) || 900;
   const entries = [s.portfolio, s.activity, s.collections].filter((e) => e !== null);
@@ -719,7 +737,6 @@ function statusDetail(state, nowMs, settings) {
     default: {
       const offers = offerCount(s);
       const parts = [];
-      if (status === STATUS.PARTIAL) parts.push("public data only");
       if (status === STATUS.STALE) parts.push("stale, retrying");
       if (offers > 0) parts.push(`${offers} offer${offers === 1 ? "" : "s"}`);
       // The activity count only earns its place when nothing more important is competing for the
@@ -1224,6 +1241,7 @@ if (typeof module !== "undefined") {
     isStale,
     emptyState,
     credentials,
+    apiKeyRejected,
     setupSteps,
     setupProgress,
     statusOf,
