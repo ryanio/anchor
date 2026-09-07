@@ -362,6 +362,25 @@ Nothing below can be done from this repository, and none of it has been done for
    `TransferChecked.mint` condition beside it constrains only the checked variant and the policy looks
    bounded while permitting any token to leave. The audit reports that as a finding too.
 
+   **The Compute Budget entry in that `programId` list is the one you cannot bound.** Almost every
+   real Solana transaction sets a compute unit limit, so the program has to be permitted — and Privy
+   has no Compute Budget condition source, so no rule can say anything about what it is invoked with.
+   `SetComputeUnitPrice` names a price in micro-lamports *per compute unit*, and at the maximum unit
+   limit of 1,400,000 that commits the account's entire native balance to a validator tip. A priority
+   fee produces no asset delta, so no value condition sees it either.
+
+   Anchor refuses it locally instead, against a ceiling of **0.01 SOL** by default
+   (`priorityFeeCeiling` on the guard, roughly a thousand times an ordinary busy-network fee). The
+   audit states the gap on every startup rather than treating it as a finding, because there is no
+   policy edit that would fix it. This is the one Solana control that is local-only *by necessity*
+   rather than by choice — size the balance with that in mind, and see `docs/upstream.md` entry 10.
+
+   If you also permit the System Program, add a `solana_system_program_instruction` `instructionName`
+   condition beside it. That source *does* support the field, unlike the token program's coverage of
+   `Approve`/`SetAuthority` — so this hole, at least, is closable in the policy as well as locally.
+   Without it the rule permits `Assign`, which reassigns the account's owner program, and an owner
+   program may debit its lamports with no signature from anyone.
+
 4. **Optionally set an owner** on the wallet or the policy, and generate a P-256 authorization key.
    With an owner, Privy requires a `privy-authorization-signature` on every write, so the app secret
    alone stops being enough to move funds or to widen the policy. Anchor implements that signing
