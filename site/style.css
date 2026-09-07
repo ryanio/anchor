@@ -94,6 +94,7 @@ header nav a:hover { color: var(--accent); background: rgb(var(--accent-rgb) / .
   transition: transform .18s var(--ease), border-color .18s var(--ease);
 }
 .entries a:hover { transform: translateY(-2px); border-color: rgb(var(--accent-rgb) / .45); }
+.entries a:hover .entry-title { color: var(--accent); }
 .entry-date {
   display: block; font: 500 12px/1 var(--font-mono);
   color: var(--accent); letter-spacing: .04em; margin-bottom: 9px;
@@ -129,7 +130,9 @@ article li { margin: 7px 0; }
 article li::marker { color: var(--accent); }
 
 a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 3px; }
-a:hover { color: var(--coral); }
+/* Coral is the counterpoint for prose links only. Card titles are not links to be coloured —
+   the card itself lifts and its border brightens, which is the whole hover affordance. */
+article a:hover, footer a:hover { color: var(--coral); }
 
 code {
   font: 500 13.5px/1.5 var(--font-mono);
@@ -164,11 +167,58 @@ td { padding: 11px var(--space-4) 11px 0; border-bottom: 1px solid var(--border)
 tr:last-child td { border-bottom: 0; }
 
 footer {
-  margin-top: var(--space-8); padding: var(--space-4) var(--space-5);
-  color: var(--text-muted); font-size: 14px;
+  margin-top: var(--space-8);
+  padding: var(--space-6) var(--space-5) var(--space-4);
+  color: var(--text-muted);
+  font-size: 14px;
 }
-footer a { color: var(--text-muted); }
-footer a:hover { color: var(--accent); }
+
+.foot-grid {
+  display: grid;
+  grid-template-columns: 1.6fr repeat(3, minmax(0, 1fr));
+  gap: var(--space-5);
+  align-items: start;
+}
+
+.foot-brand p { margin: 10px 0 0; font-size: 13.5px; line-height: 1.6; max-width: 34ch; }
+.foot-mark {
+  display: inline-flex; align-items: center; gap: 9px;
+  font-size: 16px; font-weight: 650; letter-spacing: -.015em; color: var(--text);
+}
+.foot-mark .mark { color: var(--accent); }
+
+.foot-grid nav { display: flex; flex-direction: column; gap: 7px; }
+.foot-head {
+  font: 700 11px/1 var(--font-sans);
+  text-transform: uppercase; letter-spacing: .1em;
+  color: var(--text-subtle); margin-bottom: 3px;
+}
+.foot-grid nav a {
+  display: inline-flex; align-items: center; gap: 4px;
+  color: var(--text-muted); text-decoration: none; font-size: 13.5px;
+  transition: color .15s var(--ease);
+}
+.foot-grid nav a:hover { color: var(--accent); }
+.foot-grid nav a .icon { opacity: .55; }
+
+/* A horizon line: bright at the centre, dissolving at both edges. */
+.foot-base {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 9px;
+  margin-top: var(--space-6); padding-top: var(--space-4);
+  font-size: 12.5px; color: var(--text-subtle);
+  border-top: 1px solid transparent;
+  border-image: linear-gradient(90deg, transparent, var(--border-strong) 18%, var(--border-strong) 82%, transparent) 1;
+}
+.foot-base code {
+  font-size: 12px; padding: 1px 5px;
+  background: var(--code-bg); border: 1px solid var(--border); border-radius: 4px;
+}
+.foot-base .dot { opacity: .5; }
+
+@media (max-width: 720px) {
+  .foot-grid { grid-template-columns: 1fr 1fr; gap: var(--space-5); }
+  .foot-brand { grid-column: 1 / -1; }
+}
 
 @media (max-width: 640px) {
   .wrap { padding: var(--space-4) var(--space-4) var(--space-7); }

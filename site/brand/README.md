@@ -21,9 +21,9 @@ The mark carries no colour of its own. Set it on the parent:
 
 | Context | Colour |
 |---|---|
-| Dark background | `#e8905a` |
-| Light background | `#b4531f` |
-| On a solid accent fill | `#faf9f7` |
+| Dark background | `#5fd4e4` |
+| Light background | `#0d6b80` |
+| On a solid accent fill | `#f7fafb` |
 
 ## Clear space and size
 
