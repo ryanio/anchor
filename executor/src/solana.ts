@@ -33,9 +33,11 @@
  *   permits that.
  * - The **instruction data**, byte for byte, because it is inline in the message. For SPL Token and
  *   Token-2022 the first byte is the instruction tag, so `Approve` (4), `ApproveChecked` (13),
- *   `Revoke` (5) and `SetAuthority` (6) are as recognisable as an EVM selector, and recognising
- *   them does not depend on resolving a single account. **The human-only refusal is sound in the
- *   presence of lookup tables.** That is the one guarantee here worth relying on.
+ *   `Revoke` (5) and `SetAuthority` (6) are as recognisable as an EVM selector; for the System
+ *   Program the first four bytes are a little-endian discriminant, so `Assign` (1), `AssignWithSeed`
+ *   (10) and `AuthorizeNonceAccount` (7) are too. Recognising any of them depends on resolving no
+ *   account at all. **The human-only refusal is sound in the presence of lookup tables.** That is
+ *   the one guarantee here worth relying on.
  * - The **static account keys** themselves, and how many operand slots resolve through an ALT.
  *
  * **Cannot, at all:**
@@ -136,7 +138,91 @@ const DELEGABLE_TOKEN_TAGS: ReadonlySet<number> = new Set([
   SPL_TOKEN_INSTRUCTION.syncNative,
 ]);
 
-/** Programs whose instructions are inert: no account authority, no value movement. */
+/**
+ * System Program instruction discriminants.
+ *
+ * Unlike SPL Token's single tag byte, these are **`u32` little-endian** — the System Program is a
+ * bincode-encoded Rust enum, so `Assign` is `01 00 00 00` rather than `01`. Reading it as one byte
+ * would classify `Assign` and a four-byte-truncated anything alike, which is the wrong direction of
+ * wrong for a denial list.
+ */
+export const SYSTEM_INSTRUCTION = {
+  createAccount: 0,
+  assign: 1,
+  transfer: 2,
+  createAccountWithSeed: 3,
+  advanceNonceAccount: 4,
+  withdrawNonceAccount: 5,
+  initializeNonceAccount: 6,
+  authorizeNonceAccount: 7,
+  allocate: 8,
+  allocateWithSeed: 9,
+  assignWithSeed: 10,
+  transferWithSeed: 11,
+  upgradeNonceAccount: 12,
+} as const;
+
+/**
+ * System Program instructions that hand standing authority away. Never signed.
+ *
+ * **This is the class the SPL list alone misses, and it is the worst member of it.** A Privy wallet
+ * account is an ordinary system-owned account, and `Assign` changes which *program owns it*. A
+ * program that owns an account may debit its lamports with no signature from anyone — so one
+ * `Assign` to an attacker's program converts the wallet's entire native balance into that program's
+ * to spend, at a time it chooses. It passes every part of the membership test in
+ * `HUMAN_ONLY_ACTION_KINDS`: no value moves in the transaction that does it, so no spend cap sees
+ * it; the authority outlives the transaction; and taking it back requires the new owner program to
+ * assign it back, which is not something anyone can guarantee. It is strictly worse than an SPL
+ * delegate, which at least is bounded to one token account.
+ *
+ * `AssignWithSeed` is the same instruction reached through a derived address.
+ *
+ * `AuthorizeNonceAccount` hands over a durable nonce authority. A durable nonce is precisely the
+ * mechanism that lets a signed transaction be held indefinitely and replayed at a moment of the
+ * holder's choosing, so giving away the authority over one is giving away a standing capability —
+ * the same shape, even though the immediate blast radius is smaller.
+ */
+const HUMAN_ONLY_SYSTEM_TAGS: ReadonlyMap<number, string> = new Map([
+  [
+    SYSTEM_INSTRUCTION.assign,
+    "Assign — hands the account's owner program to someone else, and an owner program may debit " +
+      "its lamports without a signature",
+  ],
+  [SYSTEM_INSTRUCTION.assignWithSeed, "AssignWithSeed — Assign, reached through a derived address"],
+  [
+    SYSTEM_INSTRUCTION.authorizeNonceAccount,
+    "AuthorizeNonceAccount — hands over a durable nonce authority, the standing power to hold a " +
+      "signed transaction and replay it later",
+  ],
+]);
+
+/**
+ * System Program instructions an agent may sign. As short as the token list, and for the reason.
+ *
+ * `Transfer` moves native SOL and is bounded by the spend caps, so it is delegable — but its
+ * destination is an operand, which on a v0 message may be unreadable, so it is separately noted in
+ * `unverified` exactly as `closeAccount` is. `CreateAccount` and `CreateAccountWithSeed` name an
+ * owner program too, but for an account that does not exist yet and holds only the lamports this
+ * transaction funds it with; that is bounded value movement, not a handover of something the wallet
+ * already had. Everything else — the nonce lifecycle, `Allocate*`, `WithdrawNonceAccount` — is
+ * absent because Anchor sends none of it, and an unrecognised discriminant is refused rather than
+ * assumed inert.
+ */
+const DELEGABLE_SYSTEM_TAGS: ReadonlySet<number> = new Set([
+  SYSTEM_INSTRUCTION.createAccount,
+  SYSTEM_INSTRUCTION.createAccountWithSeed,
+  SYSTEM_INSTRUCTION.transfer,
+]);
+
+/**
+ * Programs an instruction may name by default.
+ *
+ * Being on this list is *permission to be inspected*, not permission to run — the System and token
+ * programs are both here and both have their instructions classified below, because each of them
+ * can hand an account away. Only Compute Budget, Memo and the Associated Token program are on it
+ * unconditionally, and those three genuinely cannot: they set a fee limit, write a note, and create
+ * an account at a derived address the caller does not choose.
+ */
 const DEFAULT_PROGRAM_ALLOWLIST: readonly SolanaAddress[] = [
   SYSTEM_PROGRAM,
   SPL_TOKEN_PROGRAM,
@@ -393,6 +479,18 @@ function isTokenProgram(programId: SolanaAddress): boolean {
 }
 
 /**
+ * The System Program's `u32` little-endian discriminant, or `null` when the data is too short.
+ *
+ * Read as an unsigned 32-bit value rather than assembled with `|`, which would sign-extend anything
+ * with the high bit set and turn a large discriminant negative — a negative number matches no entry
+ * in either list, so it would land in the "unrecognised" branch by accident rather than by rule.
+ */
+function readSystemTag(data: Uint8Array): number | null {
+  if (data.length < 4) return null;
+  return new DataView(data.buffer, data.byteOffset, data.byteLength).getUint32(0, true);
+}
+
+/**
  * Inspect a serialized transaction and report every reason to refuse it.
  *
  * Read the module header before relying on this. In one sentence: it reads program ids and
@@ -439,6 +537,45 @@ export function guardSolanaMessage(
           `${at} invokes ${program}, which is not on the program allowlist. Anything can deploy a ` +
           "Solana program, so an unrecognised one is refused rather than inspected.",
       });
+      return;
+    }
+
+    if (program === SYSTEM_PROGRAM) {
+      const tag = readSystemTag(instruction.data);
+      if (tag === null) {
+        findings.push({
+          humanOnly: false,
+          detail: `${at} is a System Program instruction with no four-byte discriminant`,
+        });
+        return;
+      }
+      const humanOnly = HUMAN_ONLY_SYSTEM_TAGS.get(tag);
+      if (humanOnly !== undefined) {
+        findings.push({
+          humanOnly: true,
+          detail:
+            `${at} is System ${humanOnly}. This is a human-only action class: it moves no value, ` +
+            "so no spend cap can see it, and the authority it grants outlives the transaction.",
+        });
+        return;
+      }
+      if (!DELEGABLE_SYSTEM_TAGS.has(tag)) {
+        findings.push({
+          humanOnly: false,
+          detail:
+            `${at} is System Program instruction ${tag}, which Anchor does not recognise as one an ` +
+            "agent sends. An unknown discriminant is refused rather than assumed inert.",
+        });
+        return;
+      }
+      if (tag === SYSTEM_INSTRUCTION.transfer) {
+        // Same shape as closeAccount: bounded by the spend caps, but paid to an account named by
+        // index, which a v0 message may resolve through a table these bytes do not contain.
+        unverified.push(
+          `${at} transfers native SOL to an account named by index; the destination is not checked ` +
+            "here, and the withdrawal allowlist is enforced against the request upstream instead",
+        );
+      }
       return;
     }
 

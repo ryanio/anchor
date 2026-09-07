@@ -26,6 +26,7 @@ import {
   SPL_TOKEN_2022_PROGRAM,
   SPL_TOKEN_INSTRUCTION,
   SPL_TOKEN_PROGRAM,
+  SYSTEM_INSTRUCTION,
   SYSTEM_PROGRAM,
   toBase64,
 } from "./solana.ts";
@@ -285,6 +286,106 @@ describe("SPL delegation and authority transfer are refused", () => {
   test("a transaction that cannot be parsed is treated as containing one", () => {
     // Fail closed: "I could not read it" and "it is clean" must never be the same answer.
     assert.equal(containsHumanOnlyInstruction(Uint8Array.from([0, 1, 2])), true);
+  });
+});
+
+// --- The System Program half of the same class -------------------------------------------------
+
+/** A System Program instruction's four-byte little-endian discriminant, then its operands. */
+function systemData(tag: number, ...rest: number[]): number[] {
+  return [tag & 0xff, (tag >>> 8) & 0xff, (tag >>> 16) & 0xff, (tag >>> 24) & 0xff, ...rest];
+}
+
+describe("System Program authority handovers are refused too", () => {
+  const humanOnly = [
+    ["Assign", SYSTEM_INSTRUCTION.assign],
+    ["AssignWithSeed", SYSTEM_INSTRUCTION.assignWithSeed],
+    ["AuthorizeNonceAccount", SYSTEM_INSTRUCTION.authorizeNonceAccount],
+  ] as const;
+
+  for (const [name, tag] of humanOnly) {
+    test(`System ${name} is a human-only finding`, () => {
+      const guard = guardSolanaTransaction(
+        serialize({
+          keys: [WALLET, SYSTEM_PROGRAM],
+          instructions: [
+            { programIndex: 1, accounts: [0], data: systemData(tag, ...solanaAddressBytes(DELEGATE)) },
+          ],
+        }),
+      );
+      assert.equal(guard.findings.length, 1);
+      assert.equal(guard.findings[0]?.humanOnly, true);
+      assert.match(guard.findings[0]?.detail ?? "", new RegExp(name));
+    });
+  }
+
+  test("Assign is caught behind lookup tables, like every other data-only check", () => {
+    // The whole point of reading discriminants rather than accounts: an ALT changes which account
+    // an index names, and changes nothing about the four bytes that say what the instruction is.
+    const bytes = serialize({
+      keys: [WALLET, SYSTEM_PROGRAM],
+      instructions: [{ programIndex: 1, accounts: [180], data: systemData(SYSTEM_INSTRUCTION.assign) }],
+      lookups: [{ table: TABLE, writable: [1, 2], readonlyIndexes: [3] }],
+    });
+    assert.equal(containsHumanOnlyInstruction(bytes), true);
+  });
+
+  test("a one-byte 0x01 is not an Assign, and is refused as unreadable rather than misread", () => {
+    // SPL Token's tag is one byte and the System Program's is four. Reading the System Program's
+    // with the token rule would call `[1]` an Assign; reading the token program's with the system
+    // rule would run off the end. Neither is allowed to happen quietly.
+    const guard = guardSolanaTransaction(
+      serialize({ keys: [WALLET, SYSTEM_PROGRAM], instructions: [{ programIndex: 1, data: [1] }] }),
+    );
+    assert.equal(guard.findings.length, 1);
+    assert.equal(guard.findings[0]?.humanOnly, false);
+    assert.match(guard.findings[0]?.detail ?? "", /four-byte discriminant/);
+  });
+
+  test("an unrecognised System discriminant is refused, not assumed inert", () => {
+    const unknown = [SYSTEM_INSTRUCTION.withdrawNonceAccount, SYSTEM_INSTRUCTION.allocateWithSeed, 4242];
+    for (const tag of unknown) {
+      const guard = guardSolanaTransaction(
+        serialize({
+          keys: [WALLET, SYSTEM_PROGRAM],
+          instructions: [{ programIndex: 1, data: systemData(tag) }],
+        }),
+      );
+      assert.equal(guard.findings.length, 1, `tag ${tag} should produce exactly one finding`);
+      assert.equal(guard.findings[0]?.humanOnly, false);
+    }
+  });
+
+  test("a high discriminant is read unsigned, so it lands in the rule rather than by accident", () => {
+    // 0x80000001 assembled with `|` sign-extends to a negative number, which matches no map entry.
+    // It would still be refused — but for the wrong reason, and a denial that is right by accident
+    // is one a future edit can break without any test noticing.
+    const guard = guardSolanaTransaction(
+      serialize({
+        keys: [WALLET, SYSTEM_PROGRAM],
+        instructions: [{ programIndex: 1, data: [0x01, 0x00, 0x00, 0x80] }],
+      }),
+    );
+    assert.match(guard.findings[0]?.detail ?? "", /instruction 2147483649/);
+  });
+
+  test("a native SOL transfer is allowed, and says its destination was not checked", () => {
+    const guard = guardSolanaTransaction(
+      serialize({
+        keys: [WALLET, SYSTEM_PROGRAM],
+        instructions: [
+          {
+            programIndex: 1,
+            accounts: [0, 3],
+            data: systemData(SYSTEM_INSTRUCTION.transfer, 1, 0, 0, 0, 0, 0, 0, 0),
+          },
+        ],
+      }),
+    );
+    assert.deepEqual(guard.findings, []);
+    assert.ok(
+      guard.unverified.some((note) => /transfers native SOL to an account named by index/.test(note)),
+    );
   });
 });
 

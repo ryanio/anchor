@@ -351,7 +351,13 @@ export function formatMoney(m: Money): string {
  *   owner or close authority, or a mint's mint and freeze authority. This is strictly worse than an
  *   allowance: it is not a limit on spending the account, it *is* the account. The same reasoning
  *   covers a program's upgrade authority, where handing it over means the program that was audited
- *   is no longer the program that runs.
+ *   is no longer the program that runs — and it covers the **System Program's `Assign`**, which is
+ *   the widest member of the whole class and the one an SPL-only reading of "Solana's
+ *   `setApprovalForAll`" misses. A wallet account is system-owned; an account's owner program may
+ *   debit its lamports with no signature; so a single `Assign` to an attacker's program hands over
+ *   the entire native balance, at a time the attacker picks, having moved nothing. `SetAuthority`
+ *   is bounded to one token account. `Assign` is not bounded at all. See {@link AuthorityType} and
+ *   `HUMAN_ONLY_SYSTEM_TAGS` in `solana.ts`.
  *
  * `Revoke` and "approve zero" are in the class too, for the same reason `setApprovalForAll(false)`
  * is: an interface that can express *toggling* a delegation can express turning it on, and the
@@ -522,10 +528,27 @@ export type AuthorityType =
   /** May freeze any holder's account, including this one. */
   | "freeze-account"
   /** A program's upgrade authority: the power to replace the code at an unchanged address. */
-  | "program-upgrade";
+  | "program-upgrade"
+  /**
+   * The *owner program* of a plain account — Solana's System `Assign`.
+   *
+   * The widest one in this union, and the least obvious. A wallet account is system-owned, and an
+   * account's owner program may debit its lamports with no signature at all; so assigning ownership
+   * to someone else's program converts the whole native balance into that program's to spend,
+   * whenever it likes. `set-authority` on a token account is bounded to that token. This is not.
+   */
+  | "account-owner-program"
+  /**
+   * A durable nonce's authority — Solana's System `AuthorizeNonceAccount`.
+   *
+   * A durable nonce is what lets a signed transaction be held and submitted much later, so its
+   * authority is a standing capability rather than a one-shot one.
+   */
+  | "nonce-authority";
 
 /**
- * Reassign an authority — Solana's SPL `SetAuthority`, and a program's upgrade authority.
+ * Reassign an authority — Solana's SPL `SetAuthority`, the System Program's `Assign` and
+ * `AuthorizeNonceAccount`, and a program's upgrade authority.
  *
  * Representable, never allowable. Worse than an allowance rather than a variant of one: this does
  * not bound what a delegate may spend, it hands over the account.
