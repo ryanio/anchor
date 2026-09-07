@@ -6,7 +6,7 @@
  * blockquotes, tables, links, inline code, bold and italic. That is everything a build diary needs,
  * and it keeps the project's no-dependency promise. If you need more, write HTML in the entry.
  */
-import { readdirSync, readFileSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
+import { readdirSync, readFileSync, writeFileSync, mkdirSync, rmSync, cpSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -180,6 +180,16 @@ function parseEntry(file: string): Entry {
 // ── layout ─────────────────────────────────────────────────────────────────
 const CSS = readFileSync(join(ROOT, "style.css"), "utf8");
 
+/**
+ * The mark is INLINED, not referenced with <img>. An SVG loaded through <img> is an isolated
+ * document: `currentColor` resolves against its own root rather than the page, so it renders black
+ * or as a broken icon. Inlining is what lets one file theme itself everywhere.
+ */
+const MARK = readFileSync(join(ROOT, "brand", "anchor.svg"), "utf8")
+  .replace(/<\?xml[^>]*\?>/, "")
+  .replace("<svg", '<svg class="mark" width="22" height="22" aria-hidden="true" focusable="false"')
+  .trim();
+
 function page(title: string, body: string, opts: { subtitle?: string } = {}): string {
   return `<!doctype html>
 <html lang="en">
@@ -187,13 +197,15 @@ function page(title: string, body: string, opts: { subtitle?: string } = {}): st
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${esc(title)}</title>
+<link rel="icon" href="/brand/favicon.svg" type="image/svg+xml">
+<link rel="mask-icon" href="/brand/anchor.svg" color="#b4531f">
 <meta name="description" content="Anchor — make your wallet a part of your desktop, not another browser tab.">
 <style>${CSS}</style>
 </head>
 <body>
 <div class="wrap">
   <header>
-    <a class="brand" href="/">⚓ Anchor</a>
+    <a class="brand" href="/">${MARK}<span>Anchor</span></a>
     <nav>
       <a href="/">Diary</a>
       <a href="/changelog.html">Changelog</a>
@@ -214,6 +226,11 @@ function page(title: string, body: string, opts: { subtitle?: string } = {}): st
 // ── build ──────────────────────────────────────────────────────────────────
 rmSync(OUT, { recursive: true, force: true });
 mkdirSync(join(OUT, "diary"), { recursive: true });
+
+// Static assets ship as-is.
+for (const dir of ["brand"]) {
+  if (existsSync(join(ROOT, dir))) cpSync(join(ROOT, dir), join(OUT, dir), { recursive: true });
+}
 
 const entries = readdirSync(join(ROOT, "diary"))
   .filter((f) => f.endsWith(".md"))
