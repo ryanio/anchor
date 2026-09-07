@@ -207,6 +207,19 @@ footer {
   transition: background .16s var(--ease), border-color .16s var(--ease);
 }
 .foot-cta:hover { background: rgb(var(--accent-rgb) / .18); border-color: rgb(var(--accent-rgb) / .5); }
+
+/*
+ * Two optical corrections, neither of which is a centring bug — every element here is already
+ * geometrically centred on the same midpoint.
+ *
+ * 1. The GitHub mark is a filled silhouette that fills its viewBox edge to edge, while the Lucide
+ *    icons are 1.75px strokes with built-in padding. At the same nominal size the filled mark reads
+ *    much heavier, so it is set smaller to match visual weight rather than pixel height.
+ * 2. Flex centres on the line box, but text reads as centred on its cap height, which sits higher.
+ *    Icons aligned to the line box therefore look low. A one-pixel lift fixes what the maths cannot.
+ */
+.foot-cta .icon { transform: translateY(-1px); }
+.foot-cta .icon:first-child { width: 13px; height: 13px; }
 .foot-cta .icon:last-child { opacity: .6; }
 
 .foot-links { display: grid; grid-template-columns: repeat(2, max-content); gap: var(--space-6); justify-content: end; }
