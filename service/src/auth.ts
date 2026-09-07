@@ -7,8 +7,15 @@
  * The original claim was that account-scoped reads need a wallet JWT in addition to the API key,
  * "measured, not assumed". The measurement was taken with a credential that was not a credential —
  * the keyring held a shell command, because an interactive prompt read its own command line off a
- * non-TTY stdin — and the control endpoint used to prove the key was valid, `/collections/{slug}/stats`,
- * turns out to be public and returns 200 with no key header at all.
+ * non-TTY stdin — and the control used to prove the key was valid did not test the key at all.
+ *
+ * That control was `/collections/{slug}/stats` returning 200. OpenSea explained why, and it is not
+ * that the endpoint is public: Cloudflare fronts api.opensea.io with a cache key built from the URL,
+ * the query string and `Accept`. The API key is not part of that key, and a custom cache key makes
+ * Cloudflare ignore the origin's `Vary: X-API-KEY`. So any GET someone has already warmed is served
+ * to anyone, including a caller sending no key. That path is popular; our 200 was a cache HIT that
+ * never reached the service. The account routes missed cache, reached the origin, and the origin
+ * correctly rejected the junk key.
  *
  * Re-measured with a real API key and no `Authorization` header:
  *
