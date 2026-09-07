@@ -258,6 +258,28 @@ To cut a release:
 is the same mistake this repo already made once, when it claimed an action was pinned to a commit
 before the pin was actually in the file. State follows reality, never leads it.
 
+## Looking at what you built
+
+```bash
+node scripts/review.ts          # capture every surface
+node scripts/review.ts widget   # or one group: widget, site, docs
+```
+
+It writes `review/index.html`, where you click a screenshot to drop a pin and say what should change.
+Notes save to `localStorage`; **Copy all notes** puts the review on the clipboard as markdown to hand
+back to an agent.
+
+**Do not ship a visual change you have only reasoned about.** Every visual bug in this project so far
+was invisible in the source and obvious on screen: a cheat sheet fixed three times from CSS
+arithmetic before anyone rendered it, and a bar icon "aligned" by matching top edges when the real
+problem was an aspect ratio of 0.67 in a row of square glyphs — which no size change could fix.
+
+Two things the capture step refuses to do, both learned the hard way: it will not write a blank frame
+when the display is off, and it will not capture a locked session. The first two attempts at that
+check tested screen *brightness* and both let a lock screen through, writing a password prompt to
+disk. It tests contrast now — a bar is bright glyphs on a dark ground, a wallpaper is a smooth
+gradient.
+
 ## Formatting and linting
 
 **Biome, always. Never ESLint or Prettier.** One tool, one config, one pass — it formats and lints
