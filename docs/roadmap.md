@@ -8,6 +8,12 @@ The foundation. One wallet, a few selected collections, cached activity, explici
 token storage in the OS keyring. Everything else in Anchor reads from here rather than calling the API
 directly — one cache, one rate limit, one place where freshness is tracked.
 
+## 1b. The token half
+
+The same service, the other marketplace: balances, prices and candles, trending and top, account swap
+activity, holders and liquidity. Read-only — `swap_quote` returns executable transaction data and so
+belongs behind the executor, never in the read-only service. Endpoint list in [tokens.md](tokens.md).
+
 ## 2. Quickshell widget
 
 A compact top-bar widget: portfolio pulse, incoming offers, auction countdowns, activity count. Clicking

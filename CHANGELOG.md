@@ -10,6 +10,19 @@ has the facts.
 ## [Unreleased]
 
 ### Added
+- `docs/tokens.md` — OpenSea is both marketplaces, and Anchor was designed around one. Sets out the
+  five places where fungible tokens are genuinely a different product rather than NFTs with a quantity
+  field, the token half of the API, and what each changes.
+
+### Changed
+- Spend controls gain the token-specific limits. Slippage is a spend control: a $500 per-transaction
+  cap means nothing if a swap executes at 90% price impact. Exposure is capped per asset, not only per
+  transaction. An approval is bound to the quote it approved. Token allowlists invert to default-deny,
+  because anything can deploy a token.
+- Game links updated: the repository is now `tidebreak`. GitHub redirects repository URLs but *not*
+  GitHub Pages, so the old play URL was a hard 404.
+
+### Added
 - **Privy backend for the executor** — the first `PolicyAuthority` and `Signer` where enforcement is
   not in Anchor's process. The key lives in Privy's enclave and every signing request is checked
   against a policy held with them. Anchor audits that remote policy at startup and refuses to run

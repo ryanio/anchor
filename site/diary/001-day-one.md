@@ -50,4 +50,4 @@ The fix isn't "be careful with patches". The version checker now *enforces* SHA-
 
 ## Also, a game
 
-Somewhere in there a fifth agent built a Roman battle in the browser — no dependencies, morale tuned until flanking felt decisive. It has [its own repository](https://ryanio.github.io/battle-for-the-ford/) now. Not every part of a day has to be load-bearing.
+Somewhere in there a fifth agent built a Roman battle in the browser — no dependencies, morale tuned until flanking felt decisive. It has [its own repository](https://ryanio.github.io/tidebreak/) now. Not every part of a day has to be load-bearing.
