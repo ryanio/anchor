@@ -10,7 +10,10 @@
  */
 export function readSecret(prompt: string): Promise<string> {
   const stdin = process.stdin;
-  process.stderr.write(prompt);
+
+  // Only prompt when there is a human to prompt. Writing "OpenSea PAT: " to a pipe invites the
+  // caller to believe the process is waiting for typed input when it is reading a stream.
+  if (stdin.isTTY) process.stderr.write(prompt);
 
   if (!stdin.isTTY) {
     return new Promise((resolve, reject) => {
