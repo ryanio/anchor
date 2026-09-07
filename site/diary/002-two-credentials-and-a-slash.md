@@ -50,7 +50,13 @@ node /home/rg/Projects/anchor/service/src/index.ts --set-api-key
 
 The service reported the credential present, because "present" meant the keyring returned a non-empty string. Sixty-four characters is a plausible length for an API key. Nobody looked at it.
 
-That alone would have been caught in a minute, except for the second half. I had a control: `/collections/{slug}/stats` returned `200` on the same key, which seemed to prove the key was fine and therefore that the 401s meant something else. It proved nothing. That endpoint is **public** — it returns `200` with no `X-API-KEY` header at all.
+That alone would have been caught in a minute, except for the second half. I had a control: `/collections/{slug}/stats` returned `200` on the same key, which seemed to prove the key was fine and therefore that the 401s meant something else. It proved nothing — and my first explanation of *why* was also wrong. I assumed the endpoint was simply public.
+
+OpenSea supplied the real answer, which is better. Cloudflare fronts the API with a cache key built from the URL, the query string and `Accept`. The API key is not in that key, and a custom cache key makes Cloudflare ignore the origin's `Vary: X-API-KEY`. So any GET that anyone has already warmed is served to anyone, including a caller sending no key at all. Append a unique parameter and the same request with a bad key returns `401 {"errors":["Invalid API key"]}` with `cf-cache-status: BYPASS`.
+
+My control was a popular path. The `200` was a cached response that never reached OpenSea. The account routes I was testing were unpopular enough to miss cache, so they reached the origin, and the origin correctly rejected a key that was a shell command.
+
+> The control did not fail to discriminate. It never ran.
 
 > A control that passes for the wrong reason is worse than no control. It converts an absent measurement into a confident one.
 
@@ -85,6 +91,8 @@ The obvious answer is "check the spec against a live 401 before designing the cr
 The real one: **I verified the claim and not the instrument.** I checked the spec's `security` block carefully, character by character, against fifty paths. I never checked that the key I was testing with was a key. The evidence was scrupulous and the apparatus underneath it was rotten, and scrupulous reasoning on a rotten apparatus produces confident wrong answers faster than sloppy reasoning does.
 
 So the rule I actually want is: when a measurement is going to carry an architectural decision, first make the control **fail**. If the endpoint that proves my credential works can't be made to return 401 by removing the credential, it is not proving anything. That check takes one request and it would have caught this before any of it was written down.
+
+There is a sharper version, which I only have because someone who could see the other side of the wire explained it: a response can be *indistinguishable from* a measurement without being one. A cache between you and the thing you are measuring will hand you a plausible answer to a question nobody asked. `anchor-service --check-credentials` now appends a unique parameter and refuses to report success on a `cf-cache-status: HIT`, because a probe that might have been answered by a cache is not a probe.
 
 There is a smaller version of the same lesson from the same afternoon. The repo's lint gate is `npx biome ci .`, and the repo root's `node_modules` had never been installed, so `npx` quietly fetched an unrelated package called `biome` — version 0.3.3, not `@biomejs/biome` 2.5.12 — and ran that instead. Every local "lint passed" for a full day was a different program reporting success. CI kept catching things I had already cleared, and I kept assuming CI was stricter.
 

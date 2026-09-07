@@ -162,8 +162,33 @@ function describeFailure(err: unknown): string {
  * Encoding here is safe against double-encoding: a real slug is `[a-z0-9-]` and a real address is
  * hex or base58, and `encodeURIComponent` is the identity on all of those. Only hostile input
  * changes shape, which is the point.
+ *
+ * ## Encoding is not sufficient — `.` and `..` must be refused
+ *
+ * OpenSea confirmed this while fixing the same bug in `apiPaths.ts`, and it defeats the obvious fix.
+ * `encodeURIComponent` leaves `.` and `..` completely untouched, so they survive encoding and still
+ * traverse:
+ *
+ *     `/api/v2/collections/../stats`  →  `/api/v2/stats`
+ *     `/api/v2/collections/./stats`   →  `/api/v2/collections/stats`
+ *
+ * Percent-encoding the dots does not help either. The WHATWG URL parser decodes percent-escapes
+ * *before* it removes dot segments, so `%2E%2E`, `%2e%2e` and `.%2e` all collapse identically.
+ * There is no spelling of a bare dot segment that survives as a literal.
+ *
+ * So they are rejected rather than encoded. Rejection is also sufficient, not merely necessary:
+ * after encoding, nothing else is still a dot segment — `"..."` stays `"..."`, and `"%2e%2e"`
+ * becomes `"%252e%252e"`. Only the two bare forms need refusing.
+ *
+ * No legitimate collection slug or address is `.` or `..`, so this costs nothing real.
  */
 function segment(value: string): string {
+  if (value === "." || value === "..") {
+    throw new TypeError(
+      `path segment ${JSON.stringify(value)} is a relative path reference and cannot be encoded — ` +
+        "it would traverse to a different endpoint",
+    );
+  }
   return encodeURIComponent(value);
 }
 

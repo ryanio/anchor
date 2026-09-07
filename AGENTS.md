@@ -73,9 +73,16 @@ was not actually asking.
 
 **Make the control fail before you trust it.** If you are proving a credential works by calling an
 endpoint, first call it *without* the credential and confirm it breaks. We once proved an API key was
-valid with `/collections/{slug}/stats`, which is public and returns 200 for anyone — so the control
-passed for the wrong reason, and turned an absent measurement into a confident one. An architectural
-decision, a module, a published diary entry and an upstream bug report were all built on it.
+valid with `/collections/{slug}/stats` returning 200 — and that response never reached OpenSea at all.
+A CDN sits in front of the API with a cache key that does not include the API key, so a popular path
+already warmed by someone else is served to anyone, credential or not. The control passed for the
+wrong reason and turned an absent measurement into a confident one. An architectural decision, a
+module, a published diary entry and an upstream bug report were all built on it.
+
+**Defeat the cache when you are testing auth.** Append a unique query parameter to every credential
+test and read `cf-cache-status`: `MISS` or `BYPASS` means the origin actually judged your key, `HIT`
+means nothing did. `anchor-service --check-credentials` does this; copy it rather than hand-rolling a
+probe.
 
 A control that cannot be made to fail is not evidence.
 
