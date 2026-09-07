@@ -277,7 +277,15 @@ function remember(into: Map<string, ChainAddress>, entry: ChainAddress): void {
   into.set(formatChainAddress(entry), entry);
 }
 
-/** Tighten a ceiling. `lt` is one less than `lte`, and the tightest of all rules wins. */
+/**
+ * Tighten a ceiling. `lt` is one less than `lte`, and the tightest of all rules wins.
+ *
+ * "Tightest" is a comparison, so it is only meaningful within one unit. One policy has one
+ * `chain_type` and therefore one unit, so a mixed pass should be unreachable — which is exactly why
+ * it is a finding rather than an assumption. A silently wrong comparison here would produce a
+ * ceiling smaller than any rule actually imposes, and a cap that is wrong in the *permissive*
+ * direction is the kind that never gets noticed.
+ */
 function tighten(pass: AuditPass, operator: string, raw: string | undefined, unit: "wei" | "lamports"): void {
   const parsed = raw === undefined ? null : safeBigInt(raw);
   if (parsed === null) {
@@ -285,7 +293,15 @@ function tighten(pass: AuditPass, operator: string, raw: string | undefined, uni
     return;
   }
   const amount = operator === "lt" ? parsed - 1n : parsed;
-  if (pass.ceiling === null || amount < pass.ceiling.amount) pass.ceiling = { amount, unit };
+  const current = pass.ceiling;
+  if (current !== null && current.unit !== unit) {
+    pass.findings.push(
+      `this policy bounds value in both ${current.unit} and ${unit}, which cannot be compared — ` +
+        "one policy governs one chain type and should express one unit",
+    );
+    return;
+  }
+  if (current === null || amount < current.amount) pass.ceiling = { amount, unit };
 }
 
 /** `eq` and `in` are the only operators whose permitted set this client can enumerate. */
@@ -942,6 +958,9 @@ export class UnimplementedSolanaBuilder implements SolanaTransactionBuilder {
   }
 }
 
+/** How many guard results {@link PrivySolanaSigner.guarded} keeps. */
+const GUARD_HISTORY = 64;
+
 export interface PrivySolanaSignerOptions {
   readonly api: PrivyWalletApi;
   readonly walletId: string;
@@ -980,7 +999,14 @@ export class PrivySolanaSigner implements Signer {
   readonly #cluster: SolanaCluster;
   readonly #programAllowlist: readonly SolanaAddress[] | undefined;
   readonly #now: () => number;
-  /** Every guard result this signer produced, newest last, for the audit log. */
+  /**
+   * Recent guard results, newest last, for the audit log and for tests.
+   *
+   * Bounded, unlike `InertSigner.submitted` — that one is a test double and may grow forever, this
+   * one runs for as long as the desktop is up. A ring of the last {@link GUARD_HISTORY} is enough
+   * for "what did it just refuse and why"; the durable record belongs in the data service's log
+   * (docs/autonomy.md, "observability"), not in a field on a signer.
+   */
   readonly guarded: TransactionGuardResult[] = [];
 
   constructor(options: PrivySolanaSignerOptions) {
@@ -1011,6 +1037,7 @@ export class PrivySolanaSigner implements Signer {
       ...(this.#programAllowlist === undefined ? {} : { programAllowlist: this.#programAllowlist }),
     });
     this.guarded.push(guard);
+    if (this.guarded.length > GUARD_HISTORY) this.guarded.shift();
     if (guard.findings.length > 0) {
       const humanOnly = guard.findings.filter((finding) => finding.humanOnly);
       const reported = humanOnly.length > 0 ? humanOnly : guard.findings;
