@@ -18,7 +18,20 @@ has the facts.
 - Test suite on `node --test`, plus CI for typecheck and tests.
 - Build diary and changelog published to anchor.ryanio.com.
 
+### Changed (design)
+- Redesigned around a deep-water palette: ocean cyan primary, coral as a sparing counterpoint, warm
+  neutrals. Shared tokens now live in `theme/tokens.css` and are reused rather than redefined.
+- Glass surfaces with a lit top edge, procedural caustics and grain, and a generated deep-water hero
+  wash (46 KB) that fades out below the headline. Dark mode only — the image is deep water and there
+  is no honest way to make it work under a light theme.
+- Lucide icons and the GitHub mark, inlined. Diary entries cut from ~1150 words to ~500 each, with a
+  larger lead paragraph, section rules and a pull quote.
+- A next-entry countdown that says plainly when a day is skipped, and `llms.txt` for the site.
+
 ### Added (tooling)
+- `scripts/check-contrast.ts` computes WCAG ratios from the design tokens and fails CI. All 20 text
+  and accent pairs clear AA in both themes. A colour that looks good but is unreadable cannot land.
+
 - Biome 2.5.12 as the single formatter and linter — never ESLint or Prettier. One config at the root
   governs every workspace; CI runs `biome ci .` and fails on any diagnostic.
 - A daily build-diary job on the Hermes scheduler that skips the entry when the day produced nothing

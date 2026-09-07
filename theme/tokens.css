@@ -1,0 +1,184 @@
+/*
+ * Anchor design tokens — one layer, reused by the site and anything else in the project.
+ *
+ * Import it and use the semantic names. Never a raw hex in a component.
+ *
+ * The palette is deep water: a near-black with a blue-green cast rather than neutral grey, an ocean
+ * cyan as primary, and coral as a sparing counterpoint — the reef pairing. Neutrals lean warm (sand,
+ * foam) so long-form text reads soft instead of clinical.
+ *
+ * Every text/background pair is checked by scripts/check-contrast.ts in CI, so a colour that looks
+ * good but fails WCAG AA cannot land.
+ */
+
+:root {
+  /* ── depths ─────────────────────────────────────────────────────────── */
+  --depth-950: #06131a;   /* abyss — page ground, dark */
+  --depth-900: #0a1c25;   /* deep water — raised surfaces */
+  --depth-800: #102b37;
+  --depth-700: #1a4152;
+  --depth-600: #256076;
+
+  /* ── foam & sand — warm neutrals ────────────────────────────────────── */
+  --foam-50:  #f7fafb;    /* page ground, light */
+  --foam-100: #eef4f5;
+  --foam-200: #dde7e9;
+  --foam-300: #c2d2d5;
+  --sand-400: #9aa9ac;
+  --sand-500: #6f7f83;
+  --sand-600: #52625f;
+
+  /* ── currents — the primary ─────────────────────────────────────────── */
+  --current-light: #0d6b80;   /* on light surfaces */
+  --current-dark:  #5fd4e4;   /* on dark surfaces */
+  --current-rgb-light: 13 107 128;
+  --current-rgb-dark:  95 212 228;
+
+  /* ── coral — the counterpoint. Sparingly: one accent per view. ──────── */
+  --coral-light: #b8442e;
+  --coral-dark:  #ff8a6b;
+  --coral-rgb-light: 184 68 46;
+  --coral-rgb-dark:  255 138 107;
+
+  /* ── scale ──────────────────────────────────────────────────────────── */
+  --space-1: 4px;  --space-2: 8px;  --space-3: 12px; --space-4: 16px;
+  --space-5: 24px; --space-6: 32px; --space-7: 48px; --space-8: 72px;
+
+  --radius-sm: 8px; --radius-md: 12px; --radius-lg: 18px; --radius-xl: 26px;
+
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  /* Long-form reads badly past ~72 characters. */
+  --measure: 65ch;
+  --ease: cubic-bezier(.22, 1, .36, 1);
+}
+
+/* ── semantic: light ─────────────────────────────────────────────────── */
+:root {
+  --bg:            var(--foam-50);
+  --bg-elevated:   #ffffff;
+  --text:          #0c1a1f;
+  --text-muted:    var(--sand-600);
+  --text-subtle:   var(--sand-500);
+  --border:        var(--foam-200);
+  --border-strong: var(--foam-300);
+  --accent:        var(--current-light);
+  --accent-rgb:    var(--current-rgb-light);
+  --coral:         var(--coral-light);
+  --coral-rgb:     var(--coral-rgb-light);
+  --code-bg:       var(--foam-100);
+
+  --glass-bg:     rgb(255 255 255 / .66);
+  --glass-border: rgb(12 26 31 / .10);
+  --glass-hi:     rgb(255 255 255 / .55);
+  --glass-blur:   16px;
+  --glass-shadow: 0 1px 2px rgb(6 19 26 / .05), 0 10px 30px -14px rgb(6 19 26 / .18);
+
+  --caustic-1: rgb(var(--accent-rgb) / .10);
+  --caustic-2: rgb(var(--coral-rgb) / .05);
+
+  color-scheme: light;
+}
+
+/* ── semantic: dark ──────────────────────────────────────────────────── */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg:            var(--depth-950);
+    --bg-elevated:   var(--depth-900);
+    --text:          #e8f2f4;
+    --text-muted:    #93a8ad;
+    --text-subtle:   #6f858b;
+    --border:        #14313d;
+    --border-strong: #1d4354;
+    --accent:        var(--current-dark);
+    --accent-rgb:    var(--current-rgb-dark);
+    --coral:         var(--coral-dark);
+    --coral-rgb:     var(--coral-rgb-dark);
+    --code-bg:       #0d222c;
+
+    --glass-bg:     rgb(95 212 228 / .05);
+    --glass-border: rgb(150 220 232 / .12);
+    --glass-hi:     rgb(255 255 255 / .06);
+    --glass-shadow: 0 1px 2px rgb(0 0 0 / .4), 0 16px 40px -20px rgb(0 0 0 / .7);
+
+    --caustic-1: rgb(var(--accent-rgb) / .11);
+    --caustic-2: rgb(var(--coral-rgb) / .06);
+
+    color-scheme: dark;
+  }
+}
+
+/* ── surfaces ────────────────────────────────────────────────────────── */
+.surface {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+/*
+ * Glass. The border and the top highlight do the work of reading as an edge — the fill is barely
+ * there on purpose, because a heavier fill is what kills text contrast.
+ */
+.glass {
+  position: relative;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--glass-shadow);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.6);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.6);
+}
+
+/* A single hairline of light along the top edge — what makes glass look lit rather than flat. */
+.glass::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 1px;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  background: linear-gradient(90deg, transparent, var(--glass-hi) 22%, var(--glass-hi) 78%, transparent);
+  pointer-events: none;
+}
+
+/* No backdrop-filter: fall back to an opaque surface. Text over an unblurred background is
+   exactly where contrast breaks, so this is a correctness fallback, not a cosmetic one. */
+@supports not (backdrop-filter: blur(1px)) {
+  .glass { background: var(--bg-elevated); }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .glass {
+    background: var(--bg-elevated);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+}
+
+/* ── ambient: caustics + grain ───────────────────────────────────────── */
+/* Procedural. No image requests, themes with the accent, ~500 bytes. */
+.ambient::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -2;
+  pointer-events: none;
+  background:
+    radial-gradient(70rem 46rem at 8% -12%,  var(--caustic-1), transparent 58%),
+    radial-gradient(56rem 40rem at 96% 4%,   var(--caustic-2), transparent 60%),
+    radial-gradient(46rem 34rem at 50% 108%, var(--caustic-1), transparent 62%);
+}
+
+.ambient::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  opacity: .3;
+  pointer-events: none;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)' opacity='.5'/%3E%3C/svg%3E");
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .ambient::after { display: none; }
+}

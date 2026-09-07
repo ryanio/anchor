@@ -1,74 +1,181 @@
-:root {
-  --bg: #faf9f7; --panel: #ffffff; --ink: #1c1b19; --muted: #6b6862;
-  --line: #e4e1db; --accent: #b4531f; --code-bg: #f6f4f0;
+/* Anchor site. Tokens come from theme/tokens.css, inlined at build time. */
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 16px/1.7 var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
+
+.wrap { max-width: 800px; margin: 0 auto; padding: var(--space-5) var(--space-5) var(--space-8); }
+
+/*
+ * Hero wash. Dark mode only — the image is deep water and there is no honest way to make it work
+ * under a light theme, so light mode keeps the procedural caustics alone.
+ *
+ * Masked to fade out by 55% height so it is atmosphere behind the header and headline, and the prose
+ * below sits on a clean ground. A scrim keeps text contrast where the light rays are brightest.
+ */
+.hero-wash { display: none; }
+
 @media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #161513; --panel: #1e1d1a; --ink: #ece9e3; --muted: #9a958c;
-    --line: #2e2c28; --accent: #e8905a; --code-bg: #201f1c;
+  .hero-wash {
+    display: block;
+    position: fixed;
+    inset: 0 0 auto 0;
+    height: 62vh;
+    z-index: -3;
+    background: url("/assets/hero-deep.jpg") center top / cover no-repeat;
+    opacity: .58;
+    -webkit-mask-image: linear-gradient(180deg, #000 0%, #000 38%, transparent 100%);
+    mask-image: linear-gradient(180deg, #000 0%, #000 38%, transparent 100%);
+    pointer-events: none;
+  }
+  .hero-wash::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(180deg, rgb(6 19 26 / .45), rgb(6 19 26 / .2) 55%, transparent);
   }
 }
-* { box-sizing: border-box; }
-body {
-  margin: 0; background: var(--bg); color: var(--ink);
-  font: 16px/1.68 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  -webkit-font-smoothing: antialiased;
-}
-.wrap { max-width: 760px; margin: 0 auto; padding: 36px 24px 72px; }
 
-header { display: flex; align-items: baseline; gap: 24px; flex-wrap: wrap; margin-bottom: 8px; }
+/* ── header ─────────────────────────────────────────────────────────── */
+header {
+  display: flex; align-items: center; gap: var(--space-5);
+  flex-wrap: wrap;
+  padding: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-6);
+  position: sticky; top: var(--space-3); z-index: 10;
+}
 .brand {
-  font-size: 19px; font-weight: 660; color: var(--ink); text-decoration: none;
-  letter-spacing: -0.01em; display: inline-flex; align-items: center; gap: 8px;
+  display: inline-flex; align-items: center; gap: 10px;
+  font-size: 17px; font-weight: 660; letter-spacing: -.015em;
+  color: var(--text); text-decoration: none;
 }
-.brand .mark { color: var(--accent); display: block; flex: 0 0 auto; }
-header nav { margin-left: auto; display: flex; gap: 18px; font-size: 14px; }
-header nav a { color: var(--muted); text-decoration: none; }
-header nav a:hover { color: var(--accent); }
-.tagline { margin: 0 0 32px; color: var(--muted); font-size: 15px; max-width: 60ch; }
+.brand .mark { color: var(--accent); display: block; }
+header nav { margin-left: auto; display: flex; gap: var(--space-2); }
+header nav a {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 6px 11px; border-radius: 999px;
+  color: var(--text-muted); text-decoration: none;
+  font-size: 14px; font-weight: 500;
+  transition: color .16s var(--ease), background .16s var(--ease);
+}
+header nav a:hover { color: var(--accent); background: rgb(var(--accent-rgb) / .10); }
+.icon { flex: 0 0 auto; }
 
-h1 { font-size: 30px; line-height: 1.2; letter-spacing: -0.022em; font-weight: 660; margin: 8px 0 6px; }
-h2 { font-size: 21px; letter-spacing: -0.012em; font-weight: 640; margin: 36px 0 10px; }
-h3 { font-size: 17px; font-weight: 640; margin: 26px 0 8px; }
-p { margin: 0 0 16px; }
-a { color: var(--accent); }
-.date { color: var(--muted); font-size: 14px; margin: 0 0 28px; }
+/* ── hero ───────────────────────────────────────────────────────────── */
+.hero { margin: 0 0 var(--space-6); }
+.hero h1 {
+  margin: 0 0 var(--space-3);
+  font-size: clamp(30px, 5.2vw, 42px); line-height: 1.12;
+  letter-spacing: -.03em; font-weight: 680;
+}
+.hero .tagline { margin: 0; color: var(--text-muted); font-size: 17px; max-width: 54ch; }
 
-ul, ol { margin: 0 0 16px; padding-left: 22px; }
-li { margin: 6px 0; }
+/* ── countdown ──────────────────────────────────────────────────────── */
+.countdown {
+  display: flex; align-items: center; gap: 10px;
+  padding: 11px var(--space-4); margin: 0 0 var(--space-6);
+  font-size: 14px; color: var(--text-muted);
+}
+.countdown .icon { color: var(--accent); }
+.countdown b { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+.countdown .skip { color: var(--text-subtle); }
+
+/* ── entry list ─────────────────────────────────────────────────────── */
+.entries { list-style: none; padding: 0; margin: 0; display: grid; gap: var(--space-3); }
+.entries a {
+  display: block; padding: var(--space-5); text-decoration: none; color: inherit;
+  transition: transform .18s var(--ease), border-color .18s var(--ease);
+}
+.entries a:hover { transform: translateY(-2px); border-color: rgb(var(--accent-rgb) / .45); }
+.entry-date {
+  display: block; font: 500 12px/1 var(--font-mono);
+  color: var(--accent); letter-spacing: .04em; margin-bottom: 9px;
+}
+.entry-title {
+  display: block; font-size: 20px; font-weight: 650;
+  letter-spacing: -.018em; line-height: 1.25; margin-bottom: 7px;
+}
+.entry-summary { display: block; color: var(--text-muted); font-size: 15px; line-height: 1.6; }
+
+/* ── prose ──────────────────────────────────────────────────────────── */
+article { max-width: var(--measure); }
+article h1 {
+  font-size: clamp(27px, 4.6vw, 36px); line-height: 1.16;
+  letter-spacing: -.028em; font-weight: 680; margin: 0 0 10px;
+}
+article .date { color: var(--text-subtle); font: 500 13px/1 var(--font-mono); margin: 0 0 var(--space-6); }
+
+/* A generous, consistent vertical rhythm is most of what makes long-form readable. */
+article h2 {
+  font-size: 21px; font-weight: 650; letter-spacing: -.016em;
+  margin: var(--space-7) 0 var(--space-3);
+  padding-top: var(--space-3); border-top: 1px solid var(--border);
+}
+article h3 { font-size: 17px; font-weight: 640; margin: var(--space-5) 0 var(--space-2); }
+article p { margin: 0 0 var(--space-4); }
+
+/* The opening paragraph carries the whole entry — give it presence. */
+article > p:first-of-type { font-size: 18px; line-height: 1.62; color: var(--text); }
+
+article ul, article ol { margin: 0 0 var(--space-4); padding-left: 24px; }
+article li { margin: 7px 0; }
+article li::marker { color: var(--accent); }
+
+a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 3px; }
+a:hover { color: var(--coral); }
 
 code {
-  font: 500 13.5px/1.5 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-  background: var(--code-bg); border: 1px solid var(--line);
-  border-radius: 4px; padding: 1px 5px;
+  font: 500 13.5px/1.5 var(--font-mono);
+  background: var(--code-bg); border: 1px solid var(--border);
+  border-radius: 5px; padding: 1.5px 5px;
 }
 pre {
-  background: var(--code-bg); border: 1px solid var(--line); border-radius: 8px;
-  padding: 14px 16px; overflow-x: auto; margin: 0 0 18px;
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-4) var(--space-5); overflow-x: auto;
+  margin: 0 0 var(--space-5); font-size: 13.5px;
 }
-pre code { background: none; border: 0; padding: 0; font-size: 13px; line-height: 1.6; }
+pre code { background: none; border: 0; padding: 0; line-height: 1.62; }
 
+/* Pull quote: the one thing a skimmer should carry away. */
 blockquote {
-  margin: 0 0 18px; padding: 12px 18px; border-left: 3px solid var(--accent);
-  background: var(--panel); border-radius: 0 8px 8px 0; color: var(--muted);
+  margin: var(--space-5) 0; padding: var(--space-4) var(--space-5);
+  border-left: 3px solid var(--accent);
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+  color: var(--text); font-size: 17px; line-height: 1.6;
 }
-table { width: 100%; border-collapse: collapse; margin: 0 0 18px; font-size: 15px; }
-th { text-align: left; font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em;
-     color: var(--muted); padding: 0 12px 8px 0; border-bottom: 1px solid var(--line); }
-td { padding: 9px 12px 9px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+blockquote p:last-child { margin-bottom: 0; }
 
-.entries { list-style: none; padding: 0; margin: 0; }
-.entries li { margin: 0 0 12px; }
-.entries a {
-  display: block; padding: 18px 20px; background: var(--panel);
-  border: 1px solid var(--line); border-radius: 10px; text-decoration: none; color: inherit;
-  transition: border-color .15s ease, transform .15s ease;
+table { width: 100%; border-collapse: collapse; margin: 0 0 var(--space-5); font-size: 15px; }
+th {
+  text-align: left; font: 600 11.5px/1 var(--font-sans);
+  text-transform: uppercase; letter-spacing: .07em; color: var(--text-subtle);
+  padding: 0 var(--space-4) 10px 0; border-bottom: 1px solid var(--border-strong);
 }
-.entries a:hover { border-color: var(--accent); transform: translateY(-1px); }
-.entry-date { display: block; font-size: 12.5px; color: var(--muted);
-              font-family: ui-monospace, Menlo, monospace; margin-bottom: 4px; }
-.entry-title { display: block; font-size: 18px; font-weight: 640; letter-spacing: -0.01em; margin-bottom: 4px; }
-.entry-summary { display: block; color: var(--muted); font-size: 14.5px; line-height: 1.55; }
+td { padding: 11px var(--space-4) 11px 0; border-bottom: 1px solid var(--border); vertical-align: top; }
+tr:last-child td { border-bottom: 0; }
 
-footer { margin-top: 56px; padding-top: 20px; border-top: 1px solid var(--line);
-         color: var(--muted); font-size: 13.5px; }
+footer {
+  margin-top: var(--space-8); padding: var(--space-4) var(--space-5);
+  color: var(--text-muted); font-size: 14px;
+}
+footer a { color: var(--text-muted); }
+footer a:hover { color: var(--accent); }
+
+@media (max-width: 640px) {
+  .wrap { padding: var(--space-4) var(--space-4) var(--space-7); }
+  header { position: static; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+  .entries a:hover { transform: none; }
+}
