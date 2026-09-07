@@ -226,6 +226,25 @@ hazard, and that entry says so.)
 
 Pin versions. Update deliberately, not incidentally.
 
+## Releasing
+
+The project version lives in **`package.json` at the root** and nowhere else by hand.
+`scripts/check-versions.ts` fails CI when `service`, `executor`, `widget` or
+`packaging/PKGBUILD` disagree with it, because nothing else makes independent packages agree. The
+PKGBUILD is the one that bites quietly: it builds from `tag=v$pkgver`, so a stale value produces a
+package that installs an older Anchor than it claims.
+
+To cut a release:
+
+1. Bump the version in all five places, in one commit. Run `node scripts/check-versions.ts`.
+2. In `CHANGELOG.md`, turn the `## [Unreleased]` heading into `## [X.Y.Z] - YYYY-MM-DD`.
+3. Merge, confirm CI is green on `main`, then tag and push the tag.
+4. Create the GitHub release from the changelog section.
+
+**Do not do step 2 before the tag exists.** A changelog that describes a release nobody can install
+is the same mistake this repo already made once, when it claimed an action was pinned to a commit
+before the pin was actually in the file. State follows reality, never leads it.
+
 ## Formatting and linting
 
 **Biome, always. Never ESLint or Prettier.** One tool, one config, one pass — it formats and lints

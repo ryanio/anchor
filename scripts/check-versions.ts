@@ -109,8 +109,37 @@ if (typeof biomePin !== "string") {
   }
 }
 
+// One project version, in five files.
+//
+// These are independent packages rather than npm workspaces, so nothing makes them agree on its
+// own. The root package.json is the source of truth; every other copy is checked against it. The
+// PKGBUILD matters most — `source=(...#tag=v$pkgver)` means a stale pkgver silently builds the
+// wrong tag, and the failure appears as a package that installs an older Anchor than it claims.
+const projectVersion = JSON.parse(read("package.json")).version;
+if (typeof projectVersion !== "string") {
+  problems.push("package.json has no version; it is the source of truth for the project version");
+} else {
+  for (const workspace of ["service", "executor", "widget"]) {
+    const found = JSON.parse(read(`${workspace}/package.json`)).version;
+    if (found !== projectVersion) {
+      problems.push(
+        `${workspace}/package.json is ${found ?? "unset"}, but package.json says ${projectVersion}`,
+      );
+    }
+  }
+  const pkgver = /^pkgver=(\S+)$/m.exec(read("packaging/PKGBUILD"))?.[1];
+  if (pkgver !== projectVersion) {
+    problems.push(
+      `packaging/PKGBUILD pkgver is ${pkgver ?? "unset"}, but package.json says ${projectVersion}. ` +
+        "The PKGBUILD builds from tag v$pkgver, so this one builds the wrong source.",
+    );
+  }
+}
+
 if (problems.length > 0) {
   console.error(`Toolchain drift detected:\n${problems.map((p) => `  - ${p}`).join("\n")}`);
   process.exit(1);
 }
-console.log(`Node ${pinned} everywhere; biome ${biomePin} is the local binary.`);
+console.log(
+  `Node ${pinned} everywhere; biome ${biomePin} is the local binary; project version ${projectVersion}.`,
+);
