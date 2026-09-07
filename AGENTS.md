@@ -70,6 +70,33 @@ Do these only with explicit approval (`/approve` over iMessage is enough):
 - Committing anything you are not certain is publishable. **When unsure, ask.** Nothing sourced from
   OpenSea internal or SAML-protected repositories belongs here.
 
+## Measuring things
+
+Most of what goes wrong here is not a wrong answer. It is a right answer to a question the apparatus
+was not actually asking.
+
+**Make the control fail before you trust it.** If you are proving a credential works by calling an
+endpoint, first call it *without* the credential and confirm it breaks. We once proved an API key was
+valid with `/collections/{slug}/stats`, which is public and returns 200 for anyone — so the control
+passed for the wrong reason, and turned an absent measurement into a confident one. An architectural
+decision, a module, a published diary entry and an upstream bug report were all built on it.
+
+A control that cannot be made to fail is not evidence.
+
+**Say what would falsify it.** When you write "measured" in a comment, a PR, or the changelog, the
+next line should make clear what you would have seen if the claim were false. "These routes 401
+without a wallet token" is a claim; "and 200 with one, and 401 with no credential at all" is a
+measurement.
+
+**Check the instrument, not just the reading.** The same afternoon, the lint gate had been running a
+different program than the one we pinned. Both failures share a shape: careful attention to the thing
+being looked at, none to the thing being looked *through*. Before a long debugging session, spend one
+command confirming your tools are the tools you think they are.
+
+**"Present" is not "works".** A credential that the keyring returns is not a credential that
+authenticates. `anchor-service --check-credentials` makes a real call against an endpoint that is
+known to 401 without a key; prefer it to reading `/health`.
+
 ## Keeping the record
 
 Two artefacts, both part of the work rather than an afterthought:
@@ -198,12 +225,18 @@ Pin versions. Update deliberately, not incidentally.
 together and runs fast enough that there is no reason to skip it.
 
 ```bash
+npm run lint      # the gate CI runs
 npm run check     # verify
 npm run format    # apply safe fixes
 ```
 
-`biome.json` at the root governs every workspace; do not add per-workspace configs. CI runs
-`biome ci .` and fails on any diagnostic.
+**Always `npm run lint`, never `npx biome`.** An npm script puts `node_modules/.bin` first on PATH;
+`npx` falls through to the registry when the local binary is missing, and there is an unrelated
+package called `biome` sitting there. It ran instead of `@biomejs/biome` for a full day, reporting
+success on code CI then rejected. `scripts/check-versions.ts` now asserts the local binary exists and
+matches the pin, so run `npm ci` at the repo root before trusting any local gate.
+
+`biome.json` at the root governs every workspace; do not add per-workspace configs.
 
 Suppress a rule only with a reason attached, and only when the rule is wrong about *this* code:
 

@@ -110,7 +110,20 @@ text is discarded.
 **When it's fixed.** Add the retry ladder. Note that this is the one entry where the workaround is an
 absence — easy to forget precisely because there is no code to find.
 
-## 7. No Solana adapter in `@opensea/wallet-adapters`
+## 7. `/account/{address}/portfolio` 500s on the obvious call
+
+**Upstream problem.** A live server bug, not a package one. The bare route returns
+`500 {"errors":["Internal Server Error"]}` for a large account, and `200` for that same account the
+moment any query parameter is supplied, and `200` for a smaller account with no parameters. Fine
+when filtered, fine when small, fails when large and unfiltered.
+
+**What we wrote.** Nothing yet. Note that finding 5 compounds it: `PortfolioArgs` does not expose
+`chains`, so an SDK consumer cannot easily send the parameter that makes the call succeed.
+
+**When it's fixed.** Nothing to delete. If it persists, the workaround is to always send a
+parameter, and that belongs here as its own entry when we write it.
+
+## 8. No Solana adapter in `@opensea/wallet-adapters`
 
 **Upstream problem.** [`ProjectOpenSea/wallet-adapters`](https://github.com/ProjectOpenSea/wallet-adapters)
 is the package Anchor would otherwise use for managed signing: adapters for Privy, Turnkey,
@@ -128,7 +141,7 @@ adapter shipping does not close the *other* gap: Anchor still cannot **compile**
 transaction, which needs associated token account derivation (ed25519 on-curve arithmetic) and a
 live blockhash. If `wallet-adapters` grows a Solana adapter that also builds transactions, both go.
 
-## 8. Privy's Solana policy engine cannot express an approval refusal
+## 9. Privy's Solana policy engine cannot express an approval refusal
 
 Not an OpenSea gap, but it belongs in the same register because it is the same failure mode: a
 capability that exists on one chain and silently does not on another.
@@ -156,7 +169,7 @@ compromised or compelled.
 
 ## Reporting
 
-The full write-up handed to OpenSea on 2026-09-07 covers eight findings, of which the six above
+The full write-up handed to OpenSea on 2026-09-07 covers eight findings, of which findings 1-6 above
 affect this repository. Two others — the four wallet-scoped operations that 401 while declaring only
 `ApiKeyAuth`, and the absent `POST /api/v2/auth/tokens/exchange` — are documented in
 `service/src/auth.ts` instead, because they shaped that module's whole design rather than leaving a

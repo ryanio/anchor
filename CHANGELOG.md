@@ -43,10 +43,16 @@ validation is chain-aware — EVM is `0x` plus 40 hex, Solana is base58 decoding
 and runs at config load, so a mismatch is a startup error naming the field rather than a 400 hours
 later. [docs/chains.md](docs/chains.md) covers where chains actually differ.
 
-**Two credentials.** Account-scoped OpenSea reads need a wallet JWT in addition to the API key —
-measured, not assumed. `anchor-service --set-pat` stores a personal access token in the keyring,
-exchanged for a JWT and refreshed before expiry. Without one, account routes fail with a message
-naming the missing credential *before* any network call, rather than passing a bare 401 through.
+**One credential, and a guard on it.** Every read Anchor makes needs the OpenSea API key and
+nothing else. An earlier version of this file claimed account-scoped reads also required a wallet
+JWT; that was wrong, and the story is in the [build diary](https://anchor.ryanio.com). A wallet
+token is still supported — `anchor-service --set-pat` stores a personal access token, exchanged for
+a JWT and refreshed before expiry — because the spec declares `WalletAuth` on fifty paths Anchor
+does not call yet, and writing will need it. It gates nothing.
+
+Credentials are validated on the way in. A credential is one opaque token, and a value carrying
+whitespace or control characters is refused rather than stored, because a reader that accepts
+"whatever line arrived" will cheerfully store a shell command — which is exactly what happened.
 
 **Policy-bound execution** (preview — see Known limitations). An `Executor` interface splitting
 `request → simulate → decide → submit`, so holding one stage does not grant the next. Approvals are
@@ -102,8 +108,11 @@ $100 to $100k+, each tier earned by a clean incident record — is in
 ### Known limitations
 
 - **The wallet-token exchange has never been run end to end.** Its request and response shapes are
-  read from `@opensea/sdk`'s source rather than from a successful call, because we have no PAT to
-  test with. Account-scoped routes are unverified against the live API.
+  read from `@opensea/sdk`'s source rather than from a successful call. We now hold a scoped token,
+  but no route Anchor calls needs one, so nothing exercises the path.
+- **`/account/{address}/portfolio` returns 500 upstream** for a large account with no query
+  parameters, and 200 for that same account with any parameter. Reported to OpenSea; see
+  [docs/upstream.md](docs/upstream.md).
 - **Privy's policy engine cannot express Anchor's cumulative caps.** Its spend-limit primitive tops
   out at a 72-hour rolling window and does not observe `eth_sendTransaction` at all, so the rolling
   24h and 7d caps in [docs/autonomy.md](docs/autonomy.md) are enforced *only* by the in-process

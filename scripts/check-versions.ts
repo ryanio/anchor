@@ -9,6 +9,7 @@
  * This exists because drift actually bit us: local Node 26 vs CI Node 24 produced two green-locally,
  * red-in-CI failures in a single day.
  */
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -78,8 +79,38 @@ for (const wf of ["ci.yml", "deploy.yml"]) {
   }
 }
 
+// The tools have to be the tools we think they are.
+//
+// `npx biome ci .` silently ran an unrelated package called `biome` (version 0.3.3) for a full day,
+// because the repo root's node_modules had never been installed and npx fell through to the
+// registry. Every local "lint passed" in that window was a different program reporting success,
+// while CI — which does install — kept failing on things that had supposedly been cleared.
+//
+// So: assert the binary exists locally and identifies itself as the pinned @biomejs/biome. Use
+// `npm run lint`, never `npx biome`; an npm script puts node_modules/.bin first on PATH.
+const biomePin = JSON.parse(read("package.json")).devDependencies?.["@biomejs/biome"];
+if (typeof biomePin !== "string") {
+  problems.push("package.json does not pin @biomejs/biome");
+} else {
+  const wanted = biomePin.replace(/^[^0-9]*/, "");
+  try {
+    const out = execFileSync(join(root, "node_modules/.bin/biome"), ["--version"], {
+      encoding: "utf8",
+    }).trim();
+    const found = /(\d+\.\d+\.\d+)/.exec(out)?.[1];
+    if (found !== wanted) {
+      problems.push(`node_modules/.bin/biome reports ${found ?? out}, but package.json pins ${wanted}`);
+    }
+  } catch {
+    problems.push(
+      "node_modules/.bin/biome is missing — run `npm ci` at the repo root. " +
+        "Without it `npx biome` resolves to an unrelated package on the registry.",
+    );
+  }
+}
+
 if (problems.length > 0) {
-  console.error(`Node version drift detected:\n${problems.map((p) => `  - ${p}`).join("\n")}`);
+  console.error(`Toolchain drift detected:\n${problems.map((p) => `  - ${p}`).join("\n")}`);
   process.exit(1);
 }
-console.log(`Node version consistent: ${pinned} everywhere.`);
+console.log(`Node ${pinned} everywhere; biome ${biomePin} is the local binary.`);
