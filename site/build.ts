@@ -275,14 +275,20 @@ ${CSS}</style>
       <nav>
         <span class="foot-head">Build</span>
         <a href="https://github.com/ryanio/anchor">Source ${icon("arrow-up-right", 11)}</a>
-        <a href="https://github.com/ryanio/anchor/blob/main/AGENTS.md">Working agreement ${icon("arrow-up-right", 11)}</a>
-        <a href="https://github.com/ryanio/anchor/blob/main/docs/autonomy.md">Autonomy model ${icon("arrow-up-right", 11)}</a>
+        <a href="https://github.com/ryanio/anchor/blob/main/AGENTS.md">Agent rules ${icon("arrow-up-right", 11)}</a>
+        <a href="https://github.com/ryanio/anchor/blob/main/docs/autonomy.md">Autonomy ${icon("arrow-up-right", 11)}</a>
       </nav>
       <nav>
         <span class="foot-head">Elsewhere</span>
         <a href="https://ryanio.github.io/battle-for-the-ford/">Battle for the Ford ${icon("arrow-up-right", 11)}</a>
         <a href="https://omarchy.org">Omarchy ${icon("arrow-up-right", 11)}</a>
         <a href="https://opensea.io">OpenSea ${icon("arrow-up-right", 11)}</a>
+      </nav>
+      <nav>
+        <span class="foot-head">Ryan</span>
+        <a href="https://ryanio.com">ryanio.com ${icon("arrow-up-right", 11)}</a>
+        <a href="https://x.com/r_alx_z">X ${icon("arrow-up-right", 11)}</a>
+        <a href="https://github.com/ryanio">GitHub ${icon("arrow-up-right", 11)}</a>
       </nav>
     </div>
     <div class="foot-base">
