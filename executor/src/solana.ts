@@ -761,9 +761,8 @@ export function guardSolanaMessage(
         detail:
           `${limit} compute units at ${unitPrice} micro-lamports each commits up to ${lamports} ` +
           `lamports to a priority fee, above the ceiling of ${feeCeiling}. A priority fee produces ` +
-          "no asset delta, so no cap upstream " +
-          "of this module can see it; at the top of the range it is the account's whole native " +
-          "balance, paid to a validator.",
+          "no asset delta, so no cap upstream of this module can see it; at the top of the range " +
+          "it is the account's whole native balance, paid to a validator.",
       });
     } else {
       unverified.push(
