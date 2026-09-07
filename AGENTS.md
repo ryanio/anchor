@@ -76,6 +76,50 @@ Two artefacts, both part of the work rather than an afterthought:
 Be honest in both. "This approach failed and here's why" is more useful to a reader than a clean
 narrative, and this project is public precisely so people can learn from the real process.
 
+## Working alongside other agents
+
+Several agents may work this repo at once. Every rule here comes from a collision that actually
+happened, not a hypothetical.
+
+**One worktree per agent. Never share a working tree.** `git checkout -b` changes the tree for
+everyone in it — three agents once branched under each other, and one agent's commit landed on
+another's branch. Claim your own:
+
+```bash
+git worktree add /tmp/<task-name> -b <type>/<slug> origin/main
+```
+
+**Declare file ownership before starting, and stay inside it.** Two agents editing one file is a merge
+conflict you will resolve badly at the end instead of avoiding at the start. If you need a file
+another task owns, say so and let a human sequence it.
+
+**Some files are contended by design.** `CHANGELOG.md`, `.github/workflows/`, and `scripts/` get
+touched by nearly every change. Prefer adding your entry rather than restructuring around it, and
+expect to merge `origin/main` before pushing.
+
+**Branch and PR. Never push to `main`, never force-push a published branch.** Merge `origin/main` into
+your branch rather than rebasing once it is pushed.
+
+**Verify, do not report.** An agent once concluded with "CI: pass" when CI had failed. Check the actual
+run — `gh pr checks <n>` — before claiming a state, and treat another agent's summary as a claim to
+test, not a fact to repeat. This applies to your own work most of all: the typecheck that "obviously"
+passes is the one that fails.
+
+**Assert your edits landed.** A `str.replace` whose pattern does not match silently does nothing. A
+patch that reports success while changing no bytes has produced a false claim in a public repo — that
+happened here with an action pin the CHANGELOG announced before the repo had it. Assert the pattern
+matched, then grep the result.
+
+## Rules files
+
+`AGENTS.md` is the single source of truth. `CLAUDE.md` is a pointer to it and must stay that way —
+never put rules in both, because the copies will drift and no one will notice which is stale.
+
+Tools disagree about the filename: Claude Code reads `CLAUDE.md`, Codex and Cursor read `AGENTS.md`,
+and Hermes reads both at a project root but only the **first match** in a subdirectory
+(`AGENTS.override.md` → `AGENTS.md` → `agents.md` → `CLAUDE.md` → ...). A subdirectory holding both
+would have its `CLAUDE.md` silently ignored — one more reason there is only ever one real file.
+
 ## Node version
 
 **`.node-version` at the repo root is the single source of truth.** It currently pins 26.8.1.
