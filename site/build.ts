@@ -14,27 +14,77 @@ const ROOT = dirname(fileURLToPath(import.meta.url));
 const OUT = join(ROOT, "dist");
 
 // ── tiny markdown ──────────────────────────────────────────────────────────
-const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+// Escapes quotes too: without that, a link URL lands inside a quoted attribute and can close it.
+const esc = (s: string) =>
+  s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+   .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+
+/**
+ * Only http, https and mailto, plus site-relative paths. Everything else becomes an inert "#".
+ * `javascript:` in a contributed diary entry would otherwise render as a live XSS link, and diary
+ * entries arrive by pull request.
+ */
+function safeHref(url: string): string {
+  const trimmed = url.trim();
+  if (/^(?:\/|\.\/|#)/.test(trimmed)) return trimmed;
+  if (/^(?:https?:|mailto:)/i.test(trimmed)) return trimmed;
+  return "#";
+}
 
 function inline(s: string): string {
-  return esc(s)
-    .replace(/`([^`]+)`/g, (_, c) => `<code>${c}</code>`)
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>')
+  // Code spans are extracted BEFORE any other rule runs, so markdown inside `...` stays literal.
+  // Doing it the other way round rendered `**not bold**` inside a code span as actual bold.
+  const codes: string[] = [];
+  const withPlaceholders = s.replace(/`([^`]+)`/g, (_, c: string) => {
+    codes.push(c);
+    return `\u0000CODE${codes.length - 1}\u0000`;
+  });
+
+  const html = esc(withPlaceholders)
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, text: string, href: string) =>
+      // `href` is already escaped by the esc() above — escaping again turned &quot; into &amp;quot;
+      // and mangled legitimate URLs. No raw quote can survive that pass, so the attribute is safe.
+      `<a href="${safeHref(href)}">${text}</a>`)
     .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
     .replace(/(^|[^*])\*([^*]+)\*/g, "$1<em>$2</em>");
+
+  return html.replace(/\u0000CODE(\d+)\u0000/g, (_, i: string) => `<code>${esc(codes[Number(i)]!)}</code>`);
 }
+
+/** Split a table row on unescaped pipes that are not inside a code span. */
+function splitRow(line: string): string[] {
+  const cells: string[] = [];
+  let current = "";
+  let inCode = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i]!;
+    if (ch === "`") inCode = !inCode;
+    if (ch === "|" && !inCode) { cells.push(current); current = ""; continue; }
+    current += ch;
+  }
+  cells.push(current);
+  // Drop the empty leading cell, and a trailing one only when the row ends with a pipe — otherwise
+  // `| a | b` silently lost its last column.
+  cells.shift();
+  if (line.trimEnd().endsWith("|")) cells.pop();
+  return cells.map((c) => c.trim());
+}
+
+const isSeparatorRow = (cells: string[]) =>
+  cells.length > 0 && cells.every((c) => /^:?-{1,}:?$/.test(c.replace(/\s/g, "")));
 
 function markdown(src: string): string {
   const out: string[] = [];
-  const lines = src.split("\n");
+  const lines = src.replace(/\r\n/g, "\n").split("\n");
   let i = 0;
+
+  const isBlockStart = (l: string) => /^(#{1,4}\s|```|>\s|\||\s*[-*]\s|\d+\.\s)/.test(l);
 
   while (i < lines.length) {
     const line = lines[i]!;
-
     if (!line.trim()) { i++; continue; }
 
-    if (line.startsWith("```")) {                       // fenced code
+    if (line.startsWith("```")) {
       const body: string[] = [];
       i++;
       while (i < lines.length && !lines[i]!.startsWith("```")) body.push(lines[i++]!);
@@ -51,50 +101,55 @@ function markdown(src: string): string {
       continue;
     }
 
-    if (line.startsWith("> ")) {                         // blockquote
+    if (line.startsWith("> ")) {
       const body: string[] = [];
       while (i < lines.length && lines[i]!.startsWith("> ")) body.push(lines[i++]!.slice(2));
       out.push(`<blockquote>${inline(body.join(" "))}</blockquote>`);
       continue;
     }
 
-    if (/^\s*[-*]\s+/.test(line)) {                      // unordered list
+    // Lists absorb wrapped continuation lines. Without this, every wrapped bullet in CHANGELOG.md
+    // became its own <ul> followed by a stray <p> — which was live on the published changelog.
+    const listMatch = /^(\s*)([-*]|\d+\.)\s+/.exec(line);
+    if (listMatch) {
+      const ordered = /\d/.test(listMatch[2]!);
       const items: string[] = [];
-      while (i < lines.length && /^\s*[-*]\s+/.test(lines[i]!)) {
-        items.push(`<li>${inline(lines[i++]!.replace(/^\s*[-*]\s+/, ""))}</li>`);
+      while (i < lines.length) {
+        const m = /^(\s*)([-*]|\d+\.)\s+(.*)$/.exec(lines[i]!);
+        if (!m) break;
+        if (/\d/.test(m[2]!) !== ordered) break;
+        const parts = [m[3]!];
+        i++;
+        while (i < lines.length && lines[i]!.trim() && !isBlockStart(lines[i]!)) {
+          parts.push(lines[i++]!.trim());
+        }
+        items.push(`<li>${inline(parts.join(" "))}</li>`);
       }
-      out.push(`<ul>${items.join("")}</ul>`);
+      out.push(ordered ? `<ol>${items.join("")}</ol>` : `<ul>${items.join("")}</ul>`);
       continue;
     }
 
-    if (/^\d+\.\s+/.test(line)) {                        // ordered list
-      const items: string[] = [];
-      while (i < lines.length && /^\d+\.\s+/.test(lines[i]!)) {
-        items.push(`<li>${inline(lines[i++]!.replace(/^\d+\.\s+/, ""))}</li>`);
-      }
-      out.push(`<ol>${items.join("")}</ol>`);
-      continue;
-    }
-
-    if (line.startsWith("|")) {                          // table
+    if (line.startsWith("|")) {
       const rows: string[][] = [];
       while (i < lines.length && lines[i]!.startsWith("|")) {
-        const cells = lines[i]!.split("|").slice(1, -1).map((c) => c.trim());
-        if (!/^-+$/.test(cells[0]?.replace(/[\s:]/g, "") ?? "x")) rows.push(cells);
+        const cells = splitRow(lines[i]!);
+        if (!isSeparatorRow(cells)) rows.push(cells);
         i++;
       }
       const [head, ...body] = rows;
-      out.push(
-        `<table><thead><tr>${head!.map((c) => `<th>${inline(c)}</th>`).join("")}</tr></thead>` +
-        `<tbody>${body.map((r) => `<tr>${r.map((c) => `<td>${inline(c)}</td>`).join("")}</tr>`).join("")}</tbody></table>`,
-      );
+      // A table whose only rows were separators has no header; emit nothing rather than crash the
+      // whole build on `head!.map`.
+      if (head) {
+        out.push(
+          `<table><thead><tr>${head.map((c) => `<th>${inline(c)}</th>`).join("")}</tr></thead>` +
+          `<tbody>${body.map((r) => `<tr>${r.map((c) => `<td>${inline(c)}</td>`).join("")}</tr>`).join("")}</tbody></table>`,
+        );
+      }
       continue;
     }
 
-    const para: string[] = [];                           // paragraph
-    while (i < lines.length && lines[i]!.trim() && !/^(#{1,4}\s|```|>\s|\||\s*[-*]\s|\d+\.\s)/.test(lines[i]!)) {
-      para.push(lines[i++]!);
-    }
+    const para: string[] = [];
+    while (i < lines.length && lines[i]!.trim() && !isBlockStart(lines[i]!)) para.push(lines[i++]!);
     out.push(`<p>${inline(para.join(" "))}</p>`);
   }
   return out.join("\n");
@@ -105,10 +160,10 @@ interface Entry { slug: string; title: string; date: string; summary: string; ht
 
 function parseEntry(file: string): Entry {
   const raw = readFileSync(join(ROOT, "diary", file), "utf8");
-  const m = /^---\n([\s\S]*?)\n---\n([\s\S]*)$/.exec(raw);
+  const m = /^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/.exec(raw.replace(/^\uFEFF/, ""));
   if (!m) throw new Error(`${file}: missing frontmatter`);
   const meta = Object.fromEntries(
-    m[1]!.split("\n").map((l) => {
+    m[1]!.split("\n").filter((l) => l.includes(":")).map((l) => {
       const idx = l.indexOf(":");
       return [l.slice(0, idx).trim(), l.slice(idx + 1).trim().replace(/^["']|["']$/g, "")];
     }),

@@ -52,10 +52,53 @@ export function loadConfig(): Config {
     writeFileSync(path, JSON.stringify(DEFAULTS, null, 2) + "\n", { mode: 0o644 });
     return { ...DEFAULTS };
   }
-  const parsed = JSON.parse(readFileSync(path, "utf8")) as Partial<Config>;
+  let parsed: Partial<Config>;
+  try {
+    parsed = JSON.parse(readFileSync(path, "utf8")) as Partial<Config>;
+  } catch (err) {
+    throw new Error(`${path} is not valid JSON: ${(err as Error).message}`);
+  }
+  return validate(parsed);
+}
+
+/**
+ * Config comes off disk, so every field is untrusted. Silently accepting a bad value is worse than
+ * refusing it: `"requestsPerSecond": "fast"` produced NaN, which made the rate limiter's `wait > 0`
+ * always false and disabled rate limiting entirely, with no error anywhere.
+ */
+export function validate(parsed: Partial<Config>): Config {
+  const str = (v: unknown, fallback: string, field: string): string => {
+    if (v === undefined) return fallback;
+    if (typeof v !== "string") throw new Error(`config: \`${field}\` must be a string`);
+    return v;
+  };
+  const num = (v: unknown, fallback: number, field: string, min: number): number => {
+    if (v === undefined) return fallback;
+    if (typeof v !== "number" || !Number.isFinite(v) || v < min) {
+      throw new Error(`config: \`${field}\` must be a finite number >= ${min}`);
+    }
+    return v;
+  };
+
+  if (parsed.collections !== undefined &&
+      (!Array.isArray(parsed.collections) || parsed.collections.some((c) => typeof c !== "string"))) {
+    throw new Error("config: `collections` must be an array of strings");
+  }
+
+  const ttlIn = parsed.ttl ?? {};
+  if (typeof ttlIn !== "object" || ttlIn === null) throw new Error("config: `ttl` must be an object");
+
+  const ttl = {} as Config["ttl"];
+  for (const k of Object.keys(DEFAULTS.ttl) as Array<keyof Config["ttl"]>) {
+    ttl[k] = num((ttlIn as Record<string, unknown>)[k], DEFAULTS.ttl[k], `ttl.${k}`, 0);
+  }
+
   return {
-    ...DEFAULTS,
-    ...parsed,
-    ttl: { ...DEFAULTS.ttl, ...(parsed.ttl ?? {}) },
+    chain: str(parsed.chain, DEFAULTS.chain, "chain"),
+    wallet: str(parsed.wallet, DEFAULTS.wallet, "wallet"),
+    collections: parsed.collections ?? [...DEFAULTS.collections],
+    port: num(parsed.port, DEFAULTS.port, "port", 0),
+    ttl,
+    requestsPerSecond: num(parsed.requestsPerSecond, DEFAULTS.requestsPerSecond, "requestsPerSecond", 0.1),
   };
 }
