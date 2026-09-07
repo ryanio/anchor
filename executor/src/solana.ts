@@ -215,13 +215,75 @@ const DELEGABLE_SYSTEM_TAGS: ReadonlySet<number> = new Set([
 ]);
 
 /**
+ * Compute Budget instruction tags.
+ *
+ * A **third** encoding in the same file, which is the whole reason they are named here rather than
+ * matched inline. SPL Token's tag is one byte; the System Program's is a four-byte little-endian
+ * `u32`; the Compute Budget program is serialized with borsh, whose enum discriminant is one byte
+ * again. Reading any of the three with another's rule silently misclassifies — and for a denial
+ * list, misclassifying is the direction of wrong that lets something through.
+ */
+export const COMPUTE_BUDGET_INSTRUCTION = {
+  requestUnitsDeprecated: 0,
+  requestHeapFrame: 1,
+  setComputeUnitLimit: 2,
+  setComputeUnitPrice: 3,
+  setLoadedAccountsDataSizeLimit: 4,
+} as const;
+
+/**
+ * The most compute units one transaction may declare (`MAX_COMPUTE_UNIT_LIMIT`).
+ *
+ * Used as the assumed limit when a transaction declares none. The runtime's actual default is
+ * derived from how many instructions the transaction has, under counting rules this module
+ * deliberately does not restate — getting them subtly wrong is exactly the failure mode the rest of
+ * this file exists to avoid. Assuming the ceiling can only ever *over*-estimate the fee, so the
+ * error direction is "refuses a transaction it could have allowed", never the reverse.
+ */
+const MAX_COMPUTE_UNIT_LIMIT = 1_400_000;
+
+/**
+ * Most lamports a transaction may commit to a priority fee before it is a finding. 0.01 SOL.
+ *
+ * **Why this exists at all.** The Compute Budget program was on the allowlist below with no
+ * instruction check, described as a program that "sets a fee limit" and therefore inert. It is not.
+ * `SetComputeUnitPrice` names a price in *micro-lamports per compute unit*, as a `u64`, and the fee
+ * it commits to is `limit × price ÷ 1_000_000` — so a transaction declaring the maximum limit and a
+ * price of 10^12 pays 1,400 SOL, or in practice the payer's entire native balance, to a validator.
+ *
+ * It is the same shape as the System Program hole one commit earlier: an allowlisted program whose
+ * instructions went unread. It is *not* a member of the human-only class — it grants no standing
+ * authority and it is over when the block is — but it is a spend that no cap in docs/autonomy.md
+ * can see, because a priority fee is not an asset delta and never appears in a simulation. So it is
+ * refused here, where the bytes are, rather than upstream, where the number does not exist.
+ *
+ * Unlike almost everything else in this module the check is **exact**: both operands are inline
+ * `u32`/`u64` literals in the instruction data. No account resolves, so no lookup table can move it.
+ *
+ * The default is deliberately generous — a busy-network priority fee is normally well under
+ * 0.001 SOL — and {@link TransactionGuardOptions.priorityFeeCeiling} raises or lowers it. A ceiling
+ * that is a *policy* number rather than a safety floor belongs in `PolicyLimits` eventually; it is
+ * here for now because this is the only layer that can see the operands it applies to.
+ */
+const DEFAULT_PRIORITY_FEE_CEILING = 10_000_000n;
+
+/** Little-endian unsigned read of `width` bytes at `offset`, or `null` when the data is too short. */
+function readUint(data: Uint8Array, offset: number, width: number): bigint | null {
+  if (data.length < offset + width) return null;
+  let value = 0n;
+  for (let i = width - 1; i >= 0; i--) value = (value << 8n) | BigInt(data[offset + i] ?? 0);
+  return value;
+}
+
+/**
  * Programs an instruction may name by default.
  *
- * Being on this list is *permission to be inspected*, not permission to run — the System and token
- * programs are both here and both have their instructions classified below, because each of them
- * can hand an account away. Only Compute Budget, Memo and the Associated Token program are on it
- * unconditionally, and those three genuinely cannot: they set a fee limit, write a note, and create
- * an account at a derived address the caller does not choose.
+ * Being on this list is *permission to be inspected*, not permission to run. The System program,
+ * the two token programs and the Compute Budget program are all here and all have their
+ * instructions classified below — the first three because they can hand an account away, the last
+ * because it can commit the native balance to a fee. Only Memo and the Associated Token program are
+ * on it unconditionally: one writes a note, and the other creates an account at a derived address
+ * the caller does not choose.
  */
 const DEFAULT_PROGRAM_ALLOWLIST: readonly SolanaAddress[] = [
   SYSTEM_PROGRAM,
@@ -472,6 +534,13 @@ export interface TransactionGuardOptions {
    * so allowlists invert").
    */
   readonly programAllowlist?: readonly SolanaAddress[];
+  /**
+   * Most lamports a transaction may commit to a priority fee. Defaults to 0.01 SOL.
+   *
+   * See {@link DEFAULT_PRIORITY_FEE_CEILING} for why a fee needs a ceiling of its own: it is a
+   * spend that no asset delta records, so no cap upstream of this module can see it.
+   */
+  readonly priorityFeeCeiling?: bigint;
 }
 
 function isTokenProgram(programId: SolanaAddress): boolean {
@@ -511,8 +580,12 @@ export function guardSolanaMessage(
   options: TransactionGuardOptions = {},
 ): TransactionGuardResult {
   const allowlist = options.programAllowlist ?? DEFAULT_PROGRAM_ALLOWLIST;
+  const feeCeiling = options.priorityFeeCeiling ?? DEFAULT_PRIORITY_FEE_CEILING;
   const findings: TransactionFinding[] = [];
   const unverified: string[] = [];
+  /** Compute Budget operands, accumulated across instructions and judged once, after the loop. */
+  let declaredUnitLimit: bigint | null = null;
+  let unitPrice: bigint | null = null;
 
   message.instructions.forEach((instruction, index) => {
     const at = `instruction ${index}`;
@@ -579,6 +652,62 @@ export function guardSolanaMessage(
       return;
     }
 
+    if (program === COMPUTE_BUDGET_PROGRAM) {
+      // Borsh: a one-byte discriminant, then the operand. Not the System Program's four bytes —
+      // see COMPUTE_BUDGET_INSTRUCTION for why all three encodings are spelled out.
+      const tag = instruction.data[0];
+      if (tag === undefined) {
+        findings.push({
+          humanOnly: false,
+          detail: `${at} is a Compute Budget instruction with no tag byte`,
+        });
+        return;
+      }
+      if (tag === COMPUTE_BUDGET_INSTRUCTION.setComputeUnitLimit) {
+        const value = readUint(instruction.data, 1, 4);
+        if (value === null) {
+          findings.push({
+            humanOnly: false,
+            detail: `${at} is a SetComputeUnitLimit with no u32 operand`,
+          });
+          return;
+        }
+        // The runtime takes the last such instruction; this takes the largest. Both are refusals of
+        // the same transaction, but the largest cannot be lowered by appending another instruction.
+        declaredUnitLimit =
+          declaredUnitLimit === null || value > declaredUnitLimit ? value : declaredUnitLimit;
+        return;
+      }
+      if (tag === COMPUTE_BUDGET_INSTRUCTION.setComputeUnitPrice) {
+        const value = readUint(instruction.data, 1, 8);
+        if (value === null) {
+          findings.push({
+            humanOnly: false,
+            detail: `${at} is a SetComputeUnitPrice with no u64 operand`,
+          });
+          return;
+        }
+        unitPrice = unitPrice === null || value > unitPrice ? value : unitPrice;
+        return;
+      }
+      if (
+        tag === COMPUTE_BUDGET_INSTRUCTION.requestHeapFrame ||
+        tag === COMPUTE_BUDGET_INSTRUCTION.setLoadedAccountsDataSizeLimit
+      ) {
+        // Both bound a resource rather than name a price. Neither can cost lamports.
+        return;
+      }
+      findings.push({
+        humanOnly: false,
+        detail:
+          `${at} is Compute Budget instruction ${tag}, which Anchor does not recognise. Tag ` +
+          `${COMPUTE_BUDGET_INSTRUCTION.requestUnitsDeprecated} is the deprecated RequestUnits, ` +
+          "whose additional_fee operand is priced differently from the one checked here; anything " +
+          "else is unknown. Either way it is refused rather than assumed free.",
+      });
+      return;
+    }
+
     if (!isTokenProgram(program)) return;
 
     if (instruction.data.length === 0) {
@@ -619,6 +748,30 @@ export function guardSolanaMessage(
       );
     }
   });
+
+  // The priority fee, judged once the whole message has been read: the limit and the price arrive
+  // in two separate instructions, so neither alone says what the transaction commits to.
+  if (unitPrice !== null && unitPrice > 0n) {
+    const limit = declaredUnitLimit ?? BigInt(MAX_COMPUTE_UNIT_LIMIT);
+    // Ceiling division, so a fee is never rounded down into the allowance.
+    const lamports = (limit * unitPrice + 999_999n) / 1_000_000n;
+    if (lamports > feeCeiling) {
+      findings.push({
+        humanOnly: false,
+        detail:
+          `${limit} compute units at ${unitPrice} micro-lamports each commits up to ${lamports} ` +
+          `lamports to a priority fee, above the ceiling of ${feeCeiling}. A priority fee produces ` +
+          "no asset delta, so no cap upstream " +
+          "of this module can see it; at the top of the range it is the account's whole native " +
+          "balance, paid to a validator.",
+      });
+    } else {
+      unverified.push(
+        `this transaction commits up to ${lamports} lamports to a priority fee. That is within the ` +
+          `ceiling of ${feeCeiling}, but it is a real spend that no asset delta records`,
+      );
+    }
+  }
 
   if (message.lookups.length > 0) {
     unverified.push(

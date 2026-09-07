@@ -16,6 +16,7 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import {
   BPF_UPGRADEABLE_LOADER,
+  COMPUTE_BUDGET_INSTRUCTION,
   COMPUTE_BUDGET_PROGRAM,
   containsHumanOnlyInstruction,
   fromBase64,
@@ -386,6 +387,173 @@ describe("System Program authority handovers are refused too", () => {
     assert.ok(
       guard.unverified.some((note) => /transfers native SOL to an account named by index/.test(note)),
     );
+  });
+});
+
+// --- The priority fee, which is a spend no delta records ---------------------------------------
+
+/** A Compute Budget instruction: a one-byte borsh tag, then a little-endian operand. */
+function computeBudget(tag: number, value: bigint, width: number): number[] {
+  const operand: number[] = [];
+  for (let i = 0n; i < BigInt(width); i++) operand.push(Number((value >> (8n * i)) & 0xffn));
+  return [tag, ...operand];
+}
+
+describe("the Compute Budget program is a spend, not an inert fee limit", () => {
+  const MAX_UNITS = 1_400_000;
+
+  /** `limit` compute units at `price` micro-lamports each, as the two instructions that set them. */
+  function priced(price: bigint, limit: number | null = MAX_UNITS): Uint8Array {
+    const instructions = [
+      {
+        programIndex: 1,
+        data: computeBudget(COMPUTE_BUDGET_INSTRUCTION.setComputeUnitPrice, price, 8),
+      },
+    ];
+    if (limit !== null) {
+      instructions.unshift({
+        programIndex: 1,
+        data: computeBudget(COMPUTE_BUDGET_INSTRUCTION.setComputeUnitLimit, BigInt(limit), 4),
+      });
+    }
+    return serialize({ keys: [WALLET, COMPUTE_BUDGET_PROGRAM], instructions });
+  }
+
+  test("a priority fee that would drain the account is refused", () => {
+    // The regression this whole section exists for. Before it, the Compute Budget program was on
+    // DEFAULT_PROGRAM_ALLOWLIST and no branch read its instructions, so this transaction — which
+    // commits 1,400 SOL, or in practice the payer's entire native balance, to a validator — came
+    // back with `findings: []`. It grants no standing authority, so it is not human-only; it is a
+    // spend that produces no asset delta, so nothing upstream of this module can see it either.
+    const guard = guardSolanaTransaction(priced(1_000_000_000_000n));
+    assert.equal(guard.findings.length, 1);
+    assert.equal(guard.findings[0]?.humanOnly, false);
+    assert.match(guard.findings[0]?.detail ?? "", /1400000000000 lamports to a priority fee/);
+  });
+
+  test("an ordinary priority fee passes, and is still reported as a spend", () => {
+    // 5,000 micro-lamports per unit across the full limit is 7,000 lamports — 0.000007 SOL, an
+    // ordinary busy-network fee. It is allowed, and it is still *stated*, because it is real money
+    // that no simulation delta will ever mention. The ceiling of 0.01 SOL is roughly a thousand
+    // times this, which is the margin a default should have when the cost of being wrong is a
+    // refused transaction rather than a lost balance.
+    const guard = guardSolanaTransaction(priced(5_000n));
+    assert.deepEqual(guard.findings, []);
+    assert.ok(guard.unverified.some((note) => /7000 lamports to a priority fee/.test(note)));
+  });
+
+  test("the ceiling is an option, so a deliberate choice is expressible and a default is not a policy", () => {
+    const drain = priced(1_000_000_000_000n);
+    assert.equal(guardSolanaTransaction(drain, { priorityFeeCeiling: 2n ** 64n }).findings.length, 0);
+    assert.equal(guardSolanaTransaction(priced(5_000n), { priorityFeeCeiling: 1n }).findings.length, 1);
+  });
+
+  test("omitting the unit limit does not omit the fee: the maximum is assumed", () => {
+    // A transaction that names a price and no limit still commits to a fee. The runtime derives the
+    // default from instruction counting rules this module deliberately does not restate, so it
+    // assumes the ceiling — which can only over-estimate, never wave something through.
+    const guard = guardSolanaTransaction(priced(1_000_000_000_000n, null));
+    assert.equal(guard.findings.length, 1);
+    assert.match(guard.findings[0]?.detail ?? "", /^1400000 compute units/);
+  });
+
+  test("a second instruction cannot lower the estimate a first one established", () => {
+    // The runtime takes the last SetComputeUnitPrice; this takes the largest. Appending a cheap
+    // one after an expensive one is the obvious way to launder the check if it took the last.
+    const guard = guardSolanaTransaction(
+      serialize({
+        keys: [WALLET, COMPUTE_BUDGET_PROGRAM],
+        instructions: [
+          {
+            programIndex: 1,
+            data: computeBudget(COMPUTE_BUDGET_INSTRUCTION.setComputeUnitPrice, 10n ** 12n, 8),
+          },
+          { programIndex: 1, data: computeBudget(COMPUTE_BUDGET_INSTRUCTION.setComputeUnitPrice, 1n, 8) },
+        ],
+      }),
+    );
+    assert.equal(guard.findings.length, 1);
+    assert.match(guard.findings[0]?.detail ?? "", /priority fee/);
+  });
+
+  test("a zero price is not a fee, and says nothing", () => {
+    const guard = guardSolanaTransaction(priced(0n));
+    assert.deepEqual(guard.findings, []);
+    assert.ok(!guard.unverified.some((note) => /priority fee/.test(note)));
+  });
+
+  test("the borsh tag is one byte, not the System Program's four", () => {
+    // Third encoding in one file: SPL Token's one-byte tag, the System Program's four-byte u32,
+    // and the Compute Budget program's one-byte borsh discriminant. `03 00 00 00 ...` read with
+    // the system rule would be a SetComputeUnitPrice; read correctly it is tag 3 with a price whose
+    // low bytes are zero. This pins that it is read as borsh.
+    const guard = guardSolanaTransaction(
+      serialize({
+        keys: [WALLET, COMPUTE_BUDGET_PROGRAM],
+        instructions: [{ programIndex: 1, data: [3, 0, 0, 0, 1, 0, 0, 0, 0] }],
+      }),
+    );
+    // 0x0000000100000000 = 2^32 micro-lamports per unit — enormous, so this must be a finding.
+    assert.equal(guard.findings.length, 1);
+    assert.match(guard.findings[0]?.detail ?? "", /priority fee/);
+  });
+
+  test("an unrecognised Compute Budget instruction is refused, not assumed free", () => {
+    for (const tag of [COMPUTE_BUDGET_INSTRUCTION.requestUnitsDeprecated, 9, 200]) {
+      const guard = guardSolanaTransaction(
+        serialize({
+          keys: [WALLET, COMPUTE_BUDGET_PROGRAM],
+          instructions: [{ programIndex: 1, data: [tag, 0, 0, 0, 0, 0, 0, 0, 0] }],
+        }),
+      );
+      assert.equal(guard.findings.length, 1, `tag ${tag} should be refused`);
+      assert.equal(guard.findings[0]?.humanOnly, false);
+      assert.match(guard.findings[0]?.detail ?? "", /does not recognise/);
+    }
+  });
+
+  test("a truncated operand is refused rather than read as a smaller number", () => {
+    const short = serialize({
+      keys: [WALLET, COMPUTE_BUDGET_PROGRAM],
+      instructions: [{ programIndex: 1, data: [COMPUTE_BUDGET_INSTRUCTION.setComputeUnitPrice, 0xff, 0xff] }],
+    });
+    const guard = guardSolanaTransaction(short);
+    assert.equal(guard.findings.length, 1);
+    assert.match(guard.findings[0]?.detail ?? "", /no u64 operand/);
+  });
+
+  test("the two resource limits cost nothing and pass", () => {
+    for (const tag of [
+      COMPUTE_BUDGET_INSTRUCTION.requestHeapFrame,
+      COMPUTE_BUDGET_INSTRUCTION.setLoadedAccountsDataSizeLimit,
+    ]) {
+      const guard = guardSolanaTransaction(
+        serialize({
+          keys: [WALLET, COMPUTE_BUDGET_PROGRAM],
+          instructions: [{ programIndex: 1, data: computeBudget(tag, 65_536n, 4) }],
+        }),
+      );
+      assert.deepEqual(guard.findings, [], `tag ${tag} should pass`);
+    }
+  });
+
+  test("the fee check reads bytes only, so a lookup table cannot move it", () => {
+    // Unlike almost everything else here, this check is exact: both operands are inline literals.
+    const guard = guardSolanaTransaction(
+      serialize({
+        keys: [WALLET, COMPUTE_BUDGET_PROGRAM],
+        instructions: [
+          {
+            programIndex: 1,
+            accounts: [200],
+            data: computeBudget(COMPUTE_BUDGET_INSTRUCTION.setComputeUnitPrice, 10n ** 12n, 8),
+          },
+        ],
+        lookups: [{ table: TABLE, writable: [1, 2], readonlyIndexes: [3] }],
+      }),
+    );
+    assert.equal(guard.findings.length, 1);
+    assert.match(guard.findings[0]?.detail ?? "", /priority fee/);
   });
 });
 
