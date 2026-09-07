@@ -168,59 +168,81 @@ tr:last-child td { border-bottom: 0; }
 
 footer {
   margin-top: var(--space-8);
-  padding: var(--space-6) var(--space-5) var(--space-4);
+  padding: var(--space-6) var(--space-6) var(--space-4);
   color: var(--text-muted);
   font-size: 14px;
 }
 
-.foot-grid {
+/*
+ * Two groups, not five columns. Five columns of equally muted links read as a wall of grey and
+ * nothing draws the eye; the brand and a single call to action carry the weight instead, and the
+ * link lists shrink to a supporting role.
+ */
+.foot-top {
   display: grid;
-  /* max-content on the link columns: they size to their longest label, so nothing wraps mid-phrase.
-     A footer link broken across two lines reads as two links. */
-  grid-template-columns: minmax(0, 1.5fr) repeat(4, max-content);
-  gap: var(--space-5) var(--space-6);
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+  gap: var(--space-7);
   align-items: start;
 }
 
-.foot-brand p { margin: 10px 0 0; font-size: 13.5px; line-height: 1.6; max-width: 34ch; }
+.foot-brand p {
+  margin: 12px 0 16px;
+  font-size: 14px; line-height: 1.65;
+  max-width: 40ch;
+}
 .foot-mark {
   display: inline-flex; align-items: center; gap: 9px;
-  font-size: 16px; font-weight: 650; letter-spacing: -.015em; color: var(--text);
+  font-size: 17px; font-weight: 660; letter-spacing: -.015em; color: var(--text);
 }
 .foot-mark .mark { color: var(--accent); }
 
-.foot-grid nav { display: flex; flex-direction: column; gap: 7px; }
-.foot-head {
-  font: 700 11px/1 var(--font-sans);
-  text-transform: uppercase; letter-spacing: .1em;
-  color: var(--text-subtle); margin-bottom: 3px;
+/* One thing to click, given real contrast so the eye lands somewhere. */
+.foot-cta {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 8px 14px; border-radius: 999px;
+  background: rgb(var(--accent-rgb) / .11);
+  border: 1px solid rgb(var(--accent-rgb) / .28);
+  color: var(--accent); text-decoration: none;
+  font-size: 13.5px; font-weight: 550;
+  transition: background .16s var(--ease), border-color .16s var(--ease);
 }
-.foot-grid nav a {
-  display: inline-flex; align-items: center; gap: 4px;
-  white-space: nowrap;
+.foot-cta:hover { background: rgb(var(--accent-rgb) / .18); border-color: rgb(var(--accent-rgb) / .5); }
+.foot-cta .icon:last-child { opacity: .6; }
+
+.foot-links { display: grid; grid-template-columns: repeat(2, max-content); gap: var(--space-6); justify-content: end; }
+.foot-links nav { display: flex; flex-direction: column; gap: 8px; }
+.foot-head {
+  font: 700 10.5px/1 var(--font-sans);
+  text-transform: uppercase; letter-spacing: .11em;
+  color: var(--text-subtle); margin-bottom: 4px;
+}
+.foot-links a {
   color: var(--text-muted); text-decoration: none; font-size: 13.5px;
+  white-space: nowrap; width: fit-content;
   transition: color .15s var(--ease);
 }
-.foot-grid nav a:hover { color: var(--accent); }
-.foot-grid nav a .icon { opacity: .55; }
+.foot-links a:hover { color: var(--accent); }
 
-/* A horizon line: bright at the centre, dissolving at both edges. */
 .foot-base {
   display: flex; flex-wrap: wrap; align-items: center; gap: 9px;
   margin-top: var(--space-6); padding-top: var(--space-4);
   font-size: 12.5px; color: var(--text-subtle);
   border-top: 1px solid transparent;
-  border-image: linear-gradient(90deg, transparent, var(--border-strong) 18%, var(--border-strong) 82%, transparent) 1;
+  border-image: linear-gradient(90deg, transparent, var(--border-strong) 15%, var(--border-strong) 85%, transparent) 1;
 }
+.foot-base a { color: var(--text-subtle); }
+.foot-base a:hover { color: var(--accent); }
 .foot-base code {
   font-size: 12px; padding: 1px 5px;
   background: var(--code-bg); border: 1px solid var(--border); border-radius: 4px;
 }
-.foot-base .dot { opacity: .5; }
+.foot-base .dot { opacity: .45; }
+.foot-llms { margin-left: auto; font-family: var(--font-mono); font-size: 12px; }
 
-@media (max-width: 860px) {
-  .foot-grid { grid-template-columns: repeat(2, max-content); justify-content: space-between; }
-  .foot-brand { grid-column: 1 / -1; }
+@media (max-width: 760px) {
+  .foot-top { grid-template-columns: 1fr; gap: var(--space-6); }
+  .foot-links { justify-content: start; }
+  .foot-llms { margin-left: 0; }
 }
 
 @media (max-width: 640px) {
