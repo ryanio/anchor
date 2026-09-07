@@ -1,5 +1,6 @@
 {
   "name": "anchor",
+  "version": "0.0.1",
   "private": true,
   "type": "module",
   "description": "Tooling shared across the repo. Workspaces keep their own deps.",
