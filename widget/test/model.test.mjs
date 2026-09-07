@@ -319,11 +319,25 @@ test("a fresh install is 'setup', not an error", () => {
   assert.equal(progress.total, 3);
   assert.equal(progress.position, 2);
   assert.equal(progress.optionalRemaining, 1);
+
+  // The collapsed optional line is computed from the steps, not written beside them. The version
+  // that was written beside them kept promising "portfolio value, incoming offers" after the steps
+  // behind those two were deleted.
+  assert.equal(Model.optionalSummary(fresh), "floor prices");
+  for (const step of Model.setupSteps(fresh)) {
+    if (step.optional) assert.ok(step.benefit, `optional step ${step.key} needs a benefit`);
+  }
   // The bar shows the mark and no numbers, rather than a red box or an empty rectangle.
   const label = Model.barLabel(fresh, NOW);
   assert.equal(label.value, "");
   assert.equal(label.status, Model.STATUS.SETUP);
   assert.match(Model.statusSummary(fresh, NOW), /^Anchor —/);
+});
+
+test("a satisfied optional step stops being advertised", () => {
+  const watching = stateWith({ health: health({ collections: ["doodles"] }) });
+  assert.equal(Model.optionalSummary(watching), "");
+  assert.equal(Model.setupProgress(watching).optionalRemaining, 0);
 });
 
 test("a missing wallet PAT is not a state at all — nothing we read needs one", () => {

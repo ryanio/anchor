@@ -761,7 +761,7 @@ Panel {
                 anchors.right: parent.right
                 anchors.verticalCenter: parent.verticalCenter
                 textFormat: Text.PlainText
-                text: root.optionalOpen ? "" : "portfolio value, incoming offers, floor prices"
+                text: root.optionalOpen ? "" : Model.optionalSummary(root.state)
                 elide: Text.ElideRight
                 color: root.panelDim
                 font.family: root.fontFamily

@@ -638,8 +638,26 @@ function setupSteps(state) {
       done: reachable && Array.isArray(health.collections) && health.collections.length > 0,
       hint: "add slugs to `collections` in ~/.config/anchor/config.json",
       optional: true,
+      /** What skipping this costs, as a noun phrase. See `optionalSummary`. */
+      benefit: "floor prices",
     },
   ];
+}
+
+/**
+ * What the collapsed optional steps are offering, as one line.
+ *
+ * Derived from the steps rather than written beside them. The hand-maintained version promised
+ * "portfolio value, incoming offers, floor prices" and kept saying it after the steps behind the
+ * first two were deleted — a caption outliving the thing it captioned. Anything that summarises a
+ * list has to be computed from that list or it is a comment that renders.
+ */
+function optionalSummary(state) {
+  const benefits = [];
+  for (const step of setupSteps(state)) {
+    if (step.optional && !step.done && step.benefit) benefits.push(step.benefit);
+  }
+  return benefits.join(" · ");
 }
 
 /**
@@ -1243,6 +1261,7 @@ if (typeof module !== "undefined") {
     credentials,
     apiKeyRejected,
     setupSteps,
+    optionalSummary,
     setupProgress,
     statusOf,
     statusDetail,
