@@ -37,8 +37,9 @@ const REMOVE_RE = /[\u00AD\u061C\u180E\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2
  * Control characters, replaced by a space rather than deleted so `"a\nb"` reads `"a b"` and not
  * `"ab"` — deleting the separator silently joins two words into a third that was never in the data.
  */
-// biome-ignore lint/suspicious/noControlCharactersInRegex: matching control characters is the
-// point — this is the filter that keeps them out of a bar label, and a test asserts it works.
+// The suppression must be one line: Biome reads only the last line of a `//` run as the directive,
+// so a wrapped reason silences nothing and reports itself as unused.
+// biome-ignore lint/suspicious/noControlCharactersInRegex: matching them is the point — this is the filter that keeps control characters out of a bar label, and a test asserts it works.
 const CONTROL_RE = /[\u0000-\u001F\u007F-\u009F]/g;
 
 /** Combining marks. A long run of them ("Zalgo") paints far outside the line box and over the bar. */
@@ -69,7 +70,10 @@ function sanitize(value, maxLength) {
   const limit = Number.isInteger(maxLength) && maxLength > 0 ? maxLength : DEFAULT_MAX_NAME;
   const chars = Array.from(text);
   if (chars.length <= limit) return text;
-  return `${chars.slice(0, Math.max(1, limit - 1)).join("").trimEnd()}…`;
+  return `${chars
+    .slice(0, Math.max(1, limit - 1))
+    .join("")
+    .trimEnd()}…`;
 }
 
 /** At most two combining marks per base character. Two is enough for any real script. */
@@ -361,9 +365,7 @@ function channelToLinear(value) {
 /** WCAG relative luminance. Channels are 0–1, matching QML's `color.r/g/b`. */
 function relativeLuminance(color) {
   const c = color ?? {};
-  return (
-    0.2126 * channelToLinear(c.r) + 0.7152 * channelToLinear(c.g) + 0.0722 * channelToLinear(c.b)
-  );
+  return 0.2126 * channelToLinear(c.r) + 0.7152 * channelToLinear(c.g) + 0.0722 * channelToLinear(c.b);
 }
 
 function contrastRatio(a, b) {
@@ -819,7 +821,16 @@ function eventList(data) {
 }
 
 const EVENT_TIME_KEYS = ["eventTimestamp", "event_timestamp", "createdDate", "created_date", "timestamp"];
-const EXPIRY_KEYS = ["expirationDate", "expiration_date", "expirationTime", "expiration_time", "endTime", "end_time", "closingDate", "closing_date"];
+const EXPIRY_KEYS = [
+  "expirationDate",
+  "expiration_date",
+  "expirationTime",
+  "expiration_time",
+  "endTime",
+  "end_time",
+  "closingDate",
+  "closing_date",
+];
 
 function pickTime(source, keys) {
   if (source === null || typeof source !== "object") return null;
@@ -1008,7 +1019,8 @@ function barLabel(state, nowMs, settings) {
 
   return {
     status,
-    value: showValue && portfolio.total !== null ? formatMoney(portfolio.total, { symbol: portfolio.symbol }) : "",
+    value:
+      showValue && portfolio.total !== null ? formatMoney(portfolio.total, { symbol: portfolio.symbol }) : "",
     change: showValue ? portfolio.change : null,
     offers,
     deadline: next.length > 0 ? next[0].label : "",
