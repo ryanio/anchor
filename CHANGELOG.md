@@ -87,10 +87,11 @@ tables*, because it reads program ids and instruction data rather than resolved 
 explicit that it cannot check where value goes when operands resolve through a table: a refusal
 filter, never a simulation.
 
-Being on the program allowlist means *permission to be inspected*, not permission to run. Three of
-the six allowlisted programs have their instructions classified — three discriminant encodings in
-one file, because SPL Token's tag is one byte, the System Program's is a four-byte little-endian
-`u32`, and the Compute Budget program's is a one-byte borsh tag. The Compute Budget program is
+Being on the program allowlist means *permission to be inspected*, not permission to run. Four of
+the six allowlisted programs have their instructions classified, across three discriminant
+encodings in one file: SPL Token's tag is one byte, the System Program's is a four-byte
+little-endian `u32`, and the Compute Budget program's is a one-byte borsh tag. Only Memo and the
+Associated Token program are allowed unconditionally. The Compute Budget program is
 included because it is not inert: `SetComputeUnitPrice` names a price per compute unit, and at the
 maximum unit limit it commits the account's entire native balance to a validator tip. That is a
 spend no cap can see, because a priority fee produces no asset delta and appears in no simulation,
