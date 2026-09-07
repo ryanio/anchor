@@ -5,7 +5,7 @@ Solana tokens should be able to set it up as easily as someone doing EVM NFTs, a
 should say so:
 
 ```json
-{ "chains": ["solana"], "wallet": "So1111...", "tokens": ["..."] }
+{ "chains": ["solana"], "wallets": ["So1111..."], "tokens": ["..."] }
 ```
 
 This document is about where that is genuinely free and where it is not. Most of the surprise is that
@@ -192,7 +192,7 @@ The guard says as much in its `unverified` output rather than implying an allowl
 ```json
 {
   "chains": ["ethereum", "solana"],
-  "wallet": "0x…",
+  "wallets": ["0x…", "So1111…"],
   "collections": ["your-collection-slug"],
   "tokens": ["0x…"]
 }
@@ -200,7 +200,9 @@ The guard says as much in its `unverified` output rather than implying an allowl
 
 A single `"chain": "base"` string is still accepted and read as a one-element `chains`, so existing
 configs keep working; the validation error says so when a value is wrong. Setting both is refused
-rather than silently resolved. An unknown slug fails at config load with the value quoted, a
+rather than silently resolved. `wallets` follows the same pattern — a bare `"wallet": "0x…"` is read
+as a one-element list — and every entry is checked against the configured chains, so a mixed-chain
+config can watch an EVM address and a Solana one at once. An unknown slug fails at config load with the value quoted, a
 suggestion, and the full list of valid chains.
 
 ## See also
