@@ -117,6 +117,19 @@ Two artefacts, both part of the work rather than an afterthought:
 Be honest in both. "This approach failed and here's why" is more useful to a reader than a clean
 narrative, and this project is public precisely so people can learn from the real process.
 
+### Diary entries
+
+One entry per day, **500 words maximum**, enforced by `site/build.ts` — the build fails, it does not
+warn. Counted on the body, so frontmatter and fenced code do not spend the budget.
+
+The cap exists because the failure mode is drift rather than one bad decision. Every paragraph looks
+worth keeping while you are adding it, and an entry that folded in a whole day's work reached 1522
+words that way. The limit forces the entry to be **one story** — the best thing that happened that
+day — instead of a summary of everything.
+
+Nothing is lost by cutting: `CHANGELOG.md` holds what shipped and `docs/` holds how it works. The
+changelog says so at the top — the diary has the story, the changelog has the facts.
+
 ## Working alongside other agents
 
 Several agents may work this repo at once. Every rule here comes from a collision that actually

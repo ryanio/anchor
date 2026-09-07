@@ -357,6 +357,31 @@ for (const dir of ["brand", "assets"]) {
   if (existsSync(join(ROOT, dir))) cpSync(join(ROOT, dir), join(OUT, dir), { recursive: true });
 }
 
+/**
+ * Diary entries are capped, and the build fails rather than warns.
+ *
+ * The cap exists because the failure mode is drift, not a single bad decision: one entry per day
+ * plus a busy day equals a wall of text, and every individual paragraph looks worth keeping while
+ * you are adding it. This entry reached 1522 words that way.
+ *
+ * 500 words is roughly three minutes. It forces the entry to be *one story* — the best thing that
+ * happened that day — rather than a summary of everything. What gets cut is not lost: the changelog
+ * holds what shipped and `docs/` holds how it works. This file's own header says it, in fact — the
+ * diary has the story, the changelog has the facts.
+ *
+ * Counted on the body, so frontmatter and fenced code do not spend the budget. Prose is the thing
+ * that gets long.
+ */
+const MAX_ENTRY_WORDS = 500;
+
+function countProseWords(markdown: string): number {
+  return markdown
+    .replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, "")
+    .replace(/```[\s\S]*?```/g, " ")
+    .split(/\s+/)
+    .filter((w) => /[A-Za-z0-9]/.test(w)).length;
+}
+
 const entries = readdirSync(join(ROOT, "diary"))
   .filter((f) => f.endsWith(".md"))
   .map(parseEntry)
@@ -364,6 +389,22 @@ const entries = readdirSync(join(ROOT, "diary"))
   // stable sort would then leave them in readdir order, i.e. oldest at the top of the page. The
   // numeric slug prefix is the real sequence, so it breaks the tie.
   .sort((a, b) => b.date.localeCompare(a.date) || b.slug.localeCompare(a.slug));
+
+const tooLong = entries
+  .map((e) => ({
+    slug: e.slug,
+    words: countProseWords(readFileSync(join(ROOT, "diary", `${e.slug}.md`), "utf8")),
+  }))
+  .filter((e) => e.words > MAX_ENTRY_WORDS);
+
+if (tooLong.length > 0) {
+  console.error(
+    `Diary entries over ${MAX_ENTRY_WORDS} words:\n` +
+      tooLong.map((e) => `  - ${e.slug}: ${e.words} words`).join("\n") +
+      "\nCut it to one story. What shipped belongs in CHANGELOG.md; how it works belongs in docs/.",
+  );
+  process.exit(1);
+}
 
 for (const e of entries) {
   writeFileSync(
