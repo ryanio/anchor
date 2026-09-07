@@ -20,5 +20,9 @@
     "@types/node": "^24.0.0",
     "typescript": "^5.9.0"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "dependencies": {
+    "@opensea/api-types": "^0.9.1",
+    "@opensea/sdk": "^12.1.0"
+  }
 }

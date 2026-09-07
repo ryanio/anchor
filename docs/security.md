@@ -32,6 +32,12 @@ and the named residual risks — is in [autonomy.md](autonomy.md).
   development. A process environment is readable at `/proc/<pid>/environ` and is inherited by child
   processes, so it is strictly weaker than the keyring. The keyring is the supported path for real
   use; this is named here so the list above is exhaustive rather than aspirational.
+- **There are two OpenSea credentials.** The API key is one; account-scoped reads additionally need a
+  wallet JWT, minted from a personal access token stored as `opensea-pat`. The PAT gets **no**
+  environment-variable escape hatch, because unlike the API key it carries whatever scopes it was
+  created with, which can include write scopes — the executor's credentials follow the same rule.
+  Neither credential appears in a log line or an error message: every error the service produces is
+  built from a status code we recognise, never from a response body. See `service/README.md`.
 
 ## Data
 

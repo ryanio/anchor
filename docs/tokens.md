@@ -44,17 +44,28 @@ substantial:
 
 | Purpose | Endpoint |
 |---|---|
-| Balances for an account | `/api/v2/token_balances_by_account` |
-| Token metadata | `/api/v2/tokens` · `/api/v2/tokens/batch` |
-| Price history and candles | `/api/v2/token_price_history` · `/api/v2/token_ohlcv` |
+| Net worth and P&L | `/api/v2/account/{address}/portfolio` |
+| Balances for an account | `/api/v2/account/{address}/tokens` |
+| Token metadata | `/api/v2/chain/{chain}/token/{address}` · `POST /api/v2/tokens/batch` |
+| Price history and candles | `/api/v2/chain/{chain}/token/{address}/price_history` · `.../ohlcv` |
 | Discovery | `/api/v2/tokens/trending` · `/api/v2/tokens/top` |
-| Account swaps and transfers | `/api/v2/account_token_activity` |
-| Per-token trade activity | `/api/v2/token_activity` · `/api/v2/token_activity_stats` |
-| Holders and liquidity | `/api/v2/token_holders` · `/api/v2/token_liquidity_pools` |
-| Swap quote | `/api/v2/swap_quote` |
+| Account swaps and transfers | `/api/v2/account/{address}/token-activity` |
+| Per-token trade activity | `/api/v2/chain/{chain}/token/{address}/activity` · `.../activity/stats` |
+| Holders and liquidity | `.../holders` · `.../liquidity-pools` |
+| Swap quote | `/api/v2/swap/quote` |
+| Swap execution | `POST /api/v2/swap/execute` |
 
-`swap_quote` stays behind the executor and is never called by the read-only service — it returns
-executable transaction data, which is the boundary the service exists to hold.
+> Every path in this table was wrong when it was written by hand — `token_balances_by_account`,
+> `token_price_history`, `swap_quote` and the rest are not endpoints. They are now taken from
+> `@opensea/api-types`, which is generated from OpenSea's OpenAPI spec, and the service calls them
+> through `@opensea/sdk` rather than building URLs itself. That is the whole argument for using
+> OpenSea's own packages: a hand-written copy of someone else's API rots, quietly, and the first
+> symptom is a 404 in a widget.
+
+`/swap/quote` and `/swap/execute` stay behind the executor and are never called by the read-only
+service — they return executable transaction data, which is the boundary the service exists to hold.
+`/swap/execute` returns transactions for EVM *and* Solana in the same response shape; see
+[chains.md](chains.md).
 
 ### The ambient surface
 
@@ -100,3 +111,8 @@ before building anything that trades, rather than reinventing the flow.
 
 The safety rules do not relax for tokens. They tighten: everything in
 [autonomy.md](autonomy.md) applies, plus slippage, liquidity, and sellability.
+
+Tokens are also where chains stop being an Ethereum story. Solana is an ordinary chain slug on the
+data side, the swap endpoint returns Solana instructions in the same shape as EVM calldata, and
+`setApprovalForAll` has no Solana analogue but SPL delegate authority does the same damage. See
+[chains.md](chains.md).

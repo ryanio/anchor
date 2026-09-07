@@ -1,17 +1,48 @@
 /**
  * The local API. Binds 127.0.0.1 only — never the LAN, never the tailnet (docs/security.md).
  *
- * Read-only by construction: only GET and HEAD are routed, so a bug in a handler cannot become a write.
+ * Read-only by construction, at both ends: only GET and HEAD are routed inbound, and the OpenSea
+ * client refuses every outbound write (see opensea.ts), so a bug in a handler cannot become a write.
  *
  * Every response carries a `meta` block with fetch time, age, and staleness, so consumers can show
  * data freshness rather than implying everything is live.
  */
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { MissingPatError, WalletTokenError } from "./auth.ts";
 import type { CacheEntry } from "./cache.ts";
 import type { Config } from "./config.ts";
 import { MissingApiKeyError, type OpenSeaClient } from "./opensea.ts";
 
 const HOST = "127.0.0.1";
+
+/** A day of price history is the useful default for a bar widget; callers can widen it. */
+const DEFAULT_PRICE_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+const ROUTES = [
+  "/health",
+  "/portfolio",
+  "/portfolio/value",
+  "/balances",
+  "/activity",
+  "/collections",
+  "/collections/:slug",
+  "/collections/:slug/stats",
+  "/collections/:slug/listings",
+  "/collections/:slug/offers",
+  "/tokens",
+  "/tokens/trending",
+  "/tokens/top",
+  "/tokens/:address",
+  "/tokens/:address/price_history",
+];
+
+/** Routes that read the configured wallet, and so need one configured. */
+const WALLET_ROUTES = new Set(["/portfolio", "/portfolio/value", "/balances", "/activity"]);
+
+export interface ServerDeps {
+  /** Which credentials are present. Local only — no network call, so `/health` stays cheap. */
+  credentials?: () => Promise<{ apiKey: boolean; pat: boolean }>;
+}
 
 /**
  * Binding to loopback stops the network reaching us; it does not stop a *browser* reaching us.
@@ -48,7 +79,14 @@ function envelope<T>(entry: CacheEntry<T>) {
   };
 }
 
-export function createApp(config: Config, client: OpenSeaClient) {
+/** A positive integer query param, or undefined. A bad value is ignored rather than fatal. */
+function intParam(value: string | null, max: number): number | undefined {
+  if (value === null) return undefined;
+  const n = Number(value);
+  return Number.isInteger(n) && n > 0 && n <= max ? n : undefined;
+}
+
+export function createApp(config: Config, client: OpenSeaClient, deps: ServerDeps = {}) {
   return createServer(async (req: IncomingMessage, res: ServerResponse) => {
     const headOnly = req.method === "HEAD";
 
@@ -78,15 +116,19 @@ export function createApp(config: Config, client: OpenSeaClient) {
           {
             ok: true,
             wallet: config.wallet || null,
-            chain: config.chain,
+            chains: config.chains,
+            /** The chain used by endpoints whose path carries one. See docs/chains.md. */
+            primaryChain: config.chains[0],
             collections: config.collections,
+            tokens: config.tokens,
+            credentials: (await deps.credentials?.()) ?? { apiKey: false, pat: false },
           },
           headOnly,
         );
         return;
       }
 
-      if (!config.wallet && (path === "/portfolio" || path === "/activity")) {
+      if (!config.wallet && WALLET_ROUTES.has(path)) {
         send(
           res,
           428,
@@ -110,6 +152,34 @@ export function createApp(config: Config, client: OpenSeaClient) {
         return;
       }
 
+      if (path === "/portfolio/value") {
+        const timeframe = url.searchParams.get("timeframe");
+        const allowed = ["HOUR", "DAY", "WEEK", "MONTH"] as const;
+        const chosen = allowed.find((t) => t === timeframe);
+        send(
+          res,
+          200,
+          envelope(await client.portfolioStats(config.wallet, config.ttl.portfolio, chosen)),
+          headOnly,
+        );
+        return;
+      }
+
+      if (path === "/balances") {
+        send(
+          res,
+          200,
+          envelope(
+            await client.tokenBalances(config.wallet, config.ttl.tokens, {
+              limit: intParam(url.searchParams.get("limit"), 200),
+              cursor: url.searchParams.get("cursor") ?? undefined,
+            }),
+          ),
+          headOnly,
+        );
+        return;
+      }
+
       if (path === "/activity") {
         const types = url.searchParams.getAll("event_type");
         send(
@@ -125,6 +195,38 @@ export function createApp(config: Config, client: OpenSeaClient) {
         return;
       }
 
+      if (path === "/tokens/trending" || path === "/tokens/top") {
+        const limit = intParam(url.searchParams.get("limit"), 100) ?? 20;
+        const entry =
+          path === "/tokens/trending"
+            ? await client.trendingTokens(config.ttl.tokens, limit)
+            : await client.topTokens(config.ttl.tokens, limit);
+        send(res, 200, envelope(entry), headOnly);
+        return;
+      }
+
+      // Metadata for every watched token, in one call. Mirrors /collections; a missing API key or
+      // PAT is a whole-service condition, not a per-token one, so it is rethrown rather than
+      // reported per row.
+      if (path === "/tokens") {
+        const results: Array<{ address: string } & Record<string, unknown>> = [];
+        for (const address of config.tokens) {
+          try {
+            results.push({ address, ...envelope(await client.token(address, config.ttl.tokens)) });
+          } catch (err) {
+            if (isCredentialError(err)) throw err;
+            results.push({ address, error: (err as Error).message });
+          }
+        }
+        send(
+          res,
+          200,
+          { data: results, meta: { count: results.length, chain: client.primaryChain } },
+          headOnly,
+        );
+        return;
+      }
+
       // Stats for every watched collection. A missing API key is a whole-service condition, not a
       // per-slug one — swallowing it here returned 200 with error strings, and a widget checking
       // res.ok rendered "no collections" instead of prompting for a key.
@@ -134,11 +236,31 @@ export function createApp(config: Config, client: OpenSeaClient) {
           try {
             results.push({ slug, ...envelope(await client.collectionStats(slug, config.ttl.stats)) });
           } catch (err) {
-            if (err instanceof MissingApiKeyError) throw err;
+            if (isCredentialError(err)) throw err;
             results.push({ slug, error: (err as Error).message });
           }
         }
         send(res, 200, { data: results, meta: { count: results.length } }, headOnly);
+        return;
+      }
+
+      const tokenMatch = /^\/tokens\/([^/]+)(?:\/(price_history))?$/.exec(path);
+      if (tokenMatch) {
+        const address = decodeURIComponent(tokenMatch[1]!);
+        if (tokenMatch[2] === "price_history") {
+          const startTime =
+            url.searchParams.get("start_time") ??
+            new Date(Date.now() - DEFAULT_PRICE_WINDOW_MS).toISOString();
+          const endTime = url.searchParams.get("end_time") ?? undefined;
+          send(
+            res,
+            200,
+            envelope(await client.tokenPriceHistory(address, config.ttl.prices, { startTime, endTime })),
+            headOnly,
+          );
+          return;
+        }
+        send(res, 200, envelope(await client.token(address, config.ttl.tokens)), headOnly);
         return;
       }
 
@@ -161,27 +283,10 @@ export function createApp(config: Config, client: OpenSeaClient) {
         }
       }
 
-      send(
-        res,
-        404,
-        {
-          error: "Not found",
-          routes: [
-            "/health",
-            "/portfolio",
-            "/activity",
-            "/collections",
-            "/collections/:slug",
-            "/collections/:slug/stats",
-            "/collections/:slug/listings",
-            "/collections/:slug/offers",
-          ],
-        },
-        headOnly,
-      );
+      send(res, 404, { error: "Not found", routes: ROUTES }, headOnly);
     } catch (err) {
-      if (err instanceof MissingApiKeyError) {
-        send(res, 401, { error: err.message }, headOnly);
+      if (isCredentialError(err)) {
+        send(res, 401, { error: (err as Error).message }, headOnly);
         return;
       }
       if (err instanceof TypeError && /Invalid URL/i.test((err as Error).message)) {
@@ -193,4 +298,14 @@ export function createApp(config: Config, client: OpenSeaClient) {
   });
 }
 
-export { HOST, hostAllowed };
+/**
+ * A missing or rejected credential is a whole-service condition: it does not become better on the
+ * next slug, and answering 200 with an error string per row hides it from anything checking res.ok.
+ */
+function isCredentialError(err: unknown): boolean {
+  return (
+    err instanceof MissingApiKeyError || err instanceof MissingPatError || err instanceof WalletTokenError
+  );
+}
+
+export { HOST, hostAllowed, ROUTES };

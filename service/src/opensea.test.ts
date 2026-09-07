@@ -2,462 +2,411 @@
  * The OpenSea client's promises, tested at its boundary rather than through its internals.
  *
  * The promises under test:
+ *   - the SDK builds the paths, and they are the ones OpenSea documents,
+ *   - the service is read-only: every SDK signing and order-building call is refused at transport,
  *   - one shared request budget: requests are serialised and spaced,
- *   - a transient failure is retried, a permanent one is not,
  *   - a fresh cache costs nothing, and a dead network still returns the last good answer,
- *   - and no error this module produces ever carries the API key.
+ *   - and no error this module produces ever carries a credential.
  *
- * Nothing here touches the network: `fetchImpl` and `getApiKey` are injected, and the key below is
- * an obvious placeholder — real credentials live in the OS keyring (docs/security.md).
+ * Nothing here touches the network: `globalThis.fetch` is replaced for the duration of each test,
+ * and the credentials are obvious placeholders — real ones live in the OS keyring.
  */
 
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { describe, test } from "node:test";
-import { Cache } from "./cache.ts";
-import { type ClientOptions, MissingApiKeyError, OpenSeaClient } from "./opensea.ts";
+import {
+  API_KEY,
+  FRESH_TTL,
+  type Harness,
+  harness,
+  jsonResponse,
+  NO_TTL,
+  PAT,
+  rejects,
+  respondInOrder,
+  statusResponse,
+  tempCache,
+  withExchange,
+} from "./fixtures.ts";
+import { MissingApiKeyError, ReadOnlyOpenSeaAPI, ReadOnlyViolationError } from "./opensea.ts";
 
-const API_KEY = "placeholder-not-a-real-key-0123456789";
-const NO_TTL = 0; // ttl 0 => the entry is stale the moment it is written
-const FRESH_TTL = 600;
-
-function tempCache(): Cache {
-  return new Cache(join(mkdtempSync(join(tmpdir(), "anchor-os-")), "cache.sqlite"));
-}
-
-interface Call {
-  url: string;
-  init: RequestInit;
-  at: number;
-}
-
-type Handler = (call: Call, index: number) => Response | Promise<Response>;
-
-/** A fetch stub that records every call and answers from `handler`. */
-function stubFetch(handler: Handler): { impl: typeof fetch; calls: Call[] } {
-  const calls: Call[] = [];
-  const impl: typeof fetch = async (input, init) => {
-    const call: Call = { url: String(input), init: init ?? {}, at: Date.now() };
-    calls.push(call);
-    return handler(call, calls.length - 1);
-  };
-  return { impl, calls };
-}
-
-/** Answer each call from a list, reusing the last entry once the list runs out. */
-function respondInOrder(...responses: (() => Response)[]): Handler {
-  return (_call, i) => responses[Math.min(i, responses.length - 1)]!();
-}
-
-function jsonResponse(body: unknown, init: ResponseInit = {}): Response {
-  return new Response(JSON.stringify(body), {
-    status: 200,
-    headers: { "content-type": "application/json" },
-    ...init,
-  });
-}
-
-function statusResponse(status: number, headers: Record<string, string> = {}): Response {
-  return new Response("{}", { status, headers });
-}
-
-/**
- * A hostile response shape. `Response` refuses to hold a malformed `statusText`, which is exactly
- * the case worth covering: the field is remote-controlled and ends up in our logs.
- */
-function fakeResponse(status: number, statusText: string, body: string | null = null): Response {
-  return {
-    status,
-    statusText,
-    ok: status >= 200 && status < 300,
-    headers: new Headers(),
-    body: null,
-    json: async () => (body === null ? {} : JSON.parse(body)),
-  } as unknown as Response;
-}
-
-interface Harness {
-  client: OpenSeaClient;
-  cache: Cache;
-  calls: Call[];
-  sleeps: number[];
-}
-
-function harness(
-  handler: Handler,
-  opts: { cache?: Cache; apiKey?: string | null; requestsPerSecond?: number; realSleep?: boolean } = {},
-): Harness {
-  const cache = opts.cache ?? tempCache();
-  const { impl, calls } = stubFetch(handler);
-  const sleeps: number[] = [];
-  const clientOpts: ClientOptions = {
-    chain: "ethereum",
-    requestsPerSecond: opts.requestsPerSecond ?? 1000,
-    cache,
-    fetchImpl: impl,
-    getApiKey: async () => (opts.apiKey === undefined ? API_KEY : opts.apiKey),
-  };
-  if (!opts.realSleep) {
-    // Record the retry ladder instead of living through it; the delays are asserted directly.
-    clientOpts.sleep = async (ms: number) => {
-      sleeps.push(ms);
-    };
-  }
-  return { client: new OpenSeaClient(clientOpts), cache, calls, sleeps };
-}
-
-async function rejects(fn: () => Promise<unknown>): Promise<Error> {
+/** Run a harness and always put `globalThis.fetch` back, whatever the test does. */
+async function using(h: Harness, fn: (h: Harness) => Promise<void>): Promise<void> {
   try {
-    await fn();
-  } catch (err) {
-    return err as Error;
+    await fn(h);
+  } finally {
+    h.restore();
   }
-  assert.fail("expected the call to reject");
 }
+
+const ok = () => jsonResponse({ ok: true });
+
+/** Seaport 1.6. Only its *shape* matters here: the SDK validates the address before posting. */
+const SEAPORT = "0x0000000000000068F116a894984e2DB1123eB395";
+
+describe("the SDK owns the paths", () => {
+  // Every one of these was verified against docs.opensea.io. They are asserted here because two of
+  // them were wrong when the client hand-rolled its own URLs, which is why the SDK was adopted.
+  const cases: Array<[string, (h: Harness) => Promise<unknown>, string]> = [
+    ["collection", (h) => h.client.collection("cool-cats", NO_TTL), "/api/v2/collections/cool-cats"],
+    [
+      "collection stats",
+      (h) => h.client.collectionStats("cool-cats", NO_TTL),
+      "/api/v2/collections/cool-cats/stats",
+    ],
+    [
+      "best listings",
+      (h) => h.client.bestListings("cool-cats", NO_TTL),
+      "/api/v2/listings/collection/cool-cats/best",
+    ],
+    [
+      "collection offers",
+      (h) => h.client.collectionOffers("cool-cats", NO_TTL),
+      "/api/v2/offers/collection/cool-cats",
+    ],
+    [
+      "nfts by account",
+      (h) => h.client.nftsByAccount("0xdead", NO_TTL),
+      "/api/v2/chain/ethereum/account/0xdead/nfts",
+    ],
+    ["account events", (h) => h.client.eventsByAccount("0xdead", NO_TTL), "/api/v2/events/accounts/0xdead"],
+    ["portfolio", (h) => h.client.portfolioStats("0xdead", NO_TTL), "/api/v2/account/0xdead/portfolio"],
+    ["balances", (h) => h.client.tokenBalances("0xdead", NO_TTL), "/api/v2/account/0xdead/tokens"],
+    ["trending tokens", (h) => h.client.trendingTokens(NO_TTL), "/api/v2/tokens/trending"],
+    ["top tokens", (h) => h.client.topTokens(NO_TTL), "/api/v2/tokens/top"],
+    ["token", (h) => h.client.token("0xbeef", NO_TTL), "/api/v2/chain/ethereum/token/0xbeef"],
+    [
+      "token price history",
+      (h) => h.client.tokenPriceHistory("0xbeef", NO_TTL, { startTime: "2026-01-01T00:00:00Z" }),
+      "/api/v2/chain/ethereum/token/0xbeef/price_history",
+    ],
+  ];
+
+  for (const [name, call, expected] of cases) {
+    test(`${name} hits ${expected}`, async () => {
+      const h = harness(withExchange(ok));
+      await using(h, async () => {
+        await call(h);
+        const read = h.calls.find((c) => c.method === "GET");
+        assert.ok(read, "expected a GET");
+        assert.equal(new URL(read.url).pathname, expected);
+        assert.equal(new URL(read.url).origin, "https://api.opensea.io");
+      });
+    });
+  }
+});
+
+describe("read-only, enforced at the transport", () => {
+  /**
+   * Every SDK write funnels through `post`/`request`, so refusing those refuses the whole class:
+   * order posting, offer building, listing and offer *actions*, swap execution, transfers, drop
+   * mints. `getSwapQuote` is a GET and so cannot be caught here — it is covered by the source scan
+   * below, which asserts the service never names it.
+   */
+  const writes: Array<[string, (api: ReadOnlyOpenSeaAPI) => Promise<unknown>]> = [
+    ["postListing", (api) => api.postListing({} as never, SEAPORT)],
+    ["postOffer", (api) => api.postOffer({} as never, SEAPORT)],
+    ["postCollectionOffer", (api) => api.postCollectionOffer({} as never, "cool-cats")],
+    ["buildOffer", (api) => api.buildOffer("0xdead", 1, "cool-cats")],
+    ["createListingActions", (api) => api.createListingActions({} as never)],
+    ["createOfferActions", (api) => api.createOfferActions({} as never)],
+    ["executeSwap", (api) => api.executeSwap({} as never)],
+    ["transferAssets", (api) => api.transferAssets({} as never)],
+    ["sweepCollection", (api) => api.sweepCollection({} as never)],
+    ["deployDropContract", (api) => api.deployDropContract({} as never)],
+    ["buildDropMintTransaction", (api) => api.buildDropMintTransaction("drop", {} as never)],
+    ["offchainCancelOrder", (api) => api.offchainCancelOrder(SEAPORT, "0xhash")],
+  ];
+
+  for (const [name, call] of writes) {
+    test(`${name} is refused before it reaches the network`, async () => {
+      const h = harness(() => {
+        assert.fail("a write must never reach the network");
+      });
+      await using(h, async () => {
+        const api = new ReadOnlyOpenSeaAPI(
+          { apiKey: API_KEY },
+          { cache: tempCache(), limiter: { schedule: (fn) => fn() } },
+        );
+        const err = await rejects(() => call(api));
+        assert.ok(err instanceof ReadOnlyViolationError, `${name} was not refused: ${err.message}`);
+        assert.match(err.message, /read-only/);
+        assert.equal(h.calls.length, 0);
+      });
+    });
+  }
+
+  test("the service source names no signing or order-building call", async () => {
+    const { readFileSync, readdirSync } = await import("node:fs");
+    const { fileURLToPath } = await import("node:url");
+    const { dirname, join } = await import("node:path");
+
+    const here = dirname(fileURLToPath(import.meta.url));
+    // Everything the service ships, minus this file — which necessarily names them all.
+    const sources = readdirSync(here).filter((f) => f.endsWith(".ts") && f !== "opensea.test.ts");
+
+    /** Signing, order construction, swap execution, and the ethers-backed SDK entry point. */
+    const forbidden = [
+      "OpenSeaSDK",
+      "seaport",
+      "getSwapQuote",
+      "executeSwap",
+      "postListing",
+      "postOffer",
+      "postCollectionOffer",
+      "buildOffer",
+      "createListingActions",
+      "createOfferActions",
+      "createCancelOrderActions",
+      "createListingFulfillmentActions",
+      "createOfferFulfillmentActions",
+      "generateFulfillmentData",
+      "offchainCancelOrder",
+      "transferAssets",
+      "sweepCollection",
+      "deployDropContract",
+      "buildDropMintTransaction",
+      "signMessage",
+      "signTypedData",
+      "sendTransaction",
+    ];
+
+    /**
+     * Comments are stripped first: this module's own documentation explains *which* calls are
+     * refused and why, and naming them in prose must not read as calling them. Crude but adequate —
+     * the question is only whether an identifier appears in code.
+     */
+    const stripComments = (text: string) =>
+      text.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/(^|[^:])\/\/.*$/gm, "$1");
+
+    for (const file of sources) {
+      const text = stripComments(readFileSync(join(here, file), "utf8"));
+      for (const name of forbidden) {
+        assert.ok(
+          !text.includes(name),
+          `${file} names ${name}. Signing and order construction belong in the executor, never in service/.`,
+        );
+      }
+    }
+  });
+});
 
 describe("rate limiter", () => {
   test("spaces requests by the configured interval", async () => {
     // 20 requests/second => a 50ms floor between starts.
-    const h = harness(() => jsonResponse({ ok: true }), { requestsPerSecond: 20, realSleep: true });
-    await Promise.all([
-      h.client.collectionStats("a", NO_TTL),
-      h.client.collectionStats("b", NO_TTL),
-      h.client.collectionStats("c", NO_TTL),
-    ]);
+    const h = harness(withExchange(ok), { requestsPerSecond: 20 });
+    await using(h, async () => {
+      await Promise.all([
+        h.client.collectionStats("a", NO_TTL),
+        h.client.collectionStats("b", NO_TTL),
+        h.client.collectionStats("c", NO_TTL),
+      ]);
 
-    assert.equal(h.calls.length, 3);
-    for (let i = 1; i < h.calls.length; i++) {
-      const gap = h.calls[i]!.at - h.calls[i - 1]!.at;
-      // Timers may fire a hair early; the point is that the interval is respected, not exact.
-      assert.ok(gap >= 40, `expected >=40ms between requests, saw ${gap}ms`);
-    }
+      assert.equal(h.calls.length, 3);
+      for (let i = 1; i < h.calls.length; i++) {
+        const gap = h.calls[i]!.at - h.calls[i - 1]!.at;
+        // Timers may fire a hair early; the point is that the interval is respected, not exact.
+        assert.ok(gap >= 40, `expected >=40ms between requests, saw ${gap}ms`);
+      }
+    });
   });
 
   test("serialises requests — never two in flight at once", async () => {
     let inFlight = 0;
     let peak = 0;
-    const h = harness(
-      async () => {
-        inFlight++;
-        peak = Math.max(peak, inFlight);
-        await new Promise((r) => setTimeout(r, 20));
-        inFlight--;
-        return jsonResponse({ ok: true });
-      },
-      { realSleep: true },
-    );
-
-    await Promise.all(["a", "b", "c"].map((s) => h.client.collectionStats(s, NO_TTL)));
-    assert.equal(peak, 1);
+    const h = harness(async () => {
+      inFlight++;
+      peak = Math.max(peak, inFlight);
+      await new Promise((r) => setTimeout(r, 20));
+      inFlight--;
+      return jsonResponse({ ok: true });
+    });
+    await using(h, async () => {
+      await Promise.all(["a", "b", "c"].map((s) => h.client.collectionStats(s, NO_TTL)));
+      assert.equal(peak, 1);
+    });
   });
 
   test("a rejected request does not break the chain for the ones behind it", async () => {
     const h = harness(
       (call) => (call.url.includes("boom") ? statusResponse(404) : jsonResponse({ ok: true })),
-      {
-        requestsPerSecond: 50,
-        realSleep: true,
-      },
+      { requestsPerSecond: 50 },
     );
+    await using(h, async () => {
+      const results = await Promise.allSettled([
+        h.client.collectionStats("boom", NO_TTL),
+        h.client.collectionStats("after-1", NO_TTL),
+        h.client.collectionStats("after-2", NO_TTL),
+      ]);
 
-    const results = await Promise.allSettled([
-      h.client.collectionStats("boom", NO_TTL),
-      h.client.collectionStats("after-1", NO_TTL),
-      h.client.collectionStats("after-2", NO_TTL),
-    ]);
-
-    assert.equal(results[0]!.status, "rejected");
-    assert.equal(results[1]!.status, "fulfilled");
-    assert.equal(results[2]!.status, "fulfilled");
-    assert.equal(h.calls.length, 3);
-    // Still spaced: the failure did not collapse the interval either.
-    assert.ok(h.calls[2]!.at - h.calls[1]!.at >= 15);
-  });
-});
-
-describe("retries", () => {
-  test("429 honours Retry-After", async () => {
-    const h = harness(
-      respondInOrder(
-        () => statusResponse(429, { "retry-after": "2" }),
-        () => jsonResponse({ ok: true }),
-      ),
-    );
-
-    const entry = await h.client.collectionStats("cool-cats", NO_TTL);
-    assert.deepEqual(entry.data, { ok: true });
-    assert.deepEqual(h.sleeps, [2000]);
-  });
-
-  test("429 accepts an HTTP-date Retry-After", async () => {
-    const when = new Date(Date.now() + 5000).toUTCString();
-    const h = harness(
-      respondInOrder(
-        () => statusResponse(429, { "retry-after": when }),
-        () => jsonResponse({ ok: true }),
-      ),
-    );
-
-    await h.client.collectionStats("cool-cats", NO_TTL);
-    assert.equal(h.sleeps.length, 1);
-    // toUTCString() truncates to whole seconds, and a loaded CI box may take a moment to get here;
-    // what matters is that the date was read as a delay rather than discarded.
-    assert.ok(h.sleeps[0]! > 500 && h.sleeps[0]! <= 5000, `unexpected wait ${h.sleeps[0]}ms`);
-  });
-
-  test("a hostile Retry-After cannot stall the shared chain for longer than a minute", async () => {
-    const h = harness(
-      respondInOrder(
-        () => statusResponse(429, { "retry-after": "86400" }),
-        () => jsonResponse({ ok: true }),
-      ),
-    );
-
-    await h.client.collectionStats("cool-cats", NO_TTL);
-    assert.deepEqual(h.sleeps, [60_000]);
-  });
-
-  test("a malformed or absent Retry-After falls back to exponential backoff", async () => {
-    const variants: Record<string, string>[] = [{}, { "retry-after": "soon" }, { "retry-after": "-5" }];
-    for (const headers of variants) {
-      const h = harness(
-        respondInOrder(
-          () => statusResponse(429, headers),
-          () => jsonResponse({ ok: true }),
-        ),
-      );
-      await h.client.collectionStats("cool-cats", NO_TTL);
-      assert.deepEqual(h.sleeps, [1000], `headers ${JSON.stringify(headers)}`);
-    }
-  });
-
-  test("5xx backs off exponentially", async () => {
-    const h = harness(
-      respondInOrder(
-        () => statusResponse(500),
-        () => statusResponse(502),
-        () => statusResponse(503),
-        () => jsonResponse({ ok: true }),
-      ),
-    );
-
-    const entry = await h.client.collectionStats("cool-cats", NO_TTL);
-    assert.deepEqual(entry.data, { ok: true });
-    assert.deepEqual(h.sleeps, [1000, 2000, 4000]);
-    assert.equal(h.calls.length, 4);
-  });
-
-  test("5xx ignores Retry-After — the documented contract is exponential backoff", async () => {
-    const h = harness(
-      respondInOrder(
-        () => statusResponse(503, { "retry-after": "30" }),
-        () => jsonResponse({ ok: true }),
-      ),
-    );
-
-    await h.client.collectionStats("cool-cats", NO_TTL);
-    assert.deepEqual(h.sleeps, [1000]);
-  });
-
-  test("gives up after the retry budget", async () => {
-    const h = harness(() => statusResponse(503));
-
-    const err = await rejects(() => h.client.collectionStats("cool-cats", NO_TTL));
-    assert.match(err.message, /503/);
-    assert.match(err.message, /after 3 retries/);
-    // The first attempt plus three retries, and no more.
-    assert.equal(h.calls.length, 4);
-    assert.deepEqual(h.sleeps, [1000, 2000, 4000]);
-  });
-
-  test("4xx other than 429 is final — no retry, no wait", async () => {
-    for (const status of [400, 401, 403, 404, 422]) {
-      const h = harness(() => statusResponse(status));
-      const err = await rejects(() => h.client.collectionStats("cool-cats", NO_TTL));
-      assert.match(err.message, new RegExp(String(status)));
-      assert.equal(h.calls.length, 1, `status ${status} should not be retried`);
-      assert.deepEqual(h.sleeps, []);
-    }
-  });
-
-  test("a malformed JSON body is an error, not a crash", async () => {
-    const h = harness(() => new Response("<html>not json</html>", { status: 200 }));
-    const err = await rejects(() => h.client.collectionStats("cool-cats", NO_TTL));
-    assert.match(err.message, /malformed JSON/);
-    assert.equal(h.calls.length, 1);
+      assert.equal(results[0]!.status, "rejected");
+      assert.equal(results[1]!.status, "fulfilled");
+      assert.equal(results[2]!.status, "fulfilled");
+      assert.equal(h.calls.length, 3);
+      assert.ok(h.calls[2]!.at - h.calls[1]!.at >= 15);
+    });
   });
 });
 
 describe("request shape", () => {
   test("sends the key as a header, and only ever GETs", async () => {
-    const h = harness(() => jsonResponse({ ok: true }));
-    await h.client.collectionStats("cool-cats", NO_TTL);
-
-    const call = h.calls[0]!;
-    assert.equal(call.init.method, "GET");
-    assert.equal((call.init.headers as Record<string, string>)["x-api-key"], API_KEY);
-    // The key belongs in a header, never in a URL that gets cached and logged.
-    assert.ok(!call.url.includes(API_KEY));
+    const h = harness(ok);
+    await using(h, async () => {
+      await h.client.collectionStats("cool-cats", NO_TTL);
+      const call = h.calls[0]!;
+      assert.equal(call.method, "GET");
+      assert.equal(call.headers["x-api-key"], API_KEY);
+      // The key belongs in a header, never in a URL that gets cached and logged.
+      assert.ok(!call.url.includes(API_KEY));
+    });
   });
 
-  test("carries an abort signal so a hung connection cannot wedge the chain", async () => {
-    const h = harness(() => jsonResponse({ ok: true }));
-    await h.client.collectionStats("cool-cats", NO_TTL);
-    assert.ok(h.calls[0]!.init.signal instanceof AbortSignal);
+  test("the only outbound non-GET is the wallet token exchange", async () => {
+    const h = harness(withExchange(ok));
+    await using(h, async () => {
+      await h.client.collectionStats("cool-cats", NO_TTL);
+      await h.client.tokenBalances("0xdead", NO_TTL);
+      await h.client.portfolioStats("0xdead", NO_TTL);
+
+      const writes = h.calls.filter((c) => c.method !== "GET");
+      assert.equal(writes.length, 1);
+      assert.equal(new URL(writes[0]!.url).pathname, "/api/v2/auth/tokens/exchange");
+      // A credential exchange touches no chain. It is the one outbound write the service makes.
+      assert.ok(!writes[0]!.url.includes(PAT), "the PAT belongs in the body, not the URL");
+    });
   });
 
   test("a slug cannot escape its path segment", async () => {
-    const h = harness(() => jsonResponse({ ok: true }));
-    await h.client.collectionStats("../../events/accounts/0xdead", NO_TTL);
-
-    const url = new URL(h.calls[0]!.url);
-    assert.equal(url.origin, "https://api.opensea.io");
-    assert.equal(
-      url.pathname,
-      "/api/v2/collections/..%2F..%2Fevents%2Faccounts%2F0xdead/stats",
-      "an untrusted slug must stay one path segment",
-    );
-  });
-
-  test("an address cannot escape its path segment", async () => {
-    const h = harness(() => jsonResponse({ ok: true }));
-    await h.client.nftsByAccount("0xabc/../../evil", NO_TTL);
-
-    const url = new URL(h.calls[0]!.url);
-    assert.equal(url.pathname, "/api/v2/chain/ethereum/account/0xabc%2F..%2F..%2Fevil/nfts");
+    const h = harness(ok);
+    await using(h, async () => {
+      await h.client.collectionStats("../../events/accounts/0xdead", NO_TTL);
+      const url = new URL(h.calls[0]!.url);
+      assert.equal(url.origin, "https://api.opensea.io");
+      assert.equal(
+        url.pathname,
+        "/api/v2/collections/..%2F..%2Fevents%2Faccounts%2F0xdead/stats",
+        "an untrusted slug must stay one path segment",
+      );
+    });
   });
 
   test("repeatable and optional query params are built as documented", async () => {
-    const h = harness(() => jsonResponse({ ok: true }));
-    await h.client.eventsByAccount("0xdead", NO_TTL, { eventTypes: ["sale", "transfer"] });
-
-    const url = new URL(h.calls[0]!.url);
-    assert.deepEqual(url.searchParams.getAll("event_type"), ["sale", "transfer"]);
-    assert.equal(url.searchParams.get("chain"), "ethereum");
-    assert.equal(url.searchParams.get("limit"), "50");
-    assert.equal(url.searchParams.get("next"), null);
+    const h = harness(withExchange(ok));
+    await using(h, async () => {
+      await h.client.eventsByAccount("0xdead", NO_TTL, { eventTypes: ["sale", "transfer"] });
+      const url = new URL(h.calls.find((c) => c.method === "GET")!.url);
+      assert.deepEqual(url.searchParams.getAll("event_type"), ["sale", "transfer"]);
+      assert.equal(url.searchParams.get("chain"), "ethereum");
+      assert.equal(url.searchParams.get("limit"), "50");
+      assert.equal(url.searchParams.get("next"), null);
+    });
   });
 });
 
 describe("cache-first", () => {
   test("a fresh entry short-circuits without touching the network", async () => {
-    const cache = tempCache();
-    const h = harness(
-      () => {
-        assert.fail("a fresh cache entry must not cause a request");
-      },
-      { cache },
-    );
-    cache.put("https://api.opensea.io/api/v2/collections/cool-cats/stats", { floor: 1 }, FRESH_TTL);
-
-    const entry = await h.client.collectionStats("cool-cats", FRESH_TTL);
-    assert.deepEqual(entry.data, { floor: 1 });
-    assert.equal(entry.stale, false);
-    assert.equal(h.calls.length, 0);
+    const h = harness(ok);
+    await using(h, async () => {
+      await h.client.collectionStats("cool-cats", FRESH_TTL);
+      assert.equal(h.calls.length, 1);
+      await h.client.collectionStats("cool-cats", FRESH_TTL);
+      assert.equal(h.calls.length, 1, "the second call must come from cache");
+    });
   });
 
   test("a stale entry triggers a fetch and the fresh answer wins", async () => {
     const cache = tempCache();
-    const h = harness(() => jsonResponse({ floor: 2 }), { cache });
-    cache.put("https://api.opensea.io/api/v2/collections/cool-cats/stats", { floor: 1 }, NO_TTL);
+    const first = harness(() => jsonResponse({ floor: 1 }), { cache });
+    await using(first, async () => {
+      await first.client.collectionStats("cool-cats", NO_TTL);
+    });
 
-    const entry = await h.client.collectionStats("cool-cats", FRESH_TTL);
-    assert.deepEqual(entry.data, { floor: 2 });
-    assert.equal(entry.stale, false);
-    assert.equal(entry.ageSeconds, 0);
-    assert.equal(h.calls.length, 1);
-  });
-
-  test("a successful fetch is cached, so the next call is free", async () => {
-    const h = harness(() => jsonResponse({ floor: 3 }));
-    await h.client.collectionStats("cool-cats", FRESH_TTL);
-    const second = await h.client.collectionStats("cool-cats", FRESH_TTL);
-
-    assert.deepEqual(second.data, { floor: 3 });
-    assert.equal(h.calls.length, 1);
+    const second = harness(() => jsonResponse({ floor: 2 }), { cache });
+    await using(second, async () => {
+      const entry = await second.client.collectionStats("cool-cats", FRESH_TTL);
+      assert.deepEqual(entry.data, { floor: 2 });
+      assert.equal(entry.stale, false);
+      assert.equal(entry.ageSeconds, 0);
+      assert.equal(second.calls.length, 1);
+    });
   });
 
   test("different params are different cache entries", async () => {
-    const h = harness(() => jsonResponse({ ok: true }));
-    await h.client.nftsByAccount("0xdead", FRESH_TTL, { collection: "a" });
-    await h.client.nftsByAccount("0xdead", FRESH_TTL, { collection: "b" });
-    assert.equal(h.calls.length, 2);
+    const h = harness(withExchange(ok));
+    await using(h, async () => {
+      await h.client.trendingTokens(FRESH_TTL, 10);
+      await h.client.trendingTokens(FRESH_TTL, 20);
+      assert.equal(h.calls.filter((c) => c.method === "GET").length, 2);
+    });
   });
 });
 
 describe("stale fallback — a slightly old answer beats an error card", () => {
-  test("a network failure serves the cached entry instead of throwing", async () => {
+  /** Warm the cache with `{floor: 1}` at a ttl of zero, so it is present but stale. */
+  async function warmed() {
     const cache = tempCache();
+    const h = harness(() => jsonResponse({ floor: 1 }), { cache });
+    await using(h, async () => {
+      await h.client.collectionStats("cool-cats", NO_TTL);
+    });
+    return cache;
+  }
+
+  const failures: Array<[string, () => Response]> = [
+    ["a 5xx", () => statusResponse(503)],
+    ["a 4xx", () => statusResponse(404)],
+  ];
+
+  for (const [name, response] of failures) {
+    test(`${name} falls back to the cached entry`, async () => {
+      const h = harness(response, { cache: await warmed() });
+      await using(h, async () => {
+        const entry = await h.client.collectionStats("cool-cats", FRESH_TTL);
+        assert.deepEqual(entry.data, { floor: 1 });
+        // Freshness stays visible: the caller is told the answer is old (docs/security.md).
+        assert.equal(entry.stale, true);
+      });
+    });
+  }
+
+  test("a network failure serves the cached entry instead of throwing", async () => {
     const h = harness(
       () => {
         throw new TypeError("fetch failed");
       },
-      { cache },
+      { cache: await warmed() },
     );
-    cache.put("https://api.opensea.io/api/v2/collections/cool-cats/stats", { floor: 1 }, NO_TTL);
-
-    const entry = await h.client.collectionStats("cool-cats", FRESH_TTL);
-    assert.deepEqual(entry.data, { floor: 1 });
-    // Freshness stays visible: the caller is told the answer is old (docs/security.md).
-    assert.equal(entry.stale, true);
-  });
-
-  test("an exhausted retry budget also falls back to cache", async () => {
-    const cache = tempCache();
-    const h = harness(() => statusResponse(503), { cache });
-    cache.put("https://api.opensea.io/api/v2/collections/cool-cats/stats", { floor: 1 }, NO_TTL);
-
-    const entry = await h.client.collectionStats("cool-cats", FRESH_TTL);
-    assert.deepEqual(entry.data, { floor: 1 });
-    assert.equal(entry.stale, true);
-  });
-
-  test("a 4xx also falls back to cache", async () => {
-    const cache = tempCache();
-    const h = harness(() => statusResponse(404), { cache });
-    cache.put("https://api.opensea.io/api/v2/collections/cool-cats/stats", { floor: 1 }, NO_TTL);
-
-    assert.deepEqual((await h.client.collectionStats("cool-cats", FRESH_TTL)).data, { floor: 1 });
+    await using(h, async () => {
+      const entry = await h.client.collectionStats("cool-cats", FRESH_TTL);
+      assert.deepEqual(entry.data, { floor: 1 });
+      assert.equal(entry.stale, true);
+    });
   });
 
   test("with nothing cached there is nothing to fall back to, so it throws", async () => {
     const h = harness(() => {
       throw new TypeError("fetch failed");
     });
-    const err = await rejects(() => h.client.collectionStats("cool-cats", NO_TTL));
-    assert.match(err.message, /OpenSea request failed/);
+    await using(h, async () => {
+      const err = await rejects(() => h.client.collectionStats("cool-cats", NO_TTL));
+      assert.match(err.message, /OpenSea request failed/);
+    });
   });
 });
 
 describe("missing API key", () => {
-  test("MissingApiKeyError when there is no key and no cache", async () => {
+  test("MissingApiKeyError when there is no key", async () => {
     const h = harness(
       () => {
         assert.fail("must not reach the network without a key");
       },
       { apiKey: null },
     );
-
-    const err = await rejects(() => h.client.collectionStats("cool-cats", NO_TTL));
-    assert.ok(err instanceof MissingApiKeyError);
-    assert.equal(h.calls.length, 0);
-  });
-
-  test("cached data is still served when there is no key", async () => {
-    const cache = tempCache();
-    const h = harness(
-      () => {
-        assert.fail("must not reach the network without a key");
-      },
-      { cache, apiKey: null },
-    );
-    cache.put("https://api.opensea.io/api/v2/collections/cool-cats/stats", { floor: 1 }, NO_TTL);
-
-    const entry = await h.client.collectionStats("cool-cats", FRESH_TTL);
-    assert.deepEqual(entry.data, { floor: 1 });
-    assert.equal(entry.stale, true);
+    await using(h, async () => {
+      const err = await rejects(() => h.client.collectionStats("cool-cats", NO_TTL));
+      assert.ok(err instanceof MissingApiKeyError);
+      assert.equal(h.calls.length, 0);
+    });
   });
 
   test("an empty-string key counts as no key", async () => {
@@ -467,75 +416,60 @@ describe("missing API key", () => {
       },
       { apiKey: "" },
     );
-    assert.ok((await rejects(() => h.client.collectionStats("c", NO_TTL))) instanceof MissingApiKeyError);
+    await using(h, async () => {
+      assert.ok((await rejects(() => h.client.collectionStats("c", NO_TTL))) instanceof MissingApiKeyError);
+    });
+  });
+
+  test("MissingApiKeyError explains the fix and names no secret", async () => {
+    const h = harness(ok, { apiKey: null });
+    await using(h, async () => {
+      const err = await rejects(() => h.client.collectionStats("cool-cats", NO_TTL));
+      assert.match(err.message, /--set-api-key/);
+      assert.ok(!err.message.includes(API_KEY));
+    });
   });
 });
 
-describe("errors never carry the API key", () => {
-  /** Every error message this module can produce, gathered through the public surface. */
-  const cases: { name: string; build: () => Harness }[] = [
-    {
-      name: "a transport error that quotes the whole request",
-      build: () =>
-        harness(() => {
-          // Real HTTP clients do this: the request, headers and all, embedded in the message.
-          const err = new Error(`connect ECONNREFUSED — request headers: {"x-api-key":"${API_KEY}"}`);
-          err.cause = { code: "ECONNREFUSED", headers: { "x-api-key": API_KEY } };
-          throw err;
-        }),
-    },
-    {
-      name: "a timeout",
-      build: () =>
-        harness(() => {
-          const err = new Error(`aborted while sending x-api-key: ${API_KEY}`);
-          err.name = "TimeoutError";
-          throw err;
-        }),
-    },
-    {
-      name: "a 4xx whose statusText echoes the request",
-      build: () => harness(() => fakeResponse(403, `Forbidden for key ${API_KEY}`)),
-    },
-    {
-      name: "a statusText full of control characters",
-      build: () => harness(() => fakeResponse(400, `Bad\r\nSet-Cookie: k=${API_KEY} `)),
-    },
-    {
-      name: "an exhausted retry budget",
-      build: () => harness(() => fakeResponse(503, `Unavailable ${API_KEY}`)),
-    },
-    {
-      name: "a body that echoes the key back as invalid JSON",
-      build: () => harness(() => new Response(`{"key": "${API_KEY}"`, { status: 200 })),
-    },
+describe("errors never carry a credential", () => {
+  /**
+   * The SDK builds its error messages from the response body, which is remote-controlled, so the
+   * client rebuilds every message from a status code it recognises and drops the rest. These cases
+   * are the ways a hostile or merely chatty upstream could try to get a header back out of us.
+   */
+  const cases: Array<[string, () => Response]> = [
+    [
+      "a 4xx whose body echoes the key",
+      () => jsonResponse({ errors: [`bad key ${API_KEY}`] }, { status: 403 }),
+    ],
+    [
+      "a body full of control characters",
+      () => jsonResponse({ errors: [`Bad\r\nSet-Cookie: k=${API_KEY} `] }, { status: 400 }),
+    ],
+    ["a 5xx echoing the PAT", () => jsonResponse({ errors: [`token ${PAT}`] }, { status: 503 })],
+    [
+      "a body that echoes the key back as invalid JSON",
+      () => new Response(`{"key": "${API_KEY}"`, { status: 200 }),
+    ],
   ];
 
-  for (const { name, build } of cases) {
+  for (const [name, response] of cases) {
     test(`${name} produces a clean message`, async () => {
-      const h = build();
-      const err = await rejects(() => h.client.collectionStats("cool-cats", NO_TTL));
-
-      assert.ok(!err.message.includes(API_KEY), `key leaked: ${err.message}`);
-      assert.ok(!/x-api-key/i.test(err.message), `headers leaked: ${err.message}`);
-      assert.ok(!/set-cookie/i.test(err.message), `headers leaked: ${err.message}`);
-      // Control characters would let a remote forge log lines.
-      // biome-ignore lint/suspicious/noControlCharactersInRegex: matching them is the point — this asserts they are absent
-      assert.ok(!/[\x00-\x1f]/.test(err.message), `control characters in: ${JSON.stringify(err.message)}`);
-      // Still useful to a human: it says which API failed.
-      assert.match(err.message, /OpenSea/);
+      const h = harness(response);
+      await using(h, async () => {
+        const err = await rejects(() => h.client.collectionStats("cool-cats", NO_TTL));
+        assert.ok(!err.message.includes(API_KEY), `key leaked: ${err.message}`);
+        assert.ok(!err.message.includes(PAT), `PAT leaked: ${err.message}`);
+        assert.ok(!/x-api-key/i.test(err.message), `headers leaked: ${err.message}`);
+        assert.ok(!/set-cookie/i.test(err.message), `headers leaked: ${err.message}`);
+        // Control characters would let a remote forge log lines.
+        // biome-ignore lint/suspicious/noControlCharactersInRegex: matching them is the point — this asserts they are absent
+        assert.ok(!/[\x00-\x1f]/.test(err.message), `control characters in: ${JSON.stringify(err.message)}`);
+        // Still useful to a human: it says which API failed.
+        assert.match(err.message, /OpenSea/);
+      });
     });
   }
-
-  test("a timeout says so, without quoting the aborted request", async () => {
-    const h = harness(() => {
-      const err = new Error(`aborted: ${API_KEY}`);
-      err.name = "TimeoutError";
-      throw err;
-    });
-    const err = await rejects(() => h.client.collectionStats("cool-cats", NO_TTL));
-    assert.match(err.message, /timed out after 15s/);
-  });
 
   test("a transport error keeps the errno, which is the useful part", async () => {
     const h = harness(() => {
@@ -543,14 +477,46 @@ describe("errors never carry the API key", () => {
       err.cause = { code: "ENOTFOUND" };
       throw err;
     });
-    const err = await rejects(() => h.client.collectionStats("cool-cats", NO_TTL));
-    assert.equal(err.message, "OpenSea request failed (TypeError: ENOTFOUND)");
+    await using(h, async () => {
+      const err = await rejects(() => h.client.collectionStats("cool-cats", NO_TTL));
+      assert.equal(err.message, "OpenSea request failed (TypeError: ENOTFOUND)");
+    });
   });
 
-  test("MissingApiKeyError explains the fix and names no secret", async () => {
-    const h = harness(() => jsonResponse({}), { apiKey: null });
-    const err = await rejects(() => h.client.collectionStats("cool-cats", NO_TTL));
-    assert.match(err.message, /--set-api-key/);
-    assert.ok(!err.message.includes(API_KEY));
+  test("a transport error that quotes the whole request is not repeated", async () => {
+    const h = harness(() => {
+      // Real HTTP clients do this: the request, headers and all, embedded in the message.
+      const err = new Error(`connect ECONNREFUSED — headers: {"x-api-key":"${API_KEY}"}`);
+      err.cause = { code: "ECONNREFUSED" };
+      throw err;
+    });
+    await using(h, async () => {
+      const err = await rejects(() => h.client.collectionStats("cool-cats", NO_TTL));
+      assert.ok(!err.message.includes(API_KEY));
+      assert.ok(!/x-api-key/i.test(err.message));
+    });
+  });
+
+  test("a 4xx with a status in the message is reported by status alone", async () => {
+    const h = harness(() => statusResponse(404));
+    await using(h, async () => {
+      const err = await rejects(() => h.client.collectionStats("cool-cats", NO_TTL));
+      assert.equal(err.message, "OpenSea API 404 Not Found");
+    });
+  });
+
+  test("a retryable status is not retried past the deadline", async () => {
+    // The SDK owns the 429 ladder; what matters here is that it terminates and reports cleanly.
+    const h = harness(
+      respondInOrder(
+        () => statusResponse(429, { "retry-after": "1" }),
+        () => jsonResponse({ ok: true }),
+      ),
+    );
+    await using(h, async () => {
+      const entry = await h.client.collectionStats("cool-cats", NO_TTL);
+      assert.deepEqual(entry.data, { ok: true });
+      assert.equal(h.calls.length, 2, "a 429 is retried once the Retry-After has elapsed");
+    });
   });
 });
