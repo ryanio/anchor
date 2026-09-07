@@ -1,0 +1,19 @@
+{
+  "name": "@anchor/executor",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Policy-bound execution seam. The agent requests; something else decides.",
+  "type": "module",
+  "engines": {
+    "node": ">=26.0.0"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --test src/*.test.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0"
+  },
+  "license": "MIT"
+}

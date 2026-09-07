@@ -27,11 +27,18 @@ if (runningMajor !== major) {
                 `Run \`mise install\` locally; CI reads .node-version via node-version-file.`);
 }
 
-// package.json engines
-const pkg = JSON.parse(read("service/package.json")) as { engines?: { node?: string } };
+// Every workspace's package.json engines. Adding a workspace must not create a new drift hole.
 const expectedEngines = `>=${major}.0.0`;
-if (pkg.engines?.node !== expectedEngines) {
-  problems.push(`service/package.json engines.node is ${JSON.stringify(pkg.engines?.node)}, expected "${expectedEngines}"`);
+for (const ws of ["service", "executor"]) {
+  let pkg: { engines?: { node?: string } };
+  try {
+    pkg = JSON.parse(read(`${ws}/package.json`)) as { engines?: { node?: string } };
+  } catch {
+    continue; // workspace not present on this branch
+  }
+  if (pkg.engines?.node !== expectedEngines) {
+    problems.push(`${ws}/package.json engines.node is ${JSON.stringify(pkg.engines?.node)}, expected "${expectedEngines}"`);
+  }
 }
 
 // PKGBUILD runtime dependency
