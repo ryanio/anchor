@@ -51,6 +51,13 @@
  * Raw `fetch` here rather than the SDK: `OpenSeaAuth.getValidToken()` throws unless
  * `authenticate()` ran in the same process with a signer, so the SDK has no PAT-only path even
  * though `exchangeScopedToken` is exactly that and is private.
+ *
+ * The obvious alternative does not work either. `OpenSeaOAuth` exposes a device authorization flow
+ * (`requestDeviceAuthorization` + `pollDeviceToken`) which is exactly the right shape for a headless
+ * desktop client — but OpenSea has confirmed third-party clients cannot use OAuth yet, so there is
+ * no client ID for an application like this one. Until that opens up, or `exchangeScopedToken`
+ * becomes public, reimplementing a private method is the only route to a wallet token. See
+ * docs/upstream.md entry 11; delete this module when either lands.
  */
 
 const EXCHANGE_PATH = "/api/v2/auth/tokens/exchange";
