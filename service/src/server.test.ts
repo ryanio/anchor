@@ -26,6 +26,11 @@ const config: Config = {
 let server: Server;
 let base: string;
 
+/** `res.json()` is `unknown` by design; assert the shape we expect at the boundary. */
+async function json<T>(res: Response): Promise<T> {
+  return (await res.json()) as T;
+}
+
 before(async () => {
   const cache = new Cache(join(mkdtempSync(join(tmpdir(), "anchor-srv-")), "c.sqlite"));
   const client = new OpenSeaClient({ chain: config.chain, requestsPerSecond: 100, cache });
@@ -41,7 +46,7 @@ describe("read-only gate", () => {
     test(`${method} is refused with 405`, async () => {
       const res = await fetch(`${base}/health`, { method });
       assert.equal(res.status, 405);
-      assert.match((await res.json()).error, /read-only/i);
+      assert.match((await json<{ error: string }>(res)).error, /read-only/i);
     });
   }
 
@@ -52,7 +57,7 @@ describe("read-only gate", () => {
 
 describe("routing", () => {
   test("/health reports config without touching the network", async () => {
-    const body = await (await fetch(`${base}/health`)).json();
+    const body = await json<{ ok: boolean; chain: string }>(await fetch(`${base}/health`));
     assert.equal(body.ok, true);
     assert.equal(body.chain, "ethereum");
   });
@@ -60,13 +65,13 @@ describe("routing", () => {
   test("unknown routes 404 with the route list", async () => {
     const res = await fetch(`${base}/nope`);
     assert.equal(res.status, 404);
-    assert.ok(Array.isArray((await res.json()).routes));
+    assert.ok(Array.isArray((await json<{ routes: string[] }>(res)).routes));
   });
 
   test("/portfolio without a wallet is a clear 428, not a crash", async () => {
     const res = await fetch(`${base}/portfolio`);
     assert.equal(res.status, 428);
-    assert.match((await res.json()).error, /wallet/i);
+    assert.match((await json<{ error: string }>(res)).error, /wallet/i);
   });
 
   test("trailing slashes resolve to the same route", async () => {
