@@ -120,6 +120,37 @@ and Hermes reads both at a project root but only the **first match** in a subdir
 (`AGENTS.override.md` → `AGENTS.md` → `agents.md` → `CLAUDE.md` → ...). A subdirectory holding both
 would have its `CLAUDE.md` silently ignored — one more reason there is only ever one real file.
 
+## Generating images and video
+
+Visual assets come from xAI Grok Imagine through a repo script. The key lives in the OS keyring — if
+it is missing, `--set-key` stores it; never put it anywhere else.
+
+```bash
+node scripts/generate-asset.ts --prompt "..." --out site/assets/name.jpg
+node scripts/generate-asset.ts --video --prompt "..." --out site/assets/clip.mp4
+```
+
+Zero dependencies. Video is asynchronous — the script polls the job and downloads the result, which
+lives at a temporary URL, so it cannot be linked to directly. `--image-url` animates an existing
+image; `--duration` sets length.
+
+**Always re-encode before committing.** A raw generation is ~220 KB; at background scale nobody can
+tell the difference after:
+
+```bash
+magick in.jpg -resize 1600x -strip -interlace Plane -quality 74 out.jpg
+```
+
+The hero wash went 221 KB → 46 KB that way.
+
+**Use it for** illustration, ambient washes, textures, OG and social cards, placeholder art.
+
+**Never for** logos, icons, or UI marks. Hand-authored SVG themes with `currentColor`, stays crisp at
+any size, and costs a few hundred bytes. `site/brand/` is hand-drawn and stays that way.
+
+If you delegate visual work, put the command and the re-encode step in the child's `context` — a
+subagent sees nothing of your conversation and will not know the capability exists.
+
 ## Formatting and linting
 
 **Biome, always. Never ESLint or Prettier.** One tool, one config, one pass — it formats and lints
