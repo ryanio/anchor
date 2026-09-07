@@ -90,6 +90,17 @@
   --surface-sunken: var(--foam-100);
 
   /*
+   * A group of rows lifted off the card it sits in — the third layer in the stack, above `--bg`
+   * and `--bg-elevated` and opposite `--surface-sunken`.
+   *
+   * This exists because the Quickshell panel grew one and the two vocabularies have to stay the
+   * same system. On a light theme it is the same value as `--bg-elevated`, and deliberately so:
+   * white is the top of a light stack and there is no headroom above it. Every Omarchy theme makes
+   * the same call — `catppuccin-latte`'s `lighter_background` is *darker* than its background.
+   */
+  --surface-raised: var(--bg-elevated);
+
+  /*
    * The one thing on a view asking for a decision. Opaque rather than a translucent ember tint,
    * because check-contrast.ts can only measure a real colour — a tint over an unknown backdrop is
    * exactly the kind of "looked fine to whoever chose it" that the gate exists to catch.
@@ -129,6 +140,9 @@
 
     /* Sunken goes *down* here, not up: on a dark ground the inset well is darker than the card. */
     --surface-sunken: #071820;
+
+    /* Dark grounds have headroom, so raised is a real lift rather than an alias. */
+    --surface-raised: var(--depth-800);
 
     --attention-bg:     #27292d;
     --attention-border: #583f3b;

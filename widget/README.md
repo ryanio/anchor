@@ -86,7 +86,11 @@ hand-edit.
 | Middle click | Refresh every read now |
 | `r` in the panel | Refresh |
 | `v` in the panel | Toggle the value |
+| `d` in the panel | Show or hide the details view |
+| `s` in the panel | Run the current setup step's action — the same thing its button does |
 | `Esc` | Close |
+
+A pill is not a tab stop, so `s` is how the panel stays finishable without a pointer.
 
 Over IPC, which is useful from a hook after the service restarts:
 
@@ -103,10 +107,10 @@ calm dimmed mark rather than a red box.
 | Bar shows | State | Meaning | Panel offers |
 |---|---|---|---|
 | Dimmed mark, no numbers | `starting` | Nothing read yet, and no snapshot on disk. | "reading…" |
-| Dimmed mark, last number | `offline` | The service did not answer. The previous reading stays, labelled with its age. | The age of what you are looking at, and the command to start the service |
+| Dimmed mark, last number | `offline` | The service did not answer. The previous reading stays, labelled with its age. | The age of what you are looking at, and the button that starts the service |
 | Dimmed mark | `setup` | The service answered, but Anchor is not configured far enough to show anything. | The setup sequence — see below |
 | Number, dimmed | `stale` | Configured and working; something on screen has outlived its TTL. | "stale, *n* old — retrying" |
-| Number, full strength | `ready` | Everything is current. | Portfolio, what is closing, floors |
+| Number, full strength | `ready` | Everything is current. | Portfolio and what is closing. Floors and the value split are behind `details`. |
 
 **Staleness is always shown, never hidden.** Every number carries the age of the data behind it,
 taken from the service's own `meta.ageSeconds` so it keeps counting across a reboot. A stale floor
@@ -120,16 +124,40 @@ synchronous request here would freeze the bar, the notifications and every panel
 ### The setup sequence
 
 Three required steps, one optional. Completed steps **leave** the list; the segmented bar above them
-keeps the record, and the header says which step you are on.
+keeps the record. There is no "step 2 of 3" header — the segments, the numbered discs and the panel
+subtitle were all saying it already.
 
-1. **Start the data service** — everything Anchor shows is read through it, on loopback.
-2. **Add your OpenSea API key** — the only credential Anchor needs.
-3. **Say which wallet to follow** — Anchor watches it, and never holds its keys.
+1. **Start the data service** — a **Start Anchor** button, plus **and at login**. They run
+   `systemctl --user start` / `enable --now` on `anchor-service.service`.
+2. **Add your OpenSea API key** — an **Enter the key** button that opens a terminal on the
+   interactive prompt.
+3. **Say which wallet to follow** — an **Open config** button that opens
+   `~/.config/anchor/config.json` in the editor Omarchy is configured to use.
 
 Optional, collapsed behind a pill you can press: **watch a few collections**, for floor prices.
 
-Only the current step shows its command, because offering a command for a step that cannot succeed
-yet is an invitation to run it and watch it fail.
+Only the current step shows its action, because offering one for a step that cannot succeed yet is
+an invitation to run it and watch it fail. The raw command behind each step is still there, in the
+`details` view.
+
+**A button only appears when it can work.** Step 1's button is offered only if
+`systemctl --user show anchor-service.service` reports `LoadState=loaded`; with no unit installed
+the step falls back to the command, which is what shipped before. A unit that loads and then fails
+to start is a different thing again, and the step says so rather than reporting a success nobody
+observed. See [../service/README.md](../service/README.md) for installing the unit.
+
+**Spawning processes from a bar widget.** The panel passes an *identifier* to `Model.actionArgv`,
+never a command. Every argv is built there from string literals, the table is closed, and an
+unrecognised id returns null and runs nothing — so no marketplace string, `/health` response or
+`shell.json` setting has a path to something that executes. `systemctl --user` is the invoking
+user's own service manager: no polkit prompt, no privilege the user did not already have, and it can
+only start a unit already installed on the machine. Starting the data service creates no path from
+this widget to a signature; the service still refuses every non-GET before routing.
+
+**No credential passes through the widget.** The API key is typed into a terminal that writes it
+straight to the OS keyring. A field in the bar would put a secret inside the process that draws the
+whole desktop, and passing it as an argument would put it in the process table. That step is one the
+panel can *start* and cannot finish, and it says so.
 
 There is deliberately **no wallet-PAT step**. Anchor used to ask for one; re-measured with a key that
 actually authenticates, every route this service calls needs the API key and nothing else. See the
@@ -142,6 +170,20 @@ function are different claims. `anchor-service --check-credentials` settles it.
 
 ## Design notes
 
+Start with the "Design principles" section of [../theme/README.md](../theme/README.md) — it governs
+this widget and the site alike. What follows is what those principles cost in this file.
+
+- **The default panel is a few things.** Hero, the number, what is closing, one row of controls.
+  The NFT/token split, the age of a *current* reading, the floor list, the raw command behind each
+  setup step and the read-only note are all behind `details` — deferred, not deleted.
+- **Depth comes from the theme, not from Anchor.** `OmarchyPalette` reads the active theme's
+  `colors.toml` for `lighter_background`, `dark_background` and `selection` — three keys the shell's
+  own `Color` singleton drops — and `Model.panelSurfaces` decides per theme whether each is a usable
+  step off the popup's actual ground or has to be derived from it. The bar itself stays unpainted.
+- **The step marker is aligned by measurement.** The numeral sits on the step title's own baseline
+  and the disc is centred on the numeral's *ink*, both from `FontMetrics`/`TextMetrics` at runtime.
+  It used to be a fixed 1px top margin against a metric-derived label, which put the disc 2.1px low
+  and grew worse as `[font] base-size` rose.
 - **The mark is the identity, not the hue.** Every colour is the user's own Omarchy theme, read
   through `bar.barForeground` and `Color.*`. A widget that painted itself ocean-cyan on a Rose Pine
   desktop would look like a bug.

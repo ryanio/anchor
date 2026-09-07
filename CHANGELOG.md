@@ -113,13 +113,31 @@ deadlines and an activity count, in the Omarchy top bar, read from the local ser
   snapshot on disk before any of them start, so the bar has content on its first frame. This runs
   inside the single process that draws the whole desktop.
 - **Every degraded state is a designed state.** Service down, no API key, no wallet, offline — each
-  renders as a calm dimmed mark and a panel saying what is missing and the command that fixes it,
-  never as an error. A red box on a fresh install is a bad first impression.
+  renders as a calm dimmed mark and a panel saying what is missing and offering the button that
+  fixes it, never as an error. A red box on a fresh install is a bad first impression.
+- **The panel opens on a few things.** Hero, the number, what is closing, one row of controls.
+  The NFT/token split, the age of a current reading, the floor list, the raw command behind each
+  setup step and the read-only note are behind a `details` disclosure — deferred, not deleted.
+- **Depth comes from the active Omarchy theme.** The panel draws on three surfaces — ground, raised
+  and sunken — read from the theme's own `colors.toml` (`lighter_background`, `dark_background`,
+  `selection`), three keys the shell's `Color` singleton does not expose. Where a theme's value is
+  not a usable step off the popup's actual ground, one is derived from it. Checked against all 22
+  stock themes, including `white` and `vantablack`, which have no headroom in one direction.
+- **A setup step does the thing rather than describing it.** Step 1 is a **Start Anchor** button
+  running `systemctl --user start anchor-service` (with **and at login** for `enable --now`); step 2
+  opens a terminal on the API-key prompt; step 3 opens the config file in Omarchy's editor. The raw
+  commands moved behind the `details` disclosure.
 - **Staleness is shown, not hidden**, using the service's own `meta.ageSeconds` so a reading keeps
   ageing honestly across a reboot.
 - **Setup is three steps, not a wall.** Completed steps leave the queue and a segmented bar keeps the
-  record; one step is current and only it shows a command; the optional step collapses behind a pill
-  you can press. Each step says what it gets you rather than what it configures.
+  record; one step is current and only it offers an action; the optional step collapses behind a pill
+  you can press. Each step says what it gets you rather than what it configures. The "Set up
+  Anchor · step 2 of 3" header was removed: between it, the counter, the segments and the numbered
+  discs, the panel was saying one fact four ways.
+- **The step marker is aligned by measurement.** The numeral sits on the step title's own baseline
+  and the disc is centred on the numeral's ink, both derived from `FontMetrics`/`TextMetrics` at
+  runtime. It was a fixed 1px top margin against a metric-derived label, which put the disc 2.1px
+  below the title's cap-height centre and grew worse as `[font] base-size` rose.
 - **A stored credential is not a working one.** A 401 on any read sends the API-key step back to
   current and says the key is being rejected, rather than ticking it because `/health` says a string
   exists.
@@ -127,21 +145,44 @@ deadlines and an activity count, in the Omarchy top bar, read from the local ser
   control characters — and rendered as plain text. Money stays a decimal string, rounded digit by
   digit; no denomination is ever converted, because there is no exchange rate in the widget.
 - Read-only: no credential of its own, loopback only, and clicking a row opens a browser.
+- **The panel passes an identifier, never a command.** `Model.actionArgv` owns a closed table of
+  literal argv arrays and returns null for anything else, so nothing that arrives over the network
+  or out of `shell.json` has a path to something that executes. The one non-literal value — the
+  config file's path — is built from `$HOME`/`$XDG_CONFIG_HOME` and rejected if it is relative,
+  contains `..`, or carries a control character. No credential passes through the widget: the API
+  key is typed into a terminal that writes it straight to the keyring.
 
 **A component layer above the tokens** — `theme/components.css`, with `theme/README.md` documenting
 each piece and when to use it. Pills, a step primitive, segmented progress, buttons in two weights,
-list rows, and generalised surfaces (`.card`, `.well`, `.lift`), so the site, the widget and the
-standalone pages compose from one vocabulary instead of each inventing its own. Variants choose
-weight, never hue, which is what makes "one accent per view" enforceable rather than aspirational.
+list rows, and generalised surfaces (`.card`, `.card--raised`, `.well`, `.lift`), so the site, the
+widget and the standalone pages compose from one vocabulary instead of each inventing its own.
+Variants choose weight, never hue, which is what makes "one accent per view" enforceable rather than
+aspirational.
+
+**Design principles, written down** — a short section at the top of `theme/README.md` that governs
+every surface Anchor draws: open on a few things, reassurance is not information, defer rather than
+delete but be willing to delete, a step does the thing rather than describing it, depth instead of
+dividers, and never a colour at a call site. It also records where a future NFT-driven theme plugs
+in — `tokens.css` for the web, the Omarchy theme's `colors.toml` for the widget — and there is no
+third seam, because no colour the widget draws is a literal.
+
+**`packaging/anchor-service.service`** — the data service as a systemd *user* unit, so starting it
+is a button in the bar rather than a command to copy. Installed to `/usr/lib/systemd/user/` by the
+PKGBUILD. **`/usr/bin/anchor-service`, which the unit's `ExecStart` names, does not exist yet** — it
+needs to be a wrapper around the packaged service and its `node_modules`, and until it is, the unit
+must be written against a checkout (see `service/README.md`). The widget probes the unit rather than
+assuming it, so a machine without one shows the command exactly as before.
 
 **The site, the brand, and the tooling.**
 
 - anchor.ryanio.com: build diary, changelog and `llms.txt`, on a deep-water palette with shared
   tokens in `theme/tokens.css` reused across the project rather than redefined.
 - An anchor mark that reads as an **A**, stroke-based on `currentColor`, legible at 16px.
-- `scripts/check-contrast.ts` computes WCAG ratios from the tokens and fails CI — all 32 text,
+- `scripts/check-contrast.ts` computes WCAG ratios from the tokens and fails CI — all 38 text,
   accent and component pairs clear AA in both themes, so a colour that looks good but is unreadable
-  cannot land.
+  cannot land. The widget's colours cannot be reached from there, because they are the user's live
+  theme; `widget/test/model.test.mjs` runs the same arithmetic over the stock Omarchy palettes and
+  is in CI too.
 - `scripts/check-versions.ts` enforces the Node floor across `.node-version`, CI and the PKGBUILD,
   and requires GitHub Actions to be pinned to commit SHAs rather than mutable tags.
 - Biome as the single formatter and linter — never ESLint or Prettier.

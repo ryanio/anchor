@@ -21,7 +21,20 @@ package() {
   cd "$srcdir/$pkgname"
   install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
   install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
+
+  # The data service runs as a systemd *user* unit, so the widget's first setup step is a button
+  # rather than a command to copy. The widget starts it by fixed name and never installs it — it
+  # probes for the unit and falls back to a one-line instruction when this file is not present.
+  install -Dm644 packaging/anchor-service.service \
+    "$pkgdir/usr/lib/systemd/user/anchor-service.service"
+
   # TODO: install service/, widget/, theme/ once they exist.
+  #
+  # `/usr/bin/anchor-service` is what the unit's ExecStart names, and it does not exist yet: it
+  # needs to be a wrapper that runs `node /usr/share/anchor/service/src/index.ts` with the packaged
+  # node_modules on NODE_PATH. Until it does, the unit is installed but unstartable, so keep the
+  # widget's probe honest — it checks `LoadState`, which a unit file alone satisfies, *and* reports
+  # the failure state after a start attempt rather than claiming success.
   #
   # The service is no longer dependency-free: it needs @opensea/sdk and @opensea/api-types at
   # runtime (and their transitive deps — ethers, seaport-js, @noble/hashes). Packaging therefore

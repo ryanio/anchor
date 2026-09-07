@@ -62,11 +62,45 @@ does the startup line.
 
 ## Running
 
+The service is meant to be a systemd **user** unit, not a command a person types. That is what lets
+the bar widget's first setup step be a button instead of a `node …` string to copy:
+
+```bash
+systemctl --user start anchor-service          # this session
+systemctl --user enable --now anchor-service   # and every one after it
+systemctl --user status anchor-service         # why it did not start
+```
+
+By hand, which is also what the unit runs:
+
 ```bash
 node src/index.ts                # start
 node src/index.ts --set-api-key  # store the OpenSea API key   (reads stdin, not argv)
 node src/index.ts --set-pat      # store the OpenSea PAT       (reads stdin, not argv)
 ```
+
+### Installing the unit
+
+Packaged, `packaging/anchor-service.service` lands at `/usr/lib/systemd/user/` and names
+`/usr/bin/anchor-service`. **That wrapper does not exist yet** — see the TODO in `packaging/PKGBUILD`
+— so until Anchor is packaged the unit has to be written against a checkout:
+
+```bash
+mkdir -p ~/.config/systemd/user
+sed "s|ExecStart=.*|ExecStart=$(command -v node) $PWD/service/src/index.ts|" \
+  packaging/anchor-service.service > ~/.config/systemd/user/anchor-service.service
+systemctl --user daemon-reload
+systemctl --user start anchor-service
+```
+
+The widget probes `systemctl --user show anchor-service.service` and only offers the button when
+`LoadState=loaded`; without the unit it falls back to showing the command. So a machine with no unit
+installed degrades to what shipped before rather than to a button that does nothing.
+
+The unit's hardening is deliberately partial and the omissions are documented in the file itself —
+`ProtectHome` and `ProtectSystem=strict` are absent because the service reads
+`~/.config/anchor/config.json` and writes a cache under `$XDG_DATA_HOME`, and the loopback-only bind
+is enforced in `src/server.ts` where it can be tested rather than in a unit directive.
 
 Config is written on first run to `~/.config/anchor/config.json`. It holds no secrets, so it is safe
 to paste into an issue:
