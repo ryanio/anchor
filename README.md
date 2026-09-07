@@ -1,0 +1,84 @@
+# Anchor
+
+**Make your wallet a part of your desktop, not another browser tab.**
+
+Anchor is an ambient OpenSea experience for [Omarchy](https://omarchy.org) — a wallet-aware Linux
+desktop. Your art becomes the theme. Your watchlist lives in the bar. Meaningful offers and auction
+deadlines become notifications. An agent can research and prepare, but never signs.
+
+> **Status: early.** This is a scaffold and a plan, not a working product yet. The roadmap below is
+> the honest order of work. Issues and ideas welcome.
+
+> **Not an official OpenSea product.** Anchor is a personal open-source project by
+> [@ryanio](https://github.com/ryanio). It is not affiliated with, endorsed by, or supported by
+> OpenSea, and it uses only public APIs.
+
+## Why
+
+Crypto has spent a decade living in browser tabs. A wallet is not a website login — it is identity,
+taste, history, inventory, community, and intent. That deserves a better home than thirty pinned tabs,
+and it should feel excellent on accessible hardware you actually own, not a $3,000 "web3 computer."
+
+## What it is
+
+**OpenSea Ambient** — one coherent thing, rather than a pile of widgets:
+
+- A compact **Quickshell top-bar widget**: portfolio pulse, incoming offers, auction countdowns, activity count.
+- **Gallery and theme integration**: owned works rotate as wallpaper, with an optional palette extracted into the current Omarchy theme.
+- **Calm notifications**: sales, offers, transfers, watched auction deadlines. Low-volume by default, per-collection controls.
+- **Agent research briefs**: read-only summaries over local data, always cited and timestamped.
+
+Later, and only once the read-only product feels trustworthy: an **intent queue** where an agent drafts
+an action, explains fees and expiry, and hands off to a wallet for a human signature.
+
+## Principles
+
+These are not negotiable, and they shape the architecture:
+
+- Private keys and seed phrases never touch agents, device firmware, or logs.
+- Agents **propose**. They never silently execute.
+- Any asset-moving action requires explicit hardware-wallet approval by a human.
+- Least-privilege scoped tokens only, stored in the OS keyring — never in a theme file or a prompt.
+- Cache locally and make data freshness visible.
+- Treat floor prices, mint eligibility, and social signals as hints, not facts.
+- Every visual customization is easy to undo.
+
+## Roadmap
+
+1. **Local read-only data service** — wallet, selected collections, cached activity, polling limits, token storage.
+2. **Quickshell widget** — one wallet, one portfolio summary, a selected collection list.
+3. **Gallery / theme integration** — display art, apply a reversible palette.
+4. **Notification policy** — defaults that avoid spam, with per-collection controls.
+5. **Agent briefs** — read-only summaries over the same local data service.
+6. **Intent queue** — only after the read-only product is trustworthy.
+
+## Layout
+
+| Path | What |
+|---|---|
+| `service/` | Local read-only data service. Everything else reads from here |
+| `widget/` | Quickshell top-bar widget |
+| `theme/` | Gallery wallpaper and palette extraction |
+| `packaging/` | Arch packaging, targeting the `[omarchy]` repo |
+| `docs/` | Vision, security model, roadmap detail |
+
+## Installing
+
+Not packaged yet. The goal is a single Arch package installable on Omarchy:
+
+```bash
+omarchy pkg install anchor
+```
+
+Omarchy ships its own pacman repository (`[omarchy]` → `pkgs.omarchy.org`), so the packaging target is
+a standard `PKGBUILD`. See `packaging/`.
+
+## Contributing
+
+Early and opinionated, but genuinely open. Read `docs/security.md` before proposing anything that
+touches keys, signing, or network exposure — those constraints are the point of the project, not
+obstacles to route around.
+
+## License
+
+MIT — see [LICENSE](LICENSE).

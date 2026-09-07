@@ -1,0 +1,38 @@
+# secrets — never commit
+.env
+.env.*
+*.key
+*.pem
+secrets.*
+
+# local state / cache
+.cache/
+data/
+*.sqlite
+*.sqlite3
+*.db
+
+# node
+node_modules/
+dist/
+build/
+*.tsbuildinfo
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.mypy_cache/
+.ruff_cache/
+
+# packaging artifacts
+packaging/*.pkg.tar.zst
+packaging/src/
+packaging/pkg/
+
+# os / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/
