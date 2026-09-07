@@ -5,11 +5,11 @@
   "description": "Policy-bound execution seam. The agent requests; something else decides.",
   "type": "module",
   "engines": {
-    "node": ">=22.6.0"
+    "node": ">=24.0.0"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "node --test src/"
+    "test": "node --test src/*.test.ts"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
