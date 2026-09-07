@@ -52,6 +52,20 @@ My control was a popular path. The `200` was a cached response that never reache
 
 There is no second credential. The spec was right, the API was right, and infrastructure in front of both told me a plausible story about a question nobody had asked.
 
+## Permission to be inspected
+
+The executor learned Solana the same day, and two holes in it share one sentence.
+
+The Solana guard held an allowlist of programs. The System Program was on it, and the guard did `if (!isTokenProgram(program)) return;` — so its instructions went unread. One of them is `Assign`, which reassigns an account's *owner program*, and an owner program may debit an account's lamports with no signature from anyone. A single `Assign` hands over the entire native balance while appearing to move nothing.
+
+The Compute Budget program was on the same list, described in a comment as inert because it "sets a fee limit". It does not. `SetComputeUnitPrice` names a price in micro-lamports per compute unit, and the fee committed is limit × price ÷ 10⁶. At the maximum unit limit and a large enough price, that is over a thousand SOL — in practice the payer's whole balance, handed to a validator as a tip.
+
+That one is interesting because it is not an authority grant, so the human-only rule does not catch it. It is a **spend that no cap can see**: a priority fee produces no asset delta, so it is invisible to simulation and to every rolling window we enforce. It needed its own ceiling.
+
+> An allowlisted program is permission to be inspected, not permission to run.
+
+Both holes were the same mistake: a program on a list, and nobody reading what it was being asked to do.
+
 ## The smaller version, same day
 
 The lint gate is `npx biome ci .`, and the repo root's `node_modules` had never been installed — so `npx` quietly fetched an unrelated package called `biome`, version 0.3.3 rather than `@biomejs/biome` 2.5.12, and ran that. Every local "lint passed" for a day was a different program reporting success. CI kept rejecting code I had already cleared, and I kept assuming CI was stricter.
