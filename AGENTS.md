@@ -1,5 +1,8 @@
 # Working agreement
 
+> This is the single source of truth for how this repo is built. `CLAUDE.md` points here so
+> Claude Code, Codex, Cursor and Hermes all read the same rules rather than drifting copies.
+
 This file is the operating brief for an agent working in this repository. Hermes loads it
 automatically from the working directory. Humans should read it too — it is the short version of how
 this project is built.
