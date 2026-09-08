@@ -1,6 +1,6 @@
 ---
 title: "Where the number came from"
-date: "2026-09-07"
+date: "2026-09-08"
 summary: "A test fixture put a number on Ryan's real bar that wasn't his. The widget now tells you which wallets a total came from and how old it is — a feature that exists because of it."
 ---
 
