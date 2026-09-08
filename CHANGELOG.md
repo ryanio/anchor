@@ -156,6 +156,11 @@ deadlines and an activity count, in the Omarchy top bar, read from the local ser
   you can press. Each step says what it gets you rather than what it configures. The "Set up
   Anchor · step 2 of 3" header was removed: between it, the counter, the segments and the numbered
   discs, the panel was saying one fact four ways.
+- **The mark has a square variant, because the bar is a row of squares.** Fitted to a bar slot the
+  full mark drew 10×12 against neighbours drawing 9–11 square, and read as the one tall, narrow
+  thing in the row. Shrinking it could not fix that — scaling preserves aspect ratio — so
+  `site/brand/anchor-bar.svg` is the same anchor-as-A redrawn to 38×38 on its own grid: ring lower,
+  shank shorter, legs wider. It fills the slot in both directions at 11px, and the row is even.
 - **The bar's open-panel underline tracks what the widget paints.** `Bar.qml` looks for an
   `openPanelIndicatorWidth` on a module and otherwise falls back to 55% of the slot, a figure
   calibrated for a text label in a padded slot. Measured on the running bar: a 172px slot drew a
@@ -218,7 +223,8 @@ assuming it, so a machine without one shows the command exactly as before.
 
 - anchor.ryanio.com: build diary, changelog and `llms.txt`, on a deep-water palette with shared
   tokens in `theme/tokens.css` reused across the project rather than redefined.
-- An anchor mark that reads as an **A**, stroke-based on `currentColor`, legible at 16px.
+- An anchor mark that reads as an **A**, stroke-based on `currentColor`, legible at 16px, with a
+  square variant for rows of icons and a rounded tile for the favicon.
 - `scripts/check-contrast.ts` computes WCAG ratios from the tokens and fails CI — all 38 text,
   accent and component pairs clear AA in both themes, so a colour that looks good but is unreadable
   cannot land. The widget's colours cannot be reached from there, because they are the user's live
