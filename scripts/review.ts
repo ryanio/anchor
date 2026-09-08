@@ -28,7 +28,8 @@
  * failing the run, so this still does something useful over SSH or in CI.
  */
 import { execFile, execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -36,6 +37,7 @@ import { promisify } from "node:util";
 const run = promisify(execFile);
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const OUT = join(ROOT, "review");
+const SRC = join(ROOT, "widget");
 
 /** A surface worth looking at. `capture` returns the PNG path, or throws with a reason to skip. */
 interface Surface {
@@ -60,6 +62,43 @@ function have(cmd: string): boolean {
 
 const onWayland = process.env.WAYLAND_DISPLAY !== undefined && have("grim");
 
+type Rect = { x: number; y: number; w: number; h: number };
+type Layer = Rect & { namespace: string };
+
+/** A rectangle in grim's geometry format. */
+function geom(r: Rect): string {
+  return `${r.x},${r.y} ${r.w}x${r.h}`;
+}
+
+/**
+ * Where the Omarchy bar actually is, according to the compositor.
+ *
+ * Worth asking rather than assuming, because assuming has broken this file twice: a probe hardcoded
+ * to the top six rows of the screen read the padding above the glyphs and declared the desktop
+ * locked, and the bar capture hardcoded a 30px height on a 26px bar and took four pixels of whatever
+ * window sat underneath. The bar is a layer-shell surface, so it has no geometry a client can read —
+ * but `hyprctl` knows, and it is already a dependency here.
+ *
+ * Returns `null` when there is no compositor to ask, which callers treat as "fall back", not as
+ * "no bar".
+ */
+async function barGeometry(): Promise<Rect | null> {
+  if (!have("hyprctl")) return null;
+  try {
+    const { stdout } = await run("hyprctl", ["layers", "-j"]);
+    const outputs = JSON.parse(stdout) as Record<string, { levels: Record<string, Layer[]> }>;
+    for (const output of Object.values(outputs)) {
+      for (const level of Object.values(output.levels)) {
+        const bar = level.find((l) => l.namespace === "omarchy-bar" && l.w > 0 && l.h > 0);
+        if (bar !== undefined) return { x: bar.x, y: bar.y, w: bar.w, h: bar.h };
+      }
+    }
+  } catch {
+    // A compositor that will not answer is not evidence either way.
+  }
+  return null;
+}
+
 /**
  * True when the desktop is actually on screen.
  *
@@ -80,8 +119,10 @@ const onWayland = process.env.WAYLAND_DISPLAY !== undefined && have("grim");
 async function desktopVisible(): Promise<boolean> {
   if (!have("magick")) return true; // cannot tell; the blankness check below still applies
   const probe = join(OUT, ".probe.png");
+  const bar = await barGeometry();
   try {
-    await run("grim", ["-g", "0,0 400x6", probe]);
+    // The bar's own rectangle, or a strip deep enough to contain one if the compositor will not say.
+    await run("grim", ["-g", bar === null ? "0,0 400x40" : geom(bar), probe]);
     const { stdout } = await run("magick", [
       probe,
       "-colorspace",
@@ -91,8 +132,13 @@ async function desktopVisible(): Promise<boolean> {
       "info:",
     ]);
     // Contrast, not brightness. The bar is bright glyphs on a dark ground, so the spread between
-    // its brightest pixel and its mean is large; a wallpaper is a smooth gradient, so the spread is
-    // tiny. Measured on this machine: 109 for the real bar, 1.7 for the lock screen.
+    // its brightest pixel and its mean is large; a lock screen is a smooth gradient, so the spread
+    // is tiny. Measured on this machine: 148 across the real bar, 1.7 for the lock screen.
+    //
+    // Measure the bar itself, not a corner of the screen. The first version of this probed
+    // `0,0 400x6`, and on a 26px bar those six rows are the padding *above* the glyphs — flat
+    // background, spread 0. It reported an ordinary unlocked desktop as locked, which is the
+    // failure that costs you nothing to fix and a whole session to notice.
     //
     // Two earlier versions of this check tested brightness and both let a lock screen through — a
     // lock screen is bright, and its top edge happened to sit within a hair of the threshold. The
@@ -249,8 +295,12 @@ const SURFACES: Surface[] = [
       "against its neighbours, not against itself. Aspect ratio is the usual culprit: shrinking an " +
       "icon cannot fix a shape that is taller than it is wide.",
     capture: async (file) => {
-      const width = await screenWidth();
-      await grim(`${width - 260},0 260x30`, file);
+      // The right-hand end of the bar, at the bar's own height. A hardcoded height is wrong on
+      // every bar but this machine's, and wrong here too — 30 against 26 took four pixels of
+      // whichever window happened to sit underneath, which then read as part of the design.
+      const bar = (await barGeometry()) ?? { x: 0, y: 0, w: await screenWidth(), h: 30 };
+      const w = Math.min(260, bar.w);
+      await grim(geom({ x: bar.x + bar.w - w, y: bar.y, w, h: bar.h }), file);
       await magnify(file, 4);
     },
   },
@@ -561,6 +611,40 @@ function page(shots: Array<{ surface: Surface; file: string | null; reason?: str
 `;
 }
 
+/**
+ * Warn when the bar is running a different widget than the one in this checkout.
+ *
+ * Quickshell loads the plugin from `~/.config/omarchy/plugins/`, and the documented install is a
+ * copy. So a change to `widget/` is invisible on the bar until it is copied over and the shell is
+ * restarted — and the capture succeeds either way, producing a photograph of the *old* build with
+ * nothing to say it is old.
+ *
+ * That is worse than a failure. It cost a whole round of "the fix did not work" on a fix that was
+ * measurably correct, and the next step after that conclusion is usually to change something that
+ * was already right.
+ *
+ * A symlinked install (`ln -sfn "$PWD/widget" ...`) makes this permanently a non-issue and is in
+ * widget/README.md; this check exists for everyone who followed the other instruction.
+ */
+function warnIfWidgetIsStale(): void {
+  const installed = join(homedir(), ".config/omarchy/plugins/anchor.pulse");
+  if (!existsSync(installed)) return; // not installed is a different problem, and an obvious one
+  const stale = readdirSync(SRC)
+    .filter((f) => f.endsWith(".qml") || f.endsWith(".js") || f === "manifest.json")
+    .filter((f) => {
+      const there = join(installed, f);
+      return !existsSync(there) || readFileSync(there, "utf8") !== readFileSync(join(SRC, f), "utf8");
+    });
+  if (stale.length === 0) return;
+
+  console.warn(
+    `\n  ! The bar is running an older widget. These differ from this checkout:\n` +
+      stale.map((f) => `      ${f}`).join("\n") +
+      `\n    You are about to photograph the installed build, not your change.\n` +
+      `      cp ${SRC}/*.qml ${SRC}/*.js ${installed}/ && omarchy restart shell\n`,
+  );
+}
+
 // ── main ────────────────────────────────────────────────────────────────────────────────────────
 
 const args = process.argv.slice(2);
@@ -577,6 +661,8 @@ if (wanted.length === 0) {
   console.error(`Nothing matches ${groups.join(", ")}. Try --list.`);
   process.exit(1);
 }
+
+if (wanted.some((s) => s.group === "widget")) warnIfWidgetIsStale();
 
 if (existsSync(OUT)) for (const f of readdirSync(OUT)) rmSync(join(OUT, f), { recursive: true });
 mkdirSync(OUT, { recursive: true });
