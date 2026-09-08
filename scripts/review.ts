@@ -216,8 +216,16 @@ async function magnify(file: string, factor: number): Promise<void> {
  * Crop to whatever actually changed between two captures.
  *
  * A panel is a layer-shell surface, so it cannot be captured by window and its geometry is not
- * exposed. Diffing the screen before and after opening it finds its bounds exactly, which beats a
- * hardcoded region that is mostly wallpaper and breaks on a different monitor.
+ * exposed. Hyprland does not help either: with the panel open the only new layer it reports is a
+ * full-screen `omarchy-keyboard-panel`, which is the input catcher, not the panel. So the bounds
+ * come from diffing the screen before and after opening it, which beats a hardcoded region that is
+ * mostly wallpaper and breaks on a different monitor.
+ *
+ * The difference is split into connected regions rather than reduced to one bounding box, because
+ * the panel is not the only thing on screen that moves. A capture taken while a terminal was
+ * printing produced a "panel" shot four times too big with the panel in one corner — the union of
+ * the panel and some scrolling text. The panel is a single solid region and text is a scattering of
+ * small ones, so the largest region is the panel.
  */
 async function cropToDiff(before: string, after: string, out: string, pad = 12): Promise<boolean> {
   if (!have("magick")) return false;
@@ -232,16 +240,41 @@ async function cropToDiff(before: string, after: string, out: string, pad = 12):
       "Gray",
       "-threshold",
       "8%",
-      "-format",
-      "%@",
-      "info:",
+      // Close hairline gaps so a panel's border and its interior count as one region rather than a
+      // ring around a hole.
+      "-morphology",
+      "Close",
+      "Octagon:3",
+      "-define",
+      "connected-components:verbose=true",
+      "-define",
+      "connected-components:area-threshold=2000",
+      "-connected-components",
+      "8",
+      "null:",
     ]);
-    const m = /^(\d+)x(\d+)\+(\d+)\+(\d+)$/.exec(stdout.trim());
-    if (m === null) return false;
-    const [w, h, x, y] = [Number(m[1]), Number(m[2]), Number(m[3]), Number(m[4])];
+
+    // `  2: 360x249+809+31  929.9,155.7  9709  gray(255)` — id, bounds, centroid, area, colour.
+    // gray(255) is changed, gray(0) unchanged; ignore the latter and the full-frame background.
+    const regions = stdout
+      .split("\n")
+      .map((line) => /^\s*\d+:\s+(\d+)x(\d+)\+(\d+)\+(\d+)\s+\S+\s+(\d+)\s+gray\(255\)/.exec(line))
+      .filter((m) => m !== null)
+      .map((m) => ({
+        w: Number(m[1]),
+        h: Number(m[2]),
+        x: Number(m[3]),
+        y: Number(m[4]),
+        area: Number(m[5]),
+      }))
+      .sort((a, b) => b.area - a.area);
+
+    const biggest = regions[0];
+    if (biggest === undefined) return false;
+    const [w, h, x, y] = [biggest.w, biggest.h, biggest.x, biggest.y];
     if (w < 40 || h < 40) return false; // nothing meaningful changed
-    const geom = `${w + pad * 2}x${h + pad * 2}+${Math.max(0, x - pad)}+${Math.max(0, y - pad)}`;
-    await run("magick", [after, "-crop", geom, "+repage", out]);
+    const box = `${w + pad * 2}x${h + pad * 2}+${Math.max(0, x - pad)}+${Math.max(0, y - pad)}`;
+    await run("magick", [after, "-crop", box, "+repage", out]);
     return true;
   } catch {
     return false;
