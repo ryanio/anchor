@@ -508,27 +508,26 @@ Panel {
 
       AnchorMark {
         anchors.verticalCenter: parent.verticalCenter
-        // `iconSize` is the mark's DRAWN height, not a canvas it sits inside: AnchorMark fits the
-        // artwork's height to this number, and the artwork is taller than it is wide (32×45 on its
-        // own grid), so height is always the binding dimension and there is no padding to absorb.
+        // The square variant, because this is a row of square glyphs. The full mark is 32×45 on
+        // its own grid, so fitted to a slot it draws 9×12 — the one tall, narrow thing in the bar,
+        // which is exactly the complaint. `compact` swaps in geometry redrawn to 38×38, and the
+        // mark now fills the slot in both directions instead of only vertically.
+        //
+        // `iconSize` is the mark's DRAWN size, not a canvas it sits inside: AnchorMark fits the
+        // artwork to this number, and with the square variant both dimensions bind at once.
         //
         // Every neighbour is a Nerd Font glyph in a `Style.bar.iconCanvas` slot, and a glyph draws
         // to roughly its cap height inside that slot. Measured off the running bar, tray, monitor,
-        // grid, bluetooth and network draw 9–11px inside a 16px canvas. The mark was asking for
-        // `iconCanvas * 1.14` and drew 20px — nearly double, which is what read as "too tall".
-        //
-        // So the canvas is scaled by the fraction a glyph actually fills. The anchor takes the top
-        // of the neighbours' range rather than the mean, because it is a narrow glyph among square
-        // ones: at equal height it covers much less area, and matching the mean makes it read small.
-        //
-        // The result measures 12px against neighbours drawing 9–11, with top edges aligned. The
-        // extra pixel is deliberate and stays: the mark is 8px wide where they are 9–12, and a
-        // narrow glyph at equal height reads smaller than a square one.
+        // grid, bluetooth and network draw 9–11px inside a 16px canvas. So the canvas is scaled by
+        // the fraction a glyph actually fills, and the mark lands at 11 — the top of the range.
+        // The full mark used to take 12 to compensate for being narrow; square, it no longer has
+        // to, and the row is even.
         //
         // Raising `strokeUnits` to compensate for the smaller size was tried and reverted — it
         // moved two pixels on screen, and the apparent thinness was the deliberate dim of the
         // "service not running" state rather than the stroke.
-        iconSize: Math.round(Style.bar.iconCanvas * 0.72)
+        compact: true
+        iconSize: Math.round(Style.bar.iconCanvas * 0.68)
         color: root.foreground
         // Dimmed whenever the numbers beside it cannot be fully trusted — starting up, offline,
         // stale, or not yet configured. This is the widget's whole first impression on a fresh
