@@ -119,10 +119,16 @@ narrative, and this project is public precisely so people can learn from the rea
 
 ### Diary entries
 
-One entry per day, **500 words maximum**, enforced by `site/build.ts` — the build fails, it does not
-warn. Counted on the body, so frontmatter and fenced code do not spend the budget.
+**One entry per day, 500 words maximum.** Both halves are enforced by `site/build.ts` — the build
+fails, it does not warn. Words are counted on the body, so frontmatter and fenced code do not spend
+the budget.
 
-The cap exists because the failure mode is drift rather than one bad decision. Every paragraph looks
+Two entries on one day is the same drift wearing a different shape, and it has been reported twice
+from the live site: a busy day produces a second entry that feels too good to fold into the first,
+and the reader then cannot tell which of the two is where the project actually stands. Fold it in,
+or date it the day its work landed.
+
+The word cap exists because the failure mode is drift rather than one bad decision. Every paragraph looks
 worth keeping while you are adding it, and an entry that folded in a whole day's work reached 1522
 words that way. The limit forces the entry to be **one story** — the best thing that happened that
 day — instead of a summary of everything.

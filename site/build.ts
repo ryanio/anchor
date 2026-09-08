@@ -385,10 +385,33 @@ function countProseWords(markdown: string): number {
 const entries = readdirSync(join(ROOT, "diary"))
   .filter((f) => f.endsWith(".md"))
   .map(parseEntry)
-  // Newest first. Date alone is not a total order — two entries can land on the same day, and a
-  // stable sort would then leave them in readdir order, i.e. oldest at the top of the page. The
-  // numeric slug prefix is the real sequence, so it breaks the tie.
-  .sort((a, b) => b.date.localeCompare(a.date) || b.slug.localeCompare(a.slug));
+  // Newest first. The gate below makes `date` unique, so this is a total order.
+  .sort((a, b) => b.date.localeCompare(a.date));
+
+/**
+ * One entry per day, and the build fails rather than warns.
+ *
+ * This is the second half of the same rule the word cap enforces. The cap stops one entry becoming
+ * a summary of everything; this stops the same day becoming two entries, which is the identical
+ * drift wearing a different shape — and it is worse on the page, because the reader cannot tell
+ * which of two same-dated entries is the current state of the project.
+ *
+ * It has been reported twice from the live site, both times after a busy day produced a second
+ * entry that felt too good to fold into the first. Fold it in anyway, or move it to the day the
+ * work it describes actually landed. What will not fit belongs in `CHANGELOG.md`.
+ */
+const byDate = new Map<string, string[]>();
+for (const e of entries) byDate.set(e.date, [...(byDate.get(e.date) ?? []), e.slug]);
+const sameDay = [...byDate].filter(([, slugs]) => slugs.length > 1);
+
+if (sameDay.length > 0) {
+  console.error(
+    "More than one diary entry per day:\n" +
+      sameDay.map(([date, slugs]) => `  - ${date}: ${slugs.join(", ")}`).join("\n") +
+      "\nFold them into one story, or date the other entry the day its work landed.",
+  );
+  process.exit(1);
+}
 
 const tooLong = entries
   .map((e) => ({

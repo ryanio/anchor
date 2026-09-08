@@ -1,6 +1,6 @@
 ---
 title: "The fixture that lied"
-date: "2026-09-07"
+date: "2026-09-08"
 summary: "A test server bound to the real service port and showed Ryan a portfolio total that was not his. The fix that followed is the interesting part."
 ---
 
