@@ -307,11 +307,20 @@ was invisible in the source and obvious on screen: a cheat sheet fixed three tim
 arithmetic before anyone rendered it, and a bar icon "aligned" by matching top edges when the real
 problem was an aspect ratio of 0.67 in a row of square glyphs — which no size change could fix.
 
+**Install the widget as a symlink, or you will review the wrong build.** Quickshell loads from
+`~/.config/omarchy/plugins/anchor.pulse`, and the documented install is a copy — so a change to
+`widget/` is invisible on the bar until it is copied over and `omarchy restart shell` has run. The
+capture succeeds either way and photographs the old build. `review.ts` warns when the two differ,
+because this cost a round of "the fix did not work" on a fix that was measurably correct, and the
+step after that conclusion is usually to break something that was already right.
+
 Two things the capture step refuses to do, both learned the hard way: it will not write a blank frame
 when the display is off, and it will not capture a locked session. The first two attempts at that
 check tested screen *brightness* and both let a lock screen through, writing a password prompt to
 disk. It tests contrast now — a bar is bright glyphs on a dark ground, a wallpaper is a smooth
-gradient.
+gradient, measured across the bar's own rectangle — which the compositor is asked for rather than
+assumed. A hardcoded probe of the top six rows read the padding *above* the glyphs and called an
+ordinary unlocked desktop locked.
 
 ## Formatting and linting
 
