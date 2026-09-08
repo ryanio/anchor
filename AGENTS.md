@@ -130,6 +130,16 @@ day — instead of a summary of everything.
 Nothing is lost by cutting: `CHANGELOG.md` holds what shipped and `docs/` holds how it works. The
 changelog says so at the top — the diary has the story, the changelog has the facts.
 
+**Tone: honest and hopeful, not a lament.** Honesty about what broke is the point, and it is also not
+the ending. Every entry earns its keep by finishing somewhere better than it started — what got built,
+what is now impossible to get wrong, what the next person no longer has to discover. A bug found on
+day one is good news about day one hundred, and the entry should read that way.
+
+The failure modes to avoid are both real: an entry that only records successes is marketing, and an
+entry that only records failures is a confession. Neither teaches anyone anything. State the mistake
+plainly, then spend the last third on the fix, the rule, and the thing that is better now. Self-blame
+is not rigour — the finding is the achievement.
+
 ## Working alongside other agents
 
 Several agents may work this repo at once. Every rule here comes from a collision that actually
