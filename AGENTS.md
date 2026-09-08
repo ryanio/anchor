@@ -258,6 +258,23 @@ To cut a release:
 is the same mistake this repo already made once, when it claimed an action was pinned to a commit
 before the pin was actually in the file. State follows reality, never leads it.
 
+## The widget wears the user's desktop, not ours
+
+Anchor's bar widget is a guest in the Omarchy shell. Where the shell has an opinion, it wins — even
+when ours is defensible in isolation.
+
+**The font family is system-wide and is not ours to set.** `Style.qml` in the shell says so
+outright: the family defaults to `monospace` so every surface follows the fontconfig alias that
+`omarchy font set` writes, and themes may override sizes per token but never the family. So the
+panel's prose is monospace, and that is correct, not a defect — setting sentences in a sans face
+would make Anchor the one widget on the bar that ignores the user's font. When a panel reads flat,
+the fix is hierarchy *within* the family: weight, size, colour, and line-height. Not a second
+typeface.
+
+The same reasoning covers colour (the live Omarchy theme, never a literal), the bar's own metrics,
+and the shared tooltip. Read the packaged shell under `/usr/share/omarchy/shell/` before deciding
+something is broken — several times it turned out to be deliberate.
+
 ## Looking at what you built
 
 ```bash
