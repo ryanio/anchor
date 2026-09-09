@@ -21,6 +21,14 @@ const NOW = Date.parse("2026-09-08T17:00:00Z");
 const ADDRESS = `0x${"0".repeat(39)}1`;
 const ADDRESS_2 = `0x${"0".repeat(39)}2`;
 const OTHER = `0x${"0".repeat(39)}9`;
+/**
+ * Somebody else, and deliberately not one of the wallets above.
+ *
+ * `isIncomingOffer` refuses an offer whose maker is one of your own wallets — your own bid is not
+ * an offer *to* you. With nine wallets that is nine addresses a fixture must avoid, and using one
+ * of them as the bidder made a whole state render empty with nothing to say why.
+ */
+const MAKER = `0x${"e".repeat(40)}`;
 
 function health(overrides) {
   return Object.assign(
@@ -89,8 +97,10 @@ function offer(overrides) {
     {
       eventType: "order",
       orderType: "item_offer",
-      maker: OTHER,
+      maker: MAKER,
       eventTimestamp: Math.floor((NOW - 60000) / 1000),
+      // The service tags every merged row with the wallet it came from.
+      anchorWallet: ADDRESS,
       expirationDate: Math.floor((NOW + 6 * 3600000) / 1000),
       asset: { collection: "sample-cats", identifier: "1111", name: "SAMPLE Cat #1111" },
       payment: { quantity: "1110000000000000000", decimals: 18, symbol: "WETH" },
@@ -288,10 +298,15 @@ const CASES = [
       "Two numbers competing for the same attention. Does the thing with a clock on it read as " +
       "more urgent than the thing without?",
     reading: healthy({
+      health: health({ wallets: NINE.map((w) => w.address), wallet: ADDRESS }),
+      portfolio: portfolio({ totalValueUsd: "11111.11" }, NINE),
       activity: activity([
         offer(),
-        offer({ asset: { collection: "sample-apes", identifier: "2222", name: "SAMPLE Ape #2222" } }),
-        offer({ orderType: "collection_offer", asset: undefined }),
+        offer({
+          anchorWallet: ADDRESS_2,
+          asset: { collection: "sample-apes", identifier: "2222", name: "SAMPLE Ape #2222" },
+        }),
+        offer({ anchorWallet: OTHER, orderType: "collection_offer", asset: undefined }),
       ]),
     }),
   },
