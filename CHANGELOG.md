@@ -204,6 +204,9 @@ deadlines and an activity count, in the Omarchy top bar, read from the local ser
   a live machine is in exactly one of them, so its error screens had never been reviewed by anyone.
   `PanelContent.qml` renders from a single reading and takes no action itself, so `widget/gallery/`
   mounts it against a fixture per state and photographs all fifteen with no service, bar or desktop.
+- **The favicon carries the same geometry.** A favicon and a bar slot are the same problem at the
+  same size, so `favicon.svg` is now the bar mark on its tile rather than a third drawing. The
+  system is one rule — the full anchor where there is room, the crown where there is not.
 - **The mark has a bar variant, because a bar breaks it two ways.** Fitted to a bar slot the full
   mark drew 10×12 against neighbours drawing 9–11 square — the one tall, narrow thing in the row —
   and its stroke computed to 0.93 device pixels, under one, so it antialiased to grey. Neither is a
