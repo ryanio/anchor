@@ -300,9 +300,10 @@ something is broken — several times it turned out to be deliberate.
 ## Looking at what you built
 
 ```bash
-node scripts/review.ts          # capture every surface
-node scripts/review.ts widget   # or one group: widget, panel
-node scripts/panel-states.ts    # just the panel gallery
+node scripts/review.ts             # capture every surface
+node scripts/review.ts widget      # or one group: widget, panel
+node scripts/review.ts --page-only # rebuild the page over the shots already on disk
+node scripts/panel-states.ts       # just the panel gallery
 ```
 
 **The panel has fifteen states and a live machine is in one of them.** Its error and warning screens
@@ -313,8 +314,22 @@ service, no bar and no desktop behind it. Add a state there when you add one to 
 nobody can look at is a state nobody has designed.
 
 It writes `review/index.html`, where you click a screenshot to drop a pin and say what should change.
-Notes save to `localStorage`; **Copy all notes** puts the review on the clipboard as markdown to hand
-back to an agent.
+Notes save to `localStorage`; **Copy notes** puts the review on the clipboard as markdown to hand back
+to an agent.
+
+**The page is a walkthrough, not a list.** Twenty-three states in one column is a scroll that gets read
+attentively for four cards, which is how the panel's warning screens sat on a review page unreviewed.
+So the states are grouped into chapters in the order a person meets them — a fresh install, the state
+it is in almost always, everything at once, the failures, the bar — each chapter closed but showing a
+contact strip of its own thumbnails, so the whole review is one screen. **Walk through** (or `W`) opens
+a focus view that moves through all of them on the arrow keys, blown up: a 300×26 bar strip is shown at
+4× nearest-neighbour, which is the only size at which anyone can judge it. A surface counts as looked
+at once it is marked **Looks right** or carries a note, and the tally at the top is the difference
+between a review that finished and one that stopped.
+
+`--page-only` rebuilds the page from the PNGs already in `review/`. Prefer it when changing
+`scripts/review-page.ts`: a full run wipes `review/`, needs an unlocked Wayland session, and takes a
+minute, none of which a stylesheet change should cost.
 
 **Do not ship a visual change you have only reasoned about.** Every visual bug in this project so far
 was invisible in the source and obvious on screen: a cheat sheet fixed three times from CSS

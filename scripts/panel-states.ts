@@ -49,6 +49,8 @@ export type PanelCase = {
   looking: string;
   category: string;
   file: string;
+  /** A bar strip rather than a panel — a few hundred pixels wide and twenty-six tall. */
+  strip: boolean;
 };
 
 /** Every state, whether or not it has been captured. The review page reads this. */
@@ -59,6 +61,10 @@ export function panelCases(): PanelCase[] {
     looking: c.looking,
     category: c.category,
     file: `${c.dir}/${c.id}.png`,
+    // Declared rather than measured off the PNG. The review page needs to lay a bar strip out
+    // differently from a panel, and aspect ratio is not the discriminator it looks like: the
+    // shortest setup panel is 388×98, wider-than-tall by four, and is not a bar.
+    strip: c.dir === "bar",
   }));
 }
 
