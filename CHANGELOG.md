@@ -1,3 +1,14 @@
+- ESP32 pulse firmware, **running on hardware**. The device half of the wire format is portable C99
+  with no allocation and no platform calls; it is compiled and driven on every `npm test` against
+  frames from the real host adapter, so the encoder is proved against a second implementation rather
+  than its own decoder. An Arduino application speaks it over USB CDC to a bare ESP32-S3 N16R8, and
+  a serial transport (`esp32-serial.ts`) drives it — which keeps invariant 6 by removing the socket
+  rather than inverting it. Measured on the board: a 466×466 framebuffer allocates in PSRAM, a full
+  frame is 23 KB on the wire and ~190 ms end to end, and an unchanged frame costs zero bytes. The
+  adapter gained `setBlanked` (the contract's lock hook) and `ping`/`onPong`, which is the only
+  acknowledgement the protocol has and therefore the instrument that timing is measured with. There
+  is no display attached and no pulse panel exists yet; `devices/firmware/esp32/README.md` says what
+  was measured, what was not, and the five bugs the hardware found.
 - **One mark, at every size:** a ring, two arms, a crossbar, and a fluke curling up at the end of
   each arm — an anchor that reads as an A, on square bounds of 38×38, in three files that are the
   same drawing at three weights. A bar had broken the old six-stroke mark two ways: 10×12 in a row

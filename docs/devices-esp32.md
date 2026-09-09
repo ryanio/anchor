@@ -54,6 +54,35 @@ The cost is that the ESP32 is now the thing with an open port, which is discusse
 [Putting an Anchor surface on a LAN](#putting-an-anchor-surface-on-a-lan). That is a real cost and
 it is the reviewed reason this design needs sign-off on.
 
+### The cable comes first
+
+Everything above describes the display on a shelf, and it is still the end state. The firmware that
+now exists in `devices/firmware/esp32/` speaks the identical protocol over **USB CDC serial**, and
+the first Anchor frame on real glass will arrive down a cable rather than a radio.
+
+Two reasons, and the second is the one that matters.
+
+**It removes five things that can be wrong before the first pixel.** A network display needs an
+SSID, a password, a provisioning portal, a generated pairing key and a QR code scanned off a screen
+that is not drawing yet. A cable needs none of them, and nothing upstream of the transport changes:
+same surfaces, same rasteriser, same theme, same dirty-rect diff, same bytes on the wire. Moving to
+Wi-Fi later replaces two functions in the sketch and `openSerialLink` on the host.
+
+**It makes invariant 6 vacuous rather than merely satisfied.** The inversion above — the device
+listens, Anchor dials out — is what keeps the invariant true of a device on a network. Over a cable
+there is no socket, no port, no address and no route at all: the bytes never enter a network stack,
+so there is nothing on any LAN to reach, and no eavesdropper for a pairing key to protect against.
+That is strictly stronger than the loopback exemption `checkTransport` already grants, which is why
+`esp32-serial.ts` is allowed in the clear while a LAN address without a key is still refused. The
+trust boundary becomes a wire, exactly as it is for the Stream Deck.
+
+The one thing a cable adds is noise. On a native-USB ESP32 the ROM bootloader and the second-stage
+bootloader write to the same CDC endpoint the protocol uses, so the first bytes after opening the
+port are not ours and handing them to `decodeMessages` reports a working device as out of frame.
+`findHello` resynchronises once, before the handshake, matching on the magic byte *and* a plausible
+length field. It does not loosen the parser: a peer that goes out of frame after the handshake is
+still a peer to hang up on.
+
 ### What was rejected
 
 **An MQTT broker.** The field notes' architecture sketch has one, and it is the natural choice for
@@ -290,9 +319,19 @@ threat model here includes the device itself.
 
 ## Displays
 
-**None of this was measured. There is no hardware on this branch.** The dimensions and buses below
-are what the vendors publish; the frame costs are computed from them with the measurements in this
-document. Treat the table as a shopping list to verify, not a result.
+**No pulse display exists. Nobody owns one of these panels.** That is worth saying plainly, because
+everything below reads like a specification and it is a shopping list.
+
+What is actually on the desk is a **bare ESP32-S3 devkit** — measured with esptool, not read off a
+label: ESP32-S3 (QFN56) rev v0.2, 16 MB quad flash, 8 MB embedded PSRAM, native USB-Serial/JTAG,
+MAC `28:84:85:3a:d3:f0`. That is the N16R8 configuration. It has no panel attached, and an I2C scan
+from the firmware finds nothing, so it has no touch controller or IMU either. Its only output is the
+board's RGB LED.
+
+So the firmware in `devices/firmware/esp32/` claims a 466×466 panel and paints a real framebuffer in
+PSRAM, and shows the frame's mean colour on that LED. That is not a display, and the document should
+not pretend it is one — but it is the whole path except the glass, and the numbers it produces are
+real. The dimensions and buses in the table below remain vendor documentation.
 
 | Candidate | Panel | Bus | Full frame (RLE, measured) | Notes |
 |---|---|---|---|---|
@@ -312,11 +351,13 @@ What actually decides it, and what to measure before committing:
 - **Refresh cost is dominated by the bus, not the link.** 17 KB over Wi-Fi is nothing; pushing a full
   466×466 framebuffer out over QSPI is the part to time. **Measure:** full-frame blit time, and dirty-
   rect blit time for a 3 KB rectangle.
-- **PSRAM is the constraint that bites.** A 466×466 RGB565 framebuffer is 434 KB, which does not fit
-  in internal SRAM on an S3. Either the board has PSRAM (most of these do) or the firmware composes
-  tile-by-tile with no full framebuffer — which the TILE/COMMIT split already permits, at the cost of
-  atomicity. **Measure:** free heap after `esp_wifi_start` plus a TLS session, which is the real
-  budget, not the datasheet number.
+- **PSRAM was the constraint that bites, and it does not bite.** A 466×466 RGB565 framebuffer is
+  434,312 bytes, which does not fit in internal SRAM on an S3. **Measured on the board on this desk:**
+  8 MB of embedded PSRAM, and the framebuffer allocates out of it with room to spare — the firmware
+  prints total and free PSRAM, and the internal heap beside it, in its boot banner. The fallback is
+  still implemented and still right for a board without it: claim a smaller panel in HELLO, because
+  the host paints whatever geometry it is told. What is *not* yet measured is the same figure with
+  Wi-Fi and a TLS session up, which is the real budget for the networked build.
 - **Power.** Assume USB-C power for the first build. A battery-powered pulse display is a different
   project: it needs deep sleep between frames, and this protocol's persistent connection is the wrong
   shape for that. Say so rather than half-supporting it.
@@ -350,31 +391,52 @@ help, because the device cannot draw and therefore cannot write "stale" on itsel
 Nothing between those two is a good idea. A device that invents an error message is a device with a
 font, a layout and a design system in it, and the whole point of shipping pixels is that it has none.
 
-## What this needs from the shared contract
+## What this needed from the shared contract
 
-Nothing here modifies `types.ts` or `panel.ts`, and two of these are needed before the display shows
-anything real. Stated precisely so they can be reviewed as their own change.
+Three things were listed here as needed before the display could show anything real. Two have
+landed, and the record of what they were is worth keeping, because both turned out to be shared
+needs rather than ESP32 ones — the Cardputer design asked for the same two independently, which is
+what made them contract changes instead of adapter workarounds.
 
-1. **`panel.ts` must compose a `screen` slot.** `Panel.build()` fills `key`, `dial` and `strip` slots
-   and has no branch for `kind: "screen"`, so a device whose only slot is a screen receives an empty
-   frame today. The smallest correct change is a `screenSlot()` id helper next to `keySlot` and
-   `dialSlot`, and a branch in `build()` that paints a page's `segments` onto a screen slot the way
-   it paints them onto a strip. The adapter currently defines `SCREEN_SLOT = "screen:0"` itself; that
-   constant should *move* to `panel.ts`, not be copied, so panel and adapter cannot drift apart.
-   Until then the adapter paints whatever a caller puts in the frame under that id, which is what its
-   tests do.
-2. **Something must tell the adapter the session locked.** `blank()` exists on the adapter;
-   `AnchorDevice` has no concept of it, and `cli.ts` has nowhere to call it from. Either the CLI
-   subscribes to the lock signal and calls `blank()` on devices that have it, or `AnchorDevice` grows
-   an optional `blank?()`. This is a security requirement, not a nicety — see above.
-3. **A screen-shaped page.** A 466×466 round panel is not a strip, and a page whose only content is a
-   row of bar segments will read badly on it. That is a design question for a `pulse` page type, and
-   it should be answered with `scripts/review.ts` in front of it rather than in a PR description.
-   AGENTS.md: do not ship a visual change you have only reasoned about.
+1. **`panel.ts` composes a `screen` slot.** *Done.* `Panel.build()` had no branch for
+   `kind: "screen"`, so a device whose only slot was a screen received an empty frame. It now paints
+   a page's rows onto a screen slot as a `list`, with `selected` clamped by the panel because only
+   the panel knows the row count after a filter. `SCREEN_SLOT` **moved** to `panel.ts` next to
+   `keySlot`, `dialSlot` and `STRIP_SLOT`, rather than being copied; `esp32.ts` imports it from
+   there and re-exports it for its own callers. A slot id defined in two places gets spelled two
+   ways.
+2. **`AnchorDevice` has an optional lock hook.** *Done.* It grew `setBlanked?(blanked: boolean)`,
+   which is the name the Stream Deck adapter implements and therefore the name anything subscribing
+   to logind's `LockedHint` can call uniformly. `Esp32PulseDevice` now implements it too: the
+   adapter's `blank()` is still the primitive, because the wire has a message for exactly it, but an
+   adapter that had *only* `blank()` would be skipped silently by a lock subscriber — the display
+   stays lit and nothing reports a fault. Unblanking repaints rather than restoring brightness, since
+   the frame was dropped when the panel went dark.
+3. **A screen-shaped page.** *Still open, and now clearly a design question rather than a plumbing
+   one.* A 466×466 round panel is not a strip, and a page whose only content is a row of bar segments
+   reads badly on it. That wants a `pulse` page type, answered with `scripts/review.ts` in front of
+   it rather than in a PR description. AGENTS.md: do not ship a visual change you have only reasoned
+   about — and note that this is the one item nobody can settle until a panel exists to look at.
+
+Two surfaces the contract gained alongside these are what a screen device actually paints: `list`
+(rows, with panel-owned selection) and `detail` (a title, labelled lines, and a footer that is never
+truncated). Committed-`text` input arrived with them, for devices that have a keyboard; this board
+has none, and its HELLO input mask is zero.
+
+Nothing in the firmware or this adapter modifies `types.ts` or `panel.ts` today.
 
 ## Firmware
 
-Sketch, not an implementation. Nothing was flashed.
+Written, and still not flashed. `devices/firmware/esp32/` holds the real thing: `anchor_pulse.c`
+is the decoder below, in portable C99 with no allocation and no platform calls, and it is compiled
+and run on every `npm test` against frames produced by the real host adapter — so the wire format
+now has two implementations that are checked against each other rather than one checked against
+itself. What is *not* proved is everything platform-specific: the Arduino sketch has never been
+compiled, no board has been flashed, and no pixel has been lit. That README keeps the two apart.
+
+The sketch below is the ESP-IDF shape this document originally argued for and remains the right
+target for the networked build; what shipped first is the same core behind an Arduino transport,
+because there was no ESP-IDF toolchain on the machine and a cable needed no provisioning.
 
 **ESP-IDF, in C.** Not Arduino, not MicroPython, and the reason is the same one that keeps this
 workspace at one dependency: the firmware needs `mbedtls` PSK, `esp_wifi`, `wifi_provisioning` and
@@ -429,6 +491,21 @@ provisioning goes wrong and the reset button has not been wired yet.
 
 Kept separate on purpose. AGENTS.md: a control that cannot be made to fail is not evidence.
 
+**Measured on hardware — a bare ESP32-S3 N16R8 devkit, flashed and painted:**
+
+- A 466×466 framebuffer is 434,312 bytes and **allocates in PSRAM**, of which the board reports
+  8,388,608 bytes with 7,943,664 free at boot. The arithmetic in this document was right and the
+  constraint it named does not bite on this part.
+- A full frame is **23,219 bytes on the wire** in 60 messages — 5.3% of the raw framebuffer, close
+  to the 4.0% the desktop encoder predicted.
+- **Full frame, end to end: ~190 ms** (84.5 ms to render and send, 104.5 ms until the device
+  acknowledges). **Dirty rect: 67 ms median.** Ping round trip: 1 ms. An unchanged frame costs
+  4.7 ms and **zero bytes**.
+- Against the falsification test below: the full frame passes, the dirty rect **misses** its 50 ms
+  threshold. The cost is host-side rasterisation, not the link — 22–41 ms of it is ImageMagick.
+- The instrument is the protocol's own PONG, which cannot come back before the frame is presented.
+  Details, and the five bugs the hardware found, are in `devices/firmware/esp32/README.md`.
+
 **Measured here, today, on this machine (Node 26.8.1, ImageMagick 7.1.2-30):**
 
 - Node's `tls` does PSK on both ends with no dependency, negotiating
@@ -444,9 +521,10 @@ Kept separate on purpose. AGENTS.md: a control that cannot be made to fail is no
 
 - Every panel dimension, driver IC and bus in the display table.
 - That an ESP-IDF mbedTLS build offers either PSK ciphersuite.
-- ESP32-S3 Wi-Fi throughput, PSRAM availability on any specific board, and QSPI blit times.
-- That a 466×466 framebuffer needs PSRAM. Arithmetic says 434 KB and internal SRAM is smaller than
-  that; the free-heap figure after Wi-Fi and TLS is the number that decides it, and it needs a board.
+- ESP32-S3 Wi-Fi throughput and QSPI blit times. **PSRAM availability is no longer assumed** — see
+  the hardware measurements above — but the free-heap figure with a radio and a TLS session up still
+  is, and that is the number the networked build actually depends on.
+- Every panel dimension in the display table. No panel has been attached to anything.
 
 The falsification test for the central claim — *shipping pixels is affordable* — is simple: if a full
 frame on real hardware costs more than a few hundred milliseconds end to end, or a dirty rect costs
