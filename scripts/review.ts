@@ -313,7 +313,7 @@ const SURFACES: Surface[] = [
   {
     id: "bar",
     group: "widget",
-    category: "The bar",
+    category: "The bar, live",
     title: "Bar — the mark among its neighbours",
     looking:
       "The mark has to sit in a row of other people's icons. Compare drawn height, width and weight " +
@@ -324,7 +324,10 @@ const SURFACES: Surface[] = [
       // every bar but this machine's, and wrong here too — 30 against 26 took four pixels of
       // whichever window happened to sit underneath, which then read as part of the design.
       const bar = (await barGeometry()) ?? { x: 0, y: 0, w: await screenWidth(), h: 30 };
-      const w = Math.min(260, bar.w);
+      // Wide enough for the mark to still be in frame once the widget has content. At 260 it fit
+      // exactly, until the service started resolving a wallet and the item grew a dollar figure —
+      // and a review shot of the mark that has cropped the mark is worse than no shot.
+      const w = Math.min(360, bar.w);
       await grim(geom({ x: bar.x + bar.w - w, y: bar.y, w, h: bar.h }), file);
       await magnify(file, 4);
     },

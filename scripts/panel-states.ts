@@ -27,13 +27,21 @@ import { promisify } from "node:util";
 const run = promisify(execFile);
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const WIDGET = join(ROOT, "widget");
-const OUT = join(ROOT, "review", "panel");
+const OUT = join(ROOT, "review");
 const OMARCHY = "/usr/share/omarchy/shell";
 
 const require = createRequire(import.meta.url);
-const { CASES } = require(join(WIDGET, "gallery/states.js")) as {
-  CASES: Array<{ id: string; title: string; looking: string; category: string }>;
+type Case = { id: string; title: string; looking: string; category: string };
+const { CASES, BAR_CASES } = require(join(WIDGET, "gallery/states.js")) as {
+  CASES: Case[];
+  BAR_CASES: Case[];
 };
+
+/** Every case the harness renders, and where each one lands. */
+const ALL: Array<Case & { dir: "panel" | "bar" }> = [
+  ...BAR_CASES.map((c) => ({ ...c, dir: "bar" as const })),
+  ...CASES.map((c) => ({ ...c, dir: "panel" as const })),
+];
 
 export type PanelCase = {
   id: string;
@@ -45,12 +53,12 @@ export type PanelCase = {
 
 /** Every state, whether or not it has been captured. The review page reads this. */
 export function panelCases(): PanelCase[] {
-  return CASES.map((c) => ({
+  return ALL.map((c) => ({
     id: c.id,
     title: c.title,
     looking: c.looking,
     category: c.category,
-    file: `panel/${c.id}.png`,
+    file: `${c.dir}/${c.id}.png`,
   }));
 }
 
@@ -75,8 +83,10 @@ export async function capturePanelStates(): Promise<string[]> {
     symlinkSync(join(WIDGET, "gallery/states.js"), join(root, "states.js"));
     symlinkSync(join(WIDGET, "gallery/Gallery.qml"), join(root, "shell.qml"));
 
-    mkdirSync(OUT, { recursive: true });
-    for (const f of readdirSync(OUT)) rmSync(join(OUT, f), { force: true });
+    for (const dir of ["panel", "bar"]) {
+      mkdirSync(join(OUT, dir), { recursive: true });
+      for (const f of readdirSync(join(OUT, dir))) rmSync(join(OUT, dir, f), { force: true });
+    }
 
     await run("quickshell", ["-p", join(root, "shell.qml")], {
       env: { ...process.env, ANCHOR_GALLERY_OUT: OUT },
@@ -86,11 +96,12 @@ export async function capturePanelStates(): Promise<string[]> {
     // What is on disk, not what the harness said it did. Quickshell's log format is not a contract,
     // and a run that claims fifteen and wrote fourteen is exactly the failure this tool exists to
     // stop being invisible.
-    const captured = CASES.filter((c) => existsSync(join(OUT, `${c.id}.png`))).map((c) => c.id);
-    const failed = CASES.filter((c) => !existsSync(join(OUT, `${c.id}.png`)));
+    const wrote = (c: (typeof ALL)[number]) => existsSync(join(OUT, c.dir, `${c.id}.png`));
+    const captured = ALL.filter(wrote).map((c) => c.id);
+    const failed = ALL.filter((c) => !wrote(c));
     if (failed.length > 0) {
       throw new Error(
-        `${failed.length} of ${CASES.length} states did not render: ${failed.map((c) => c.id).join(", ")}`,
+        `${failed.length} of ${ALL.length} states did not render: ${failed.map((c) => c.id).join(", ")}`,
       );
     }
     return captured;
@@ -104,6 +115,6 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     for (const c of panelCases()) console.log(`${c.id.padEnd(22)} ${c.title}`);
   } else {
     const ids = await capturePanelStates();
-    console.log(`\n${ids.length}/${CASES.length} panel states captured into ${OUT}`);
+    console.log(`\n${ids.length}/${ALL.length} states captured into ${OUT}`);
   }
 }
