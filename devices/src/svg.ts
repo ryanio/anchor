@@ -47,6 +47,20 @@ export function fit(text: string, fontSize: number, maxWidth: number): string {
   return chars.length > 0 ? `${chars.join("")}…` : "";
 }
 
+/**
+ * The largest size at or below `maxSize` at which `text` fits `maxWidth`.
+ *
+ * A portfolio total is not a fixed width — "$412" and "$1,204,880.55" land on the same key — so a
+ * fixed size either wastes the tile or overflows it. Shrinking beats truncating here: the last
+ * digits of a number are not optional the way the tail of a window title is.
+ */
+export function autoSize(text: string, maxWidth: number, maxSize: number, minSize: number): number {
+  for (let size = maxSize; size > minSize; size--) {
+    if (advance(text, size) <= maxWidth) return size;
+  }
+  return minSize;
+}
+
 function tileFill(tokens: Tokens, emphasis: Emphasis, tone: string): string {
   if (emphasis === "active") return mix(tokens.ground, tone, 0.3);
   if (emphasis === "raised") return tokens.raised;
@@ -79,11 +93,13 @@ function renderTile(surface: Extract<Surface, { kind: "tile" }>, tokens: Tokens,
   ];
 
   const hasMeter = typeof surface.meter === "number";
-  const iconY = hasMeter ? h * 0.29 : h * 0.4;
-  const labelY = hasMeter ? h * 0.62 : h * 0.76;
+  const hasValue = typeof surface.value === "string" && surface.value !== "";
+  // A reading takes the middle of the tile; the icon shrinks to a marker and the label to a caption.
+  const iconY = hasValue ? h * 0.2 : hasMeter ? h * 0.29 : h * 0.4;
+  const labelY = hasValue ? h * 0.78 : hasMeter ? h * 0.62 : h * 0.76;
 
   if (surface.icon) {
-    const iconSize = Math.round(h * 0.38);
+    const iconSize = Math.round(hasValue ? h * 0.16 : h * 0.38);
     // Correct for the glyph's ink sitting right of its advance box; see `glyphs.ts`.
     parts.push(
       text(
@@ -95,8 +111,13 @@ function renderTile(surface: Extract<Surface, { kind: "tile" }>, tokens: Tokens,
       ),
     );
   }
+  if (hasValue) {
+    const value = surface.value ?? "";
+    const size = autoSize(value, w - 14, Math.round(h * 0.26), Math.round(h * 0.11));
+    parts.push(text(w / 2, h * 0.47, size, tone, value, true));
+  }
   if (surface.label) {
-    const size = Math.round(h * 0.125);
+    const size = Math.round(h * (hasValue ? 0.105 : 0.125));
     parts.push(
       text(
         w / 2,

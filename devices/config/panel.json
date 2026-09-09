@@ -54,9 +54,9 @@
         },
         {
           "index": 7,
-          "label": "Anchor",
+          "label": "Money",
           "icon": "\uf13d",
-          "action": "page anchor",
+          "action": "page portfolio",
           "tone": "accent"
         }
       ],
@@ -118,13 +118,98 @@
       ]
     },
     {
+      "name": "portfolio",
+      "keys": [
+        {
+          "index": 0,
+          "icon": "\uf13d",
+          "source": "portfolio.total",
+          "label": "Total",
+          "tone": "accent"
+        },
+        {
+          "index": 1,
+          "icon": "\uf03e",
+          "source": "portfolio.nft",
+          "label": "NFTs"
+        },
+        {
+          "index": 2,
+          "icon": "\uf51e",
+          "source": "portfolio.token",
+          "label": "Tokens"
+        },
+        {
+          "index": 3,
+          "icon": "\uf201",
+          "source": "portfolio.pnl"
+        },
+        {
+          "index": 4,
+          "source": "token:1"
+        },
+        {
+          "index": 5,
+          "source": "token:2"
+        },
+        {
+          "index": 6,
+          "source": "token:3"
+        },
+        {
+          "index": 7,
+          "icon": "\uf108",
+          "label": "Desktop",
+          "action": "page desktop"
+        }
+      ],
+      "dials": [
+        {
+          "index": 0,
+          "label": "Timeframe",
+          "icon": "\uf017",
+          "control": "timeframe",
+          "step": 1
+        },
+        {
+          "index": 1,
+          "label": "Volume",
+          "icon": "\uf028",
+          "control": "volume",
+          "press": "volume mute",
+          "step": 5
+        }
+      ],
+      "segments": [
+        {
+          "source": "anchor.total",
+          "icon": "\uf13d",
+          "tone": "accent"
+        },
+        {
+          "source": "anchor.timeframe",
+          "icon": "\uf017"
+        },
+        {
+          "source": "anchor.age",
+          "icon": "\uf021",
+          "tone": "inkDim"
+        },
+        {
+          "source": "anchor.chain",
+          "icon": "\uf06e",
+          "tone": "inkDim"
+        }
+      ]
+    },
+    {
       "name": "anchor",
       "keys": [
         {
           "index": 0,
-          "label": "Desktop",
+          "label": "Money",
           "icon": "\uf108",
-          "action": "page desktop"
+          "action": "page portfolio"
         },
         {
           "index": 1,
@@ -134,17 +219,30 @@
         },
         {
           "index": 2,
-          "label": "Activity",
           "icon": "\uf0f3",
-          "action": "noop",
-          "tone": "inkDim"
+          "source": "portfolio.nftCount",
+          "label": "Held"
         },
         {
           "index": 3,
-          "label": "Offers",
-          "icon": "\uf0e3",
-          "action": "noop",
-          "tone": "inkDim"
+          "icon": "\uf247",
+          "source": "collection:1"
+        },
+        {
+          "index": 4,
+          "icon": "\uf247",
+          "source": "collection:2"
+        },
+        {
+          "index": 5,
+          "icon": "\uf0e7",
+          "source": "portfolio.pnlAbsolute"
+        },
+        {
+          "index": 6,
+          "icon": "\uf013",
+          "label": "Config",
+          "action": "exec xdg-open /home/rg/.config/anchor/config.json"
         },
         {
           "index": 7,

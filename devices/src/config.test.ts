@@ -6,6 +6,10 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import { ConfigError, loadConfig, parseConfig } from "./config.ts";
+import { readKeySource, SEGMENT_SOURCES } from "./panel.ts";
+import { EMPTY_SNAPSHOT } from "./state/desktop.ts";
+
+const OFFLINE = { reachable: false, detail: "not running", hasWallet: false, primaryChain: "" };
 
 const minimal = { pages: [{ name: "desktop", keys: [{ index: 0, label: "x" }] }] };
 
@@ -70,12 +74,44 @@ describe("parseConfig", () => {
 });
 
 describe("the packaged default config", () => {
-  test("loads and defines both pages", () => {
+  test("loads and defines the shipped pages", () => {
     const { config } = loadConfig();
     assert.deepEqual(
       config.pages.map((page) => page.name),
-      ["desktop", "anchor"],
+      ["desktop", "portfolio", "anchor"],
     );
+  });
+
+  test("every page fills the whole device", () => {
+    // Eight keys is what the hardware has. A page using five is five buttons of product and three
+    // of background.
+    const { config } = loadConfig();
+    for (const page of config.pages) {
+      assert.equal(page.keys.length, 8, `${page.name} uses ${page.keys.length} of 8 keys`);
+    }
+  });
+
+  test("every data-backed key names a source the panel can read", () => {
+    const { config } = loadConfig();
+    for (const page of config.pages) {
+      for (const key of page.keys) {
+        if (key.source === "") continue;
+        assert.notEqual(
+          readKeySource(key.source, { desktop: EMPTY_SNAPSHOT, service: OFFLINE }),
+          null,
+          `${page.name}/${key.index}: unknown source ${key.source}`,
+        );
+      }
+    }
+  });
+
+  test("every strip segment names a source the panel can read", () => {
+    const { config } = loadConfig();
+    for (const page of config.pages) {
+      for (const segment of page.segments) {
+        assert.ok(segment.source in SEGMENT_SOURCES, `${page.name}: unknown segment ${segment.source}`);
+      }
+    }
   });
 
   test("every icon is a private-use glyph, so no config carries a literal replacement char", () => {

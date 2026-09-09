@@ -24,6 +24,8 @@ export interface KeyConfig {
   readonly action: string;
   readonly hold: string;
   readonly state: string;
+  /** A named live reading shown large on the key. See `KEY_SOURCES` in `panel.ts`. */
+  readonly source: string;
   readonly tone?: TokenName;
 }
 
@@ -134,6 +136,7 @@ export function parseConfig(raw: unknown): PanelConfig {
         action: asString(key.action, `${path}.action`),
         hold: asString(key.hold, `${path}.hold`),
         state: asString(key.state, `${path}.state`),
+        source: asString(key.source, `${path}.source`),
         tone: asTone(key.tone, `${path}.tone`),
       };
     });

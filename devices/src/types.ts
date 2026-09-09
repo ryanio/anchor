@@ -86,6 +86,14 @@ export type Surface =
       readonly kind: "tile";
       readonly icon?: string;
       readonly label?: string;
+      /**
+       * A reading, shown large with the label demoted to a caption beneath it.
+       *
+       * This is what turns a key from a button into a display. It matters more than it looks:
+       * the deck often sits on a machine nobody is in front of, so a key that only says what it
+       * *does* wastes the surface — the useful thing is what it currently *is*.
+       */
+      readonly value?: string;
       readonly emphasis: Emphasis;
       readonly tone?: TokenName;
       /** 0..1 draws a fill bar under the label; omit for a plain tile. */

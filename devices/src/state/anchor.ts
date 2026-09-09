@@ -114,3 +114,153 @@ export function describeAge(ageSeconds: number): string {
   if (ageSeconds < 3600) return `${Math.round(ageSeconds / 60)}m ago`;
   return `${Math.round(ageSeconds / 3600)}h ago`;
 }
+
+/** The timeframes `/portfolio/value` accepts, in the order a dial scrubs through them. */
+export const TIMEFRAMES = ["HOUR", "DAY", "WEEK", "MONTH"] as const;
+export type Timeframe = (typeof TIMEFRAMES)[number];
+
+/**
+ * `PortfolioStatsResponse`, read from `@opensea/api-types` rather than remembered.
+ *
+ * Every money field is a *string* in the spec, and is kept as one here. Parsing it to a number to
+ * re-format it would be three chances to lose precision or a currency for no gain — the panel shows
+ * what the API said.
+ */
+export interface PortfolioStats {
+  readonly totalUsd: string | null;
+  readonly nftUsd: string | null;
+  readonly tokenUsd: string | null;
+  readonly pnlAbsolute: string | null;
+  readonly pnlPercentage: string | null;
+  readonly timeframe: string;
+}
+
+/** One holding, from `TokenBalanceResponse`. */
+export interface TokenHolding {
+  readonly symbol: string;
+  readonly usdValue: number;
+  readonly status: string;
+}
+
+export interface PortfolioSnapshot {
+  readonly stats: PortfolioStats | null;
+  readonly tokens: readonly TokenHolding[];
+  readonly nftCount: number | null;
+  /** Holdings grouped by collection, largest first. */
+  readonly topCollections: readonly { readonly slug: string; readonly count: number }[];
+  readonly ageSeconds: number | null;
+  readonly stale: boolean;
+  readonly detail: string;
+}
+
+export const EMPTY_PORTFOLIO: PortfolioSnapshot = {
+  stats: null,
+  tokens: [],
+  nftCount: null,
+  topCollections: [],
+  ageSeconds: null,
+  stale: false,
+  detail: "not loaded",
+};
+
+function str(value: unknown): string | null {
+  return typeof value === "string" && value !== "" ? value : null;
+}
+
+function readStats(data: unknown): PortfolioStats | null {
+  if (typeof data !== "object" || data === null) return null;
+  const raw = data as Record<string, unknown>;
+  const total = str(raw.total_value_usd);
+  if (total === null) return null;
+  return {
+    totalUsd: total,
+    nftUsd: str(raw.nft_value_usd),
+    tokenUsd: str(raw.token_value_usd),
+    pnlAbsolute: str(raw.pnl_absolute),
+    pnlPercentage: str(raw.pnl_percentage),
+    timeframe: str(raw.timeframe) ?? "",
+  };
+}
+
+/**
+ * Holdings worth showing, largest first.
+ *
+ * `status` is OpenSea's own spam classification, and filtering on it is the point rather than a
+ * nicety: an unfiltered "top tokens" list on a wallet that has been airdropped at is a list of
+ * scams, rendered with Anchor's authority behind it. Only `OK` is shown.
+ */
+export function readTokens(data: unknown): TokenHolding[] {
+  if (typeof data !== "object" || data === null) return [];
+  const list = (data as { token_balances?: unknown }).token_balances;
+  if (!Array.isArray(list)) return [];
+  return list
+    .flatMap((entry): TokenHolding[] => {
+      if (typeof entry !== "object" || entry === null) return [];
+      const raw = entry as Record<string, unknown>;
+      const symbol = str(raw.symbol);
+      const status = str(raw.status) ?? "OK";
+      if (symbol === null || status !== "OK") return [];
+      const usdValue = Number.parseFloat(str(raw.usd_value) ?? "");
+      return [{ symbol, usdValue: Number.isFinite(usdValue) ? usdValue : 0, status }];
+    })
+    .sort((a, b) => b.usdValue - a.usdValue);
+}
+
+/**
+ * Group held NFTs by collection.
+ *
+ * Deliberately *by count*, not by value: `Nft` in the spec carries no price, so ranking holdings by
+ * worth would need a floor-price request per collection. That is a real feature with a real request
+ * budget, not something to approximate — and an approximated number here would be indistinguishable
+ * from a measured one.
+ */
+export function readCollections(data: unknown): { slug: string; count: number }[] {
+  if (typeof data !== "object" || data === null) return [];
+  const list = (data as { nfts?: unknown }).nfts;
+  if (!Array.isArray(list)) return [];
+  const counts = new Map<string, number>();
+  for (const entry of list) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const slug = str((entry as Record<string, unknown>).collection);
+    if (slug === null) continue;
+    counts.set(slug, (counts.get(slug) ?? 0) + 1);
+  }
+  return [...counts].map(([slug, count]) => ({ slug, count })).sort((a, b) => b.count - a.count);
+}
+
+function metaOf(body: unknown): { ageSeconds: number | null; stale: boolean } {
+  if (!isEnvelope(body)) return { ageSeconds: null, stale: false };
+  return { ageSeconds: body.meta.ageSeconds, stale: body.meta.stale };
+}
+
+/**
+ * Fetch everything the portfolio page shows, in one pass.
+ *
+ * A 428 means no wallet is configured, which is an ordinary state rather than a failure — the panel
+ * says so instead of showing zeros. Zeros would be a reading; "no wallet" is the truth.
+ */
+export async function portfolio(timeframe: Timeframe, timeoutMs = 4000): Promise<PortfolioSnapshot> {
+  const [value, balances, nfts] = await Promise.all([
+    get(`/portfolio/value?timeframe=${timeframe}`, timeoutMs),
+    get("/balances?limit=50", timeoutMs),
+    get("/portfolio?limit=50", timeoutMs),
+  ]);
+
+  if (value === null) return { ...EMPTY_PORTFOLIO, detail: "service not running" };
+  if (value.status === 428) return { ...EMPTY_PORTFOLIO, detail: "no wallet configured" };
+  if (value.status !== 200) return { ...EMPTY_PORTFOLIO, detail: `portfolio ${value.status}` };
+
+  const envelope = isEnvelope(value.body) ? value.body : null;
+  const { ageSeconds, stale } = metaOf(value.body);
+  const collections = nfts?.status === 200 && isEnvelope(nfts.body) ? readCollections(nfts.body.data) : [];
+
+  return {
+    stats: readStats(envelope?.data),
+    tokens: balances?.status === 200 && isEnvelope(balances.body) ? readTokens(balances.body.data) : [],
+    nftCount: collections.reduce((sum, entry) => sum + entry.count, 0) || null,
+    topCollections: collections,
+    ageSeconds,
+    stale,
+    detail: "",
+  };
+}

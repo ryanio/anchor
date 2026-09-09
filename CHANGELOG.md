@@ -28,6 +28,11 @@ workspace keeps its own dependency, so a machine with no device attached install
 - Key faces are authored as SVG and rasterised straight to raw RGB by ImageMagick, so rendering adds
   no dependency. Glyph ink is measured through the same rasteriser and cached per font, because Nerd
   Font symbols advance 0.6em but paint up to 1.04em wide.
+- A portfolio page: total, NFT and token value, P&L, and the largest holdings, read from the local
+  data service. Field names come from `@opensea/api-types` rather than memory, and only holdings
+  OpenSea classifies `OK` are shown — an unfiltered list on an airdropped-at wallet is a list of
+  scams. An absent reading renders as an em dash, never a zero. The strip carries the figures' age
+  and staleness, and a dial scrubs the window through the four timeframes the endpoint accepts.
 - No device action can sign, spend or approve. The vocabulary has no such verb and a test asserts it.
 - Two pages ship: Omarchy desktop control (workspaces, theme, night light, screenshot, volume and
   workspace dials) and an Anchor page showing service reachability and whether a wallet is
