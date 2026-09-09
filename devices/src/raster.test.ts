@@ -8,13 +8,26 @@
 
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import { clearRasterCache, RasterError, rasterCacheSize, rasterize } from "./raster.ts";
+import {
+  clearRasterCache,
+  RasterError,
+  rasterCacheSize,
+  rasteriserAvailable,
+  rasterize,
+} from "./raster.ts";
 
 const solid = (color: string, width: number, height: number): string =>
   `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">` +
   `<rect width="${width}" height="${height}" fill="${color}"/></svg>`;
 
-describe("rasterize", () => {
+// Skipped rather than failed where there is no rasteriser, and the reason is printed: these prove
+// the tool works, so without the tool there is nothing to prove. A skip that says why is honest; a
+// mock of the thing under test would not be.
+const noRasteriser = rasteriserAvailable()
+  ? false
+  : "no working SVG rasteriser — install imagemagick and librsvg";
+
+describe("rasterize", { skip: noRasteriser }, () => {
   test("returns exactly width * height * 3 bytes of RGB", async () => {
     const buffer = await rasterize(solid("#7aa2f7", 4, 2), { width: 4, height: 2 });
     assert.equal(buffer.length, 24);

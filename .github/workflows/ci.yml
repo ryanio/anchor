@@ -49,27 +49,14 @@ jobs:
           npx --prefix executor tsc --noEmit --project executor
           npm test --prefix executor
 
-      # System dependencies, not npm ones: devices paint key faces by rasterising SVG, so the tests
-      # that check a frame is the right size need a real rasteriser. The runner ships neither
-      # `magick` (ImageMagick 7) nor `convert` (6), which is what turned these tests red the first
-      # time CI ran them at all.
-      #
-      # librsvg is not optional either. ImageMagick 6 does not rasterise SVG itself — it delegates
-      # to `rsvg-convert` — so with imagemagick alone the tests still fail, one layer further in:
-      # "delegate failed `'rsvg-convert' -o '%o' '%i''".
+      # System dependencies, not npm ones: devices paint key faces by rasterising SVG. Two packages,
+      # not one — ImageMagick 6 does not rasterise SVG itself, it shells out to `rsvg-convert`, so
+      # imagemagick alone passes a version check and fails every render. CI found that the first
+      # time it ran these tests, which is what the previous commit was for.
       - name: Devices — install a rasteriser
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends imagemagick librsvg2-bin
-          # Debian ships an ImageMagick 6 policy that refuses the SVG coder outright. With it in
-          # place the delegate runs and then cannot read its own temp file, which reads like a
-          # missing package and is not one. Upstream Arch, where Anchor actually runs, ships no
-          # such policy.
-          sudo sed -i 's/rights="none" pattern="SVG"/rights="read|write" pattern="SVG"/' \
-            /etc/ImageMagick-6/policy.xml || true
-          echo "--- policy ---"; grep -E "SVG|MVG|MSL" /etc/ImageMagick-6/policy.xml || true
-          echo '<svg xmlns="http://www.w3.org/2000/svg" width="2" height="2"><rect width="2" height="2" fill="red"/></svg>' \
-            | convert -background none svg:- -depth 8 RGB:- | wc -c
 
       - name: Devices — typecheck and test
         run: |
