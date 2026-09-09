@@ -28,6 +28,17 @@ package() {
   install -Dm644 packaging/anchor-service.service \
     "$pkgdir/usr/lib/systemd/user/anchor-service.service"
 
+  # Enable the unit for every user on install, so a packaged Anchor starts with the desktop and
+  # nobody has to know that `systemctl --user enable` exists. A *preset* rather than a post-install
+  # hook: pacman cannot reach into a user's systemd instance at package time, and a preset is what
+  # `systemctl --user preset-all` and a fresh user manager both read.
+  #
+  # `anchor-service --install-service` remains the belt to this braces, and is the only path for a
+  # checkout. It notices the packaged unit and enables it where it lies rather than shadowing it.
+  install -Dm644 /dev/stdin "$pkgdir/usr/lib/systemd/user-preset/90-anchor.preset" <<'PRESET'
+enable anchor-service.service
+PRESET
+
   # TODO: install service/, widget/, theme/ once they exist.
   #
   # `/usr/bin/anchor-service` is what the unit's ExecStart names, and it does not exist yet: it
@@ -36,8 +47,9 @@ package() {
   # widget's probe honest — it checks `LoadState`, which a unit file alone satisfies, *and* reports
   # the failure state after a start attempt rather than claiming success.
   #
-  # The service is no longer dependency-free: it needs @opensea/sdk and @opensea/api-types at
-  # runtime (and their transitive deps — ethers, seaport-js, @noble/hashes). Packaging therefore
-  # needs `npm ci --omit=dev --prefix service` at build time and the resulting node_modules
-  # installed alongside the source, or those packages vendored. The executor still has none.
+  # Neither workspace is dependency-free any more. The service needs @opensea/sdk and
+  # @opensea/api-types at runtime (and their transitive deps — ethers, seaport-js, @noble/hashes);
+  # the executor needs @opensea/wallet-adapters (@noble/hashes, @noble/curves). Packaging therefore
+  # needs `npm ci --omit=dev` in each and the resulting node_modules installed alongside the source,
+  # or those packages vendored.
 }

@@ -90,6 +90,18 @@ omarchy pkg install anchor
 Omarchy ships its own pacman repository (`[omarchy]` → `pkgs.omarchy.org`), so the packaging target is
 a standard `PKGBUILD`. See `packaging/`.
 
+### Starting it
+
+One command, and it survives reboots:
+
+```bash
+anchor-service --install-service
+```
+
+It installs the systemd **user** unit — a user unit, never a system one, because the service reads
+one person's keyring and one person's config and has no business running before anybody has logged
+in — then enables it. Packaged installs already have the unit and it is enabled in place.
+
 ## Configuring
 
 **Nothing you configure lives in this checkout.** Every file below is written outside the repository,

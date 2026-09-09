@@ -401,6 +401,21 @@ package called `biome` sitting there. It ran instead of `@biomejs/biome` for a f
 success on code CI then rejected. `scripts/check-versions.ts` now asserts the local binary exists and
 matches the pin, so run `npm ci` at the repo root before trusting any local gate.
 
+**Read the exit code, never grep the output.** Biome writes ANSI colour codes and OSC-8 hyperlinks
+into its own text, so `Found 1 error.` on screen is `Found \x1b[31m1\x1b[0m error.` in a pipe, and a
+`grep -E "Found [0-9]+ error"` over it matches nothing and reports clean. That is the biome-0.3.3
+failure wearing a different hat — a local gate that said yes to something CI said no to — and it
+happened again. Use one of:
+
+```bash
+npm run lint                                   # non-zero exit is the answer
+npx --no-install biome ci . --reporter=github  # machine-readable; count "^::error" lines
+```
+
+`--reporter=github` prints one `::error title=…,file=…,line=…` per problem with no escape codes in
+it, which is also the only form that says *which rule* without scrolling. `--no-install` keeps the
+registry-package trap above shut.
+
 `biome.json` at the root governs every workspace; do not add per-workspace configs.
 
 Suppress a rule only with a reason attached, and only when the rule is wrong about *this* code:

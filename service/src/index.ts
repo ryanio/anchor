@@ -16,6 +16,7 @@ import { configPath, loadConfig } from "./config.ts";
 import { getApiKey, getPat, keyringAvailable, looksLikeCredential, setApiKey, setPat } from "./keyring.ts";
 import { OpenSeaClient } from "./opensea.ts";
 import { createApp, HOST } from "./server.ts";
+import { installService, uninstallService } from "./unit.ts";
 import { describeTokenShape, resolveWallets, walletsFromClaims } from "./wallet-token.ts";
 
 /** `/health` may be polled once a second; spawning secret-tool that often is not free. */
@@ -146,6 +147,17 @@ async function main(): Promise<void> {
   }
   if (process.argv.includes("--check-credentials")) {
     await checkCredentials();
+    return;
+  }
+  // Installing beats documenting. The instructions this replaces ended in `systemctl --user start`,
+  // which is this session only — so every setup worked until the first reboot and then quietly did
+  // not, with nothing to suggest why.
+  if (process.argv.includes("--install-service")) {
+    installService();
+    return;
+  }
+  if (process.argv.includes("--uninstall-service")) {
+    uninstallService();
     return;
   }
 
