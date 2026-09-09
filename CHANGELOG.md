@@ -120,6 +120,14 @@ casts that existed only because the arg types were narrower than the API are gon
 what they mean. `chains` on the portfolio call is also the parameter that makes the endpoint's
 deterministic 500 go away.
 
+**`@opensea/wallet-adapters` 1.1.0 signs Solana.** `PrivySvmAdapter` replaces the hand-written
+Privy transport in the executor — the first runtime dependency that workspace has taken, and it
+earned it: the code it replaces was four upstream findings' worth of somebody else's evolving API.
+The adapter carries the idempotency guarantee Anchor's retry safety rests on, and `PrivySolanaSigner`
+refuses to be constructed on a provider that cannot honour a key, because discovering that while
+holding an approved action is discovering it too late. The policy half stays ours: the thing that
+signs and the thing that decides what may be signed are not the same dependency.
+
 **Both marketplaces.** OpenSea is NFTs *and* fungible tokens, and Anchor treats them as different
 products rather than one with a quantity field. The token half covers portfolio value, balances,
 trending and top tokens, individual tokens and price history.

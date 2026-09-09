@@ -17,7 +17,8 @@
 
 import assert from "node:assert/strict";
 import { generateKeyPairSync, verify } from "node:crypto";
-import { describe, test } from "node:test";
+import { after, describe, test } from "node:test";
+import { PrivySvmAdapter } from "@opensea/wallet-adapters";
 import type { ApprovedAction, Denied, PolicyDecision } from "./decision.ts";
 import { PolicyBoundExecutor } from "./executor.ts";
 import {
@@ -1039,6 +1040,17 @@ describe("the Solana signer reads the transaction before it signs it", () => {
     return Uint8Array.from(bytes);
   }
 
+  /**
+   * The signing half is `PrivySvmAdapter` now, and it calls the global `fetch` rather than one
+   * handed to it. So the stub is installed globally for these tests and restored after — which is
+   * also what keeps them offline. The policy half still takes an injected `fetchImpl`, because
+   * `PrivyClient` is still ours: the adapter deliberately exposes no policy mutation.
+   */
+  const realFetch = globalThis.fetch;
+  after(() => {
+    globalThis.fetch = realFetch;
+  });
+
   async function solanaHarness(serialized: Uint8Array) {
     const c = clock();
     const document = solanaPolicyDocument();
@@ -1046,6 +1058,7 @@ describe("the Solana signer reads the transaction before it signs it", () => {
       if (call.method === "GET") return json(document);
       return json({ method: "signAndSendTransaction", data: { hash: SOL_SIGNATURE } });
     });
+    globalThis.fetch = impl;
     const api = new PrivyClient({
       appId: APP_ID,
       appSecret: APP_SECRET,
@@ -1060,7 +1073,7 @@ describe("the Solana signer reads the transaction before it signs it", () => {
       now: c.now,
     });
     const signer = new PrivySolanaSigner({
-      api,
+      adapter: new PrivySvmAdapter({ appId: APP_ID, appSecret: APP_SECRET, walletId: SOL_WALLET_ID }),
       walletId: SOL_WALLET_ID,
       builder: builderOf(serialized),
       cluster: "mainnet",
@@ -1074,6 +1087,56 @@ describe("the Solana signer reads the transaction before it signs it", () => {
     });
     return { executor, signer, calls, clock: c };
   }
+
+  test("the submission carries an idempotency key keyed on the approval", async () => {
+    // The reason this executor waited for `@opensea/wallet-adapters` 1.1.0 rather than adopting
+    // 1.0.0. Privy caches a key's outcome for 24 hours, so a retry of an approved action returns
+    // the first result instead of broadcasting a second spend. Keyed on the approval, not the
+    // attempt: a key that changed per attempt would protect nothing.
+    const serialized = solanaTx(SPL_TOKEN_PROGRAM, [SPL_TOKEN_INSTRUCTION.transferChecked, 1]);
+    const { executor, calls } = await solanaHarness(serialized);
+    const result = await executor.execute(solanaTransfer("r1", 1_000n));
+    assert.equal(result.status, "submitted");
+    if (result.status !== "submitted") return;
+
+    const rpc = calls.at(-1);
+    assert.ok(rpc);
+    assert.equal(rpc.headers["privy-idempotency-key"], `anchor-${result.receipt.approvalId}`);
+  });
+
+  test("a signer refuses to exist on a provider that cannot be idempotent", () => {
+    // At construction, not at submit. Discovering it while holding an approved action is
+    // discovering it too late, and a provider that silently drops the key is the failure this
+    // whole dependency bump was for.
+    const blind = {
+      chainType: "svm" as const,
+      name: "blind",
+      capabilities: {
+        signTypedData: false as const,
+        signMessage: true,
+        managedGas: true,
+        managedNonce: true,
+        idempotentSend: false,
+      },
+      getAddress: async () => "",
+      getWalletInfo: async (): Promise<never> => {
+        throw new Error("the constructor refuses before anything asks");
+      },
+      signTransaction: async () => ({ signedTransaction: "" }),
+      sendTransaction: async () => ({ hash: "" }),
+      signMessage: async () => "",
+    };
+    assert.throws(
+      () =>
+        new PrivySolanaSigner({
+          adapter: blind,
+          walletId: SOL_WALLET_ID,
+          builder: builderOf(solanaTx(SPL_TOKEN_PROGRAM, [SPL_TOKEN_INSTRUCTION.transferChecked, 1])),
+          cluster: "mainnet",
+        }),
+      /idempotency/,
+    );
+  });
 
   test("a clean SPL transfer reaches Privy as base64, at the documented CAIP-2", async () => {
     const serialized = solanaTx(SPL_TOKEN_PROGRAM, [SPL_TOKEN_INSTRUCTION.transferChecked, 1]);

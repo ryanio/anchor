@@ -75,7 +75,10 @@ A change is done when all of these hold. Not before:
 - **Never force-push `main`.** Never rewrite published history.
 - Prefer the standard library, and prefer **OpenSea's own packages** over a hand-rolled copy of its
   API. Every other dependency is a supply-chain risk and a packaging cost. The data service depends on
-  `@opensea/sdk` and `@opensea/api-types` and nothing else at runtime; the executor still has zero.
+  `@opensea/sdk` and `@opensea/api-types` and nothing else at runtime; the executor has one,
+  `@opensea/wallet-adapters`, and it earned it — the hand-written Privy transport it replaced was
+  four findings' worth of someone else's evolving API, and the adapter now carries the idempotency
+  guarantee Anchor's retry safety rests on.
   Hand-writing a client for someone else's evolving API is not thrift, it is a slow bug — every
   endpoint path in `docs/tokens.md` was wrong until the generated types replaced them.
 

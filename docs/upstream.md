@@ -199,10 +199,13 @@ parameter, and that belongs here as its own entry when we write it.
 
 ## 8. No Solana adapter in `@opensea/wallet-adapters`
 
-**Status: fixed upstream, and we still cannot adopt it — see entry 12.** `@opensea/wallet-adapters`
-1.0.0 ships `PrivySvmAdapter`, which is exactly the transport half of what we wrote. Its `signTransaction`
-path is adoptable; its `sendTransaction` path is not, because it cannot send an idempotency key and
-ours must. Entry 12 has the detail.
+**Status: fixed upstream and consumed** in `@opensea/wallet-adapters` 1.1.0. `PrivySvmAdapter` is
+now `PrivySolanaSigner`'s transport. Deleted from `executor/src/privy-api.ts`: `sendSolanaTransaction`,
+`SendSolanaTransactionArgs`, and their line on `PrivyWalletApi`.
+
+The existing wire-level tests passed unchanged across the swap — same `signAndSendTransaction` body,
+same base64, same documented CAIP-2 — which is the useful kind of evidence that the replacement is
+faithful rather than merely compiling.
 
 Two things the adapter does *not* close, and neither is a criticism of it:
 
@@ -210,26 +213,16 @@ Two things the adapter does *not* close, and neither is a criticism of it:
   associated token account derivation (ed25519 on-curve arithmetic) and a live blockhash.
 - It deliberately excludes policy mutation ("do not add `setPolicy`, `rotateOwner`, `addSigner`"), so
   `getPolicy`, `replacePolicyRules`, `loadAuthorizationKey`, `signAuthorizationPayload` and
-  `canonicalize` stay ours regardless.
+  `canonicalize` stay ours. That is the right split: the thing that signs and the thing that decides
+  what may be signed should not be the same dependency.
 
-`solana.ts` stays either way. Refusing a delegation is a security property Anchor owns, not something
+`solana.ts` stays regardless. Refusing a delegation is a security property Anchor owns, not something
 an adapter would provide.
 
 **Upstream problem (as originally filed).** [`ProjectOpenSea/wallet-adapters`](https://github.com/ProjectOpenSea/wallet-adapters)
 is the package Anchor would otherwise use for managed signing: adapters for Privy, Turnkey,
 Fireblocks, Bankr and local keys, with bridges for ethers and viem. Every one of them was EVM. There
 was no Solana adapter, no Solana bridge, and no non-EVM signing abstraction in the repository.
-
-**What we wrote.** `PrivySolanaSigner` and the Solana half of `privy-api.ts` in
-`executor/src/`, plus a hand-rolled transaction parser in `executor/src/solana.ts`. The parser is
-*not* really a workaround for this gap — it exists because refusing a delegation is a security
-property Anchor owns rather than something an adapter would provide — but the Privy plumbing around
-it is exactly what an adapter would have supplied.
-
-**When it's fixed.** Replace the transport half with the adapter and keep the guard. Note that an
-adapter shipping does not close the *other* gap: Anchor still cannot **compile** a Solana
-transaction, which needs associated token account derivation (ed25519 on-curve arithmetic) and a
-live blockhash. If `wallet-adapters` grows a Solana adapter that also builds transactions, both go.
 
 ## 9. Privy's Solana policy engine cannot express an approval refusal
 
@@ -321,27 +314,26 @@ long-lived secret sitting in a keyring.
 
 ## 12. `PrivySvmAdapter` cannot send an idempotency key
 
-**Upstream problem.** `@opensea/wallet-adapters` 1.0.0 sends exactly two Privy headers —
-`privy-app-id` and `privy-authorization-signature`. There is no `privy-idempotency-key`, no way to
-add one (`PrivyConfig` takes `appId`, `appSecret`, `walletId`, `baseUrl`, `authSigningKey` and
-nothing else), and `onRequest` observes a request rather than amending it.
+**Status: fixed upstream and consumed** in `@opensea/wallet-adapters` 1.1.0, and fixed more
+thoroughly than reported. `idempotencyKey` is on both the EVM and SVM request types and reaches
+Privy as `privy-idempotency-key`. Beyond that:
 
-Privy's own semantics are what make this matter. From their idempotency documentation, quoted in
-`executor/src/privy-api.ts`: the same key with a *different* body is a 400, and for `/rpc` both 4xx
-and 5xx responses are cached for 24 hours. That is the property that makes a resubmitted approval a
-no-op instead of a second on-chain spend, and it is why nothing in our client retries a POST.
+- `capabilities.idempotentSend` says whether a provider honours it.
+- `IdempotencyUnsupportedError` and `requireIdempotencySupport` make a provider that cannot honour a
+  key **throw rather than drop it**, so protection can never be silently absent.
+- `BlankIdempotencyKeyError`, because a blank key protects nothing.
 
-So `PrivySvmAdapter.sendTransaction` broadcasts without a double-spend guard. For an interactive
-wallet that is a reasonable default; for an agent that may retry, it is the whole problem.
+The last two are the part worth calling out: the bug that was reported was one adapter missing a
+header, and what shipped closes the whole class — a caller that asks for idempotency and does not
+get it now finds out.
 
-**What we wrote.** `PrivyClient.sendSolanaTransaction`, which sends
-`privy-idempotency-key: anchor-<approvalId>`. It stays until this is fixed. Adopting the adapter for
-this path would silently remove a safety property from a signing path, which is not a trade to make
-for a smaller diff.
+`PrivySolanaSigner` checks `idempotentSend` **at construction**. Discovering it while holding an
+approved action is discovering it too late.
 
-**When it's fixed.** An optional `idempotencyKey` on `SvmTransactionRequest` (and the EVM request)
-forwarded as the header would close it, and `PrivySolanaSigner` becomes a thin wrapper over the
-adapter. `signTransaction` needs nothing — it does not broadcast, so it has nothing to make idempotent.
+**Upstream problem (as originally filed).** 1.0.0 sent exactly two Privy headers — `privy-app-id`
+and `privy-authorization-signature`. There was no `privy-idempotency-key`, no way to add one, and
+`onRequest` observes a request rather than amending it. Privy caches a key's outcome for 24 hours,
+which is what makes a resubmitted approval a no-op instead of a second on-chain spend.
 
 ## 13. No per-collection holdings value
 

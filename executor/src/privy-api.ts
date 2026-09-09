@@ -114,15 +114,6 @@ export interface SendTransactionArgs {
   readonly idempotencyKey?: string;
 }
 
-export interface SendSolanaTransactionArgs {
-  readonly walletId: string;
-  /** CAIP-2 chain id, e.g. `solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp`. */
-  readonly caip2: string;
-  /** The serialized transaction, base64. Privy's `params.transaction` with `encoding: "base64"`. */
-  readonly transaction: string;
-  readonly idempotencyKey?: string;
-}
-
 /**
  * The slice of Privy that Anchor depends on.
  *
@@ -137,7 +128,6 @@ export interface PrivyWalletApi {
   /** Sign and broadcast an EVM transaction. Returns the transaction hash. */
   sendTransaction(args: SendTransactionArgs): Promise<string>;
   /** Sign and broadcast a Solana transaction. Returns the signature, base58. */
-  sendSolanaTransaction(args: SendSolanaTransactionArgs): Promise<string>;
 }
 
 // --- Errors ------------------------------------------------------------------------------------
@@ -347,24 +337,6 @@ export class PrivyClient implements PrivyWalletApi {
    * characters, so a truthy-but-wrong field cannot pass for one and be logged as a submission that
    * happened.
    */
-  async sendSolanaTransaction(args: SendSolanaTransactionArgs): Promise<string> {
-    const body = {
-      method: "signAndSendTransaction",
-      caip2: args.caip2,
-      params: { transaction: args.transaction, encoding: "base64" },
-    };
-    const idempotencyKey = (args.idempotencyKey ?? this.#newIdempotencyKey()).slice(0, 256);
-    const response = (await this.#request(
-      "POST",
-      `/v1/wallets/${segment(args.walletId)}/rpc`,
-      body,
-      idempotencyKey,
-    )) as { data?: { hash?: unknown } };
-
-    const hash = response.data?.hash;
-    if (typeof hash === "string" && SOLANA_SIGNATURE_RE.test(hash)) return hash;
-    throw new Error("Privy accepted the request but returned no Solana signature");
-  }
 
   async #request(
     method: "GET" | "POST" | "PATCH",
