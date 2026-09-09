@@ -157,10 +157,26 @@ parameter, and that belongs here as its own entry when we write it.
 
 ## 8. No Solana adapter in `@opensea/wallet-adapters`
 
-**Upstream problem.** [`ProjectOpenSea/wallet-adapters`](https://github.com/ProjectOpenSea/wallet-adapters)
+**Status: fixed upstream, and we still cannot adopt it — see entry 12.** `@opensea/wallet-adapters`
+1.0.0 ships `PrivySvmAdapter`, which is exactly the transport half of what we wrote. Its `signTransaction`
+path is adoptable; its `sendTransaction` path is not, because it cannot send an idempotency key and
+ours must. Entry 12 has the detail.
+
+Two things the adapter does *not* close, and neither is a criticism of it:
+
+- It takes an already-serialized transaction, so Anchor still cannot **compile** one — that needs
+  associated token account derivation (ed25519 on-curve arithmetic) and a live blockhash.
+- It deliberately excludes policy mutation ("do not add `setPolicy`, `rotateOwner`, `addSigner`"), so
+  `getPolicy`, `replacePolicyRules`, `loadAuthorizationKey`, `signAuthorizationPayload` and
+  `canonicalize` stay ours regardless.
+
+`solana.ts` stays either way. Refusing a delegation is a security property Anchor owns, not something
+an adapter would provide.
+
+**Upstream problem (as originally filed).** [`ProjectOpenSea/wallet-adapters`](https://github.com/ProjectOpenSea/wallet-adapters)
 is the package Anchor would otherwise use for managed signing: adapters for Privy, Turnkey,
-Fireblocks, Bankr and local keys, with bridges for ethers and viem. Every one of them is EVM. There
-is no Solana adapter, no Solana bridge, and no non-EVM signing abstraction in the repository.
+Fireblocks, Bankr and local keys, with bridges for ethers and viem. Every one of them was EVM. There
+was no Solana adapter, no Solana bridge, and no non-EVM signing abstraction in the repository.
 
 **What we wrote.** `PrivySolanaSigner` and the Solana half of `privy-api.ts` in
 `executor/src/`, plus a hand-rolled transaction parser in `executor/src/solana.ts`. The parser is
@@ -260,6 +276,30 @@ The second is better, because a device flow is the right shape for a desktop app
 long-lived secret sitting in a keyring.
 
 ---
+
+## 12. `PrivySvmAdapter` cannot send an idempotency key
+
+**Upstream problem.** `@opensea/wallet-adapters` 1.0.0 sends exactly two Privy headers —
+`privy-app-id` and `privy-authorization-signature`. There is no `privy-idempotency-key`, no way to
+add one (`PrivyConfig` takes `appId`, `appSecret`, `walletId`, `baseUrl`, `authSigningKey` and
+nothing else), and `onRequest` observes a request rather than amending it.
+
+Privy's own semantics are what make this matter. From their idempotency documentation, quoted in
+`executor/src/privy-api.ts`: the same key with a *different* body is a 400, and for `/rpc` both 4xx
+and 5xx responses are cached for 24 hours. That is the property that makes a resubmitted approval a
+no-op instead of a second on-chain spend, and it is why nothing in our client retries a POST.
+
+So `PrivySvmAdapter.sendTransaction` broadcasts without a double-spend guard. For an interactive
+wallet that is a reasonable default; for an agent that may retry, it is the whole problem.
+
+**What we wrote.** `PrivyClient.sendSolanaTransaction`, which sends
+`privy-idempotency-key: anchor-<approvalId>`. It stays until this is fixed. Adopting the adapter for
+this path would silently remove a safety property from a signing path, which is not a trade to make
+for a smaller diff.
+
+**When it's fixed.** An optional `idempotencyKey` on `SvmTransactionRequest` (and the EVM request)
+forwarded as the header would close it, and `PrivySolanaSigner` becomes a thin wrapper over the
+adapter. `signTransaction` needs nothing — it does not broadcast, so it has nothing to make idempotent.
 
 ## Reporting
 
