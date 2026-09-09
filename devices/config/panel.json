@@ -1,0 +1,184 @@
+{
+  "brightness": 70,
+  "pages": [
+    {
+      "name": "desktop",
+      "keys": [
+        {
+          "index": 0,
+          "label": "1",
+          "icon": "\uf108",
+          "action": "hypr workspace 1",
+          "state": "workspace:1"
+        },
+        {
+          "index": 1,
+          "label": "2",
+          "icon": "\uf108",
+          "action": "hypr workspace 2",
+          "state": "workspace:2"
+        },
+        {
+          "index": 2,
+          "label": "3",
+          "icon": "\uf108",
+          "action": "hypr workspace 3",
+          "state": "workspace:3"
+        },
+        {
+          "index": 3,
+          "label": "4",
+          "icon": "\uf108",
+          "action": "hypr workspace 4",
+          "state": "workspace:4"
+        },
+        {
+          "index": 4,
+          "label": "Theme",
+          "icon": "\uf1fc",
+          "action": "theme next"
+        },
+        {
+          "index": 5,
+          "label": "Night",
+          "icon": "\uf186",
+          "action": "omarchy toggle nightlight",
+          "state": "nightlight",
+          "tone": "warning"
+        },
+        {
+          "index": 6,
+          "label": "Shot",
+          "icon": "\uf030",
+          "action": "omarchy capture screenshot region"
+        },
+        {
+          "index": 7,
+          "label": "Anchor",
+          "icon": "\uf13d",
+          "action": "page anchor",
+          "tone": "accent"
+        }
+      ],
+      "dials": [
+        {
+          "index": 0,
+          "label": "Volume",
+          "icon": "\uf028",
+          "control": "volume",
+          "press": "volume mute",
+          "step": 5
+        },
+        {
+          "index": 1,
+          "label": "Workspace",
+          "icon": "\uf247",
+          "control": "workspace",
+          "step": 1
+        },
+        {
+          "index": 2,
+          "label": "Bright",
+          "icon": "\uf185",
+          "control": "brightness",
+          "step": 5
+        },
+        {
+          "index": 3,
+          "label": "Theme",
+          "icon": "\uf1fc",
+          "control": "theme",
+          "step": 1
+        }
+      ],
+      "segments": [
+        {
+          "source": "workspace",
+          "icon": "\uf108"
+        },
+        {
+          "source": "volume",
+          "icon": "\uf028"
+        },
+        {
+          "source": "cpu",
+          "icon": "\uf2db",
+          "tone": "positive"
+        },
+        {
+          "source": "memory",
+          "icon": "\uf1c0",
+          "tone": "inkDim"
+        },
+        {
+          "source": "theme",
+          "icon": "\uf1fc",
+          "tone": "accent"
+        }
+      ]
+    },
+    {
+      "name": "anchor",
+      "keys": [
+        {
+          "index": 0,
+          "label": "Desktop",
+          "icon": "\uf108",
+          "action": "page desktop"
+        },
+        {
+          "index": 1,
+          "label": "OpenSea",
+          "icon": "\uf268",
+          "action": "omarchy launch webapp https://opensea.io"
+        },
+        {
+          "index": 2,
+          "label": "Activity",
+          "icon": "\uf0f3",
+          "action": "noop",
+          "tone": "inkDim"
+        },
+        {
+          "index": 3,
+          "label": "Offers",
+          "icon": "\uf0e3",
+          "action": "noop",
+          "tone": "inkDim"
+        },
+        {
+          "index": 7,
+          "label": "Lock",
+          "icon": "\uf023",
+          "action": "omarchy system lock"
+        }
+      ],
+      "dials": [
+        {
+          "index": 0,
+          "label": "Volume",
+          "icon": "\uf028",
+          "control": "volume",
+          "press": "volume mute",
+          "step": 5
+        }
+      ],
+      "segments": [
+        {
+          "source": "anchor.service",
+          "icon": "\uf13d",
+          "tone": "accent"
+        },
+        {
+          "source": "clock",
+          "icon": "\uf017"
+        },
+        {
+          "source": "theme",
+          "icon": "\uf1fc",
+          "tone": "inkDim"
+        }
+      ]
+    }
+  ]
+}
