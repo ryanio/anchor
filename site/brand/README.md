@@ -18,15 +18,25 @@ what lets one file theme itself everywhere. `site/build.ts` does this for the si
 
 ## The square variant
 
-`anchor.svg` is 32 wide by 45 tall on its 64-unit grid — an aspect of 0.71. That is correct for a
-mark with room around it, and wrong in a status bar, where every neighbour is a glyph in a square
-slot. Fitted to a 12px slot the full mark draws 9×12, and it reads as the one tall, narrow thing in
-the row. Making it *smaller* cannot fix that, because scaling preserves aspect ratio.
+`anchor.svg` is 32 wide by 45 tall on its 64-unit grid — an aspect of 0.71. Two things go wrong with
+it in a status bar, and they need different fixes.
 
-So `anchor-bar.svg` is redrawn rather than rescaled: the ring sits lower, the shank is shorter, and
-the legs splay wider. Its bounds are 38×38 — square — so it fills a square slot in both directions.
-It is the same anchor-as-A, restated at the proportion a bar wants. Use it anywhere the mark sits in
-a row of icons at 16px or less; use `anchor.svg` everywhere else.
+**Shape.** Every neighbour there is a glyph in a square slot. Fitted to an 11px slot the full mark
+draws 10×12 and reads as the one tall, narrow thing in the row. Making it *smaller* cannot fix that,
+because scaling preserves aspect ratio.
+
+**Weight.** At that size the full mark's stroke computes to **0.93 device pixels**. Under one, so it
+antialiases to grey — not styled thin, starved. No change of size or geometry fixes that either.
+Only *fewer elements*, which buys the room for a heavier stroke.
+
+So `anchor-bar.svg` is the top of the anchor: the ring and the branches off it, flukes cropped, on
+square bounds of 36×36 at stroke 6. That draws 1.57 device pixels at bar size and fills the slot in
+both directions.
+
+**What it costs.** Without the flukes it reads as a monogram rather than an anchor. That is a trade
+worth making for a 16px glyph and not for anything larger — which is why the full mark is still the
+logo everywhere it has room. Use `anchor-bar.svg` in a row of icons at 16px or less, and
+`anchor.svg` everywhere else.
 
 ## Colour
 

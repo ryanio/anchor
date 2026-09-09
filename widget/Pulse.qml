@@ -425,10 +425,11 @@ Panel {
 
       AnchorMark {
         anchors.verticalCenter: parent.verticalCenter
-        // The square variant, because this is a row of square glyphs. The full mark is 32×45 on
-        // its own grid, so fitted to a slot it draws 9×12 — the one tall, narrow thing in the bar,
-        // which is exactly the complaint. `compact` swaps in geometry redrawn to 38×38, and the
-        // mark now fills the slot in both directions instead of only vertically.
+        // The square variant, because a bar breaks the full mark two ways. It is 32×45 on its own
+        // grid, so fitted to a slot it drew 10×12 — the one tall, narrow thing in the row — and at
+        // this size its stroke computed to 0.93 device pixels, under one, so it antialiased to
+        // grey. `compact` swaps in the top of the anchor on square 36×36 bounds at stroke 6: it
+        // fills the slot in both directions and draws 1.57 pixels.
         //
         // `iconSize` is the mark's DRAWN size, not a canvas it sits inside: AnchorMark fits the
         // artwork to this number, and with the square variant both dimensions bind at once.
