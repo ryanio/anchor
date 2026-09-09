@@ -1,0 +1,44 @@
+# Driftwood — bleached wood and deep water. The light member of the set.
+#
+# Light themes are where a Stream Deck suffers most, and this one is built around the reason. On a
+# light key the marks have to go *down* to be legible, so every coloured role here is a deep,
+# saturated version of its hue rather than the pastel a light theme usually reaches for: the yellow
+# is an ochre, the green a pine, the red an oxide. All of them clear 4.5:1 on the key as authored,
+# so none of them is rescued at paint time and none of them arrives on the deck as a different
+# colour from the one on the desktop.
+#
+# The surface ladder follows the convention the stock light themes use, where `lighter_background`
+# sits between `dark_background` and `darker_background` — on a light UI there is no headroom above
+# the ground, so every step off it is a step down.
+
+mode = "light"
+
+accent = "#1c5a73"
+selection = "#a99b7e"
+muted = "#b9ad93"
+
+background = "#f7f3ea"
+dark_background = "#ece6d8"
+darker_background = "#cfc4ac"
+lighter_background = "#d8cfb9"
+
+foreground = "#3b3a34"
+dark_foreground = "#7d7566"
+light_foreground = "#55534a"
+bright_foreground = "#201f1a"
+
+red = "#a32b30"
+yellow = "#8a5a12"
+orange = "#a8541f"
+green = "#2f6b3a"
+cyan = "#1c6b6b"
+blue = "#1c5a73"
+magenta = "#7a3d7a"
+brown = "#6b4a2a"
+
+bright_red = "#a32b30"
+bright_yellow = "#8a5a12"
+bright_green = "#2f6b3a"
+bright_cyan = "#1c6b6b"
+bright_blue = "#1c5a73"
+bright_magenta = "#7a3d7a"

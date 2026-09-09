@@ -85,6 +85,17 @@ function parseArgs(argv: readonly string[]): Options {
   return options;
 }
 
+/**
+ * Which piece a rotating gallery is showing.
+ *
+ * Six seconds. Derived from the clock rather than a counter so every key agrees without the panel
+ * holding state, and so a repaint triggered by something else does not advance the gallery.
+ */
+const ROTATE_MS = 6000;
+function rotationIndex(): number {
+  return Math.floor(Date.now() / ROTATE_MS);
+}
+
 async function main(): Promise<void> {
   const options = parseArgs(process.argv.slice(2));
 
@@ -152,8 +163,18 @@ async function main(): Promise<void> {
     if (!force && portfolioTimeframe === panel.timeframe && portfolio.detail === "") return;
     portfolioTimeframe = panel.timeframe;
     portfolio = await anchor.portfolio(panel.timeframe);
-    // Warm the gallery in the background; a rotation should never wait on a socket.
-    void prefetch(portfolio.nfts.slice(0, 24).map((piece) => piece.imageUrl)).then(() => repaint());
+    // Warm the gallery. The daemon does it in the background — a rotation must never wait on a
+    // socket — but a single frame has no second chance, so --once waits: a preview with the art
+    // missing is not a preview of what the device shows.
+    // The whole gallery, not a window of it: the rotation index sweeps every piece, so warming the
+    // first two dozen leaves the rest blank exactly when their turn comes round. The set is bounded
+    // by the request that fetched it and the images are small.
+    const warming = prefetch(portfolio.nfts.map((piece) => piece.imageUrl));
+    if (options.once) {
+      await warming;
+    } else {
+      void warming.then(() => repaint());
+    }
   };
 
   const repaint = async (): Promise<void> => {
@@ -179,6 +200,7 @@ async function main(): Promise<void> {
           themeName: tokens.themeName,
           portfolio,
           timeframe: panel.timeframe,
+          rotation: rotationIndex(),
         }),
       );
     } catch (error) {
@@ -205,6 +227,7 @@ async function main(): Promise<void> {
         themeName: tokens.themeName,
         portfolio,
         timeframe: panel.timeframe,
+        rotation: rotationIndex(),
       });
       await writePreview(composeSvg(frame, tokens, device.capabilities.slots), options.preview);
       process.stderr.write(`preview written to ${options.preview}\n`);

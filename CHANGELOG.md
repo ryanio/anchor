@@ -13,8 +13,40 @@
   with no hardware attached.
 - Colour resolves through the live Omarchy theme, never a literal, and the font family stays
   `monospace` so a device follows `omarchy font set`. Marks are held to WCAG AA over every installed
-  theme; a theme whose accent misses the 3:1 floor is nudged toward its own foreground rather than
-  drawn illegibly.
+  theme; a colour that misses the floor is corrected rather than drawn illegibly.
+- **A key that is on is lit.** An active key used to be tinted 30% toward its tone with the tone
+  itself drawn on top, which works on a dark theme and inverts on a light one — the accent measured
+  2.25:1 against the tile it was painted on for `rose-pine`, 2.63:1 for `catppuccin-latte`, so the
+  "on" key was less legible than the "off" ones beside it. A fixed blend fraction was the cause: 30%
+  barely moves a near-black ground and halves the contrast of a near-white one, so one number was
+  two different designs. The tile now takes its tone as a fill and the marks take whichever palette
+  colour stands furthest from it, which is unmistakable at arm's length on every theme and has a
+  guaranteed answer for contrast. The underline went with it; a filled key does not need one.
+- **The three surfaces are real steps, derived when a theme has no opinion about depth.** Five stock
+  themes set `lighter_background` to their own `background`, so a pressed key flashed at 1.02:1 —
+  through the deck's diffuser, no feedback at all — and nine put the gap between keys within 1.02:1
+  of the key, leaving the grid as one unbroken slab. `deriveSurfaces` takes the theme's own value
+  whenever it is a genuine step off this ground and derives one from the ground when it is not,
+  reversing direction where the ground has no headroom. It is the rule `widget/PulseModel.js`
+  already used for the panel, so the two surfaces are one system rather than two guesses.
+- **A reading is text, so tones are held to 4.5:1, not 3:1.** Every toned colour is drawn as a
+  tile's value — the portfolio total, the day's P&L — and `autoSize` shrinks a long one to 13px to
+  keep its last digits, which is not large text by any reading. On `solitude` the P&L came out at
+  3.16:1. The floor now slides a colour's *lightness* rather than blending it toward the foreground,
+  because blending is a hue change: rescuing `rose-pine`'s teal that way produced a slate purple
+  that was legible and no longer Rose Pine.
+- **Three themes, authored for a key as well as a screen** — `themes/harbor`, `themes/lantern` and
+  `themes/driftwood`, installed to `~/.config/omarchy/themes/`. Two rules, both learned from the
+  stock set: the ground is not black, because a key face at #000000 reads as a dead key on a lit
+  deck and leaves the gap between keys nowhere to go; and `selection` sits well clear of the ground,
+  because it is what draws a key's outline. They are the only themes on this machine whose surface
+  ladder, tile edge and four tones all pass as authored, with nothing corrected at paint time.
+  Driftwood is the light one, built around the fact that a mark on a light key has to go *down*:
+  every coloured role is a deep, saturated version of its hue rather than a pastel.
+- The contrast gate reads each `colors.toml` from disk and covers the repo's own themes and the
+  user's, not only `/usr/share`. It went through `loadTokens`, which falls back to Tokyo Night for a
+  name it cannot resolve — so a theme with no readable palette was measured as Tokyo Night and
+  passed. It also only ever compared marks to `ground`, a surface an active key's marks never touch.
 - Key faces are authored as SVG and rasterised straight to raw RGB by ImageMagick, so rendering adds
   no dependency. Glyph ink is measured through the same rasteriser and cached per font, because Nerd
   Font symbols advance 0.6em but paint up to 1.04em wide.
