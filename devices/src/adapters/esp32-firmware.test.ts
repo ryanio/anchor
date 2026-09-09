@@ -299,14 +299,30 @@ describe("firmware conformance", { skip: !compilerAvailable() || !rasteriserAvai
     const expected = await expectedPixels(surface);
     assert.equal(Buffer.compare(clean.framebuffer, expected), 0, "the clean run matches");
 
-    // Land in the middle of the stream, well past READY and inside tile pixel data.
-    const at = Math.floor(bytes.length / 2);
-    bytes.writeUInt8(bytes.readUInt8(at) ^ 0xff, at);
-    const dirty = feed(bytes);
+    // Search for a byte that matters rather than assuming the midpoint is one.
+    //
+    // The first version of this flipped the byte at exactly half the stream and asserted the
+    // picture changed. That held locally and failed in CI, because the frame's content depends on
+    // the active theme — CI has no Omarchy themes installed and falls back to a different palette,
+    // which lays the compressed stream out differently and left the midpoint on a byte whose flip
+    // decoded to the same pixels. The control was passing for a reason unrelated to what it claimed
+    // to check.
+    //
+    // What the control is really for is that the comparison *can* fail. So flip candidates until
+    // one changes the picture: finding none means the decoder ignores its input, which is the
+    // failure worth catching. The scan is bounded so a genuinely broken decoder fails the test
+    // rather than hanging it.
+    let changedAt = -1;
+    const step = Math.max(1, Math.floor(bytes.length / 64));
+    for (let at = Math.floor(bytes.length / 3); at < bytes.length && changedAt === -1; at += step) {
+      const probe = Buffer.from(bytes);
+      probe.writeUInt8(probe.readUInt8(at) ^ 0xff, at);
+      if (Buffer.compare(feed(probe).framebuffer, expected) !== 0) changedAt = at;
+    }
     assert.notEqual(
-      Buffer.compare(dirty.framebuffer, expected),
-      0,
-      "corrupting a pixel byte must produce a different frame, or this test proves nothing",
+      changedAt,
+      -1,
+      "no single-byte corruption changed the frame, so the comparison above proves nothing",
     );
     await device.close();
   });
