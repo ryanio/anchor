@@ -1106,9 +1106,11 @@ function statusDetail(state, nowMs, settings) {
     case STATUS.STARTING:
       return "reading…";
     case STATUS.OFFLINE:
-      return s.updatedAt > 0
-        ? `data service unreachable · last reading ${relativeAge((now - s.updatedAt) / 1000)} old`
-        : "data service not running";
+      // Short on purpose. This is a hero subtitle and a one-line tooltip, both of which elide, and
+      // the panel already prints which wallets the number is for and how old it is directly under
+      // it. The long form said all of that a second time and ran off the end doing it:
+      // "DATA SERVICE UNREACHABLE · LAST READING NOW…".
+      return s.updatedAt > 0 ? "data service not answering" : "data service not running";
     case STATUS.SETUP: {
       const pending = setupSteps(s).filter((step) => !step.optional && !step.done);
       return pending.length === 0 ? "setting up" : pending[0].missing;
@@ -1646,6 +1648,9 @@ function barLabel(state, nowMs, settings) {
   const base = {
     status,
     value: "",
+    // Starting or unconfigured: there is no figure, so there is none to hide. The bar draws a lone
+    // mark here, and the placeholder must not appear or it says the opposite of what is true.
+    valueHidden: false,
     change: null,
     offers: 0,
     deadline: "",
@@ -1664,6 +1669,15 @@ function barLabel(state, nowMs, settings) {
     status,
     value:
       showValue && portfolio.total !== null ? formatMoney(portfolio.total, { symbol: portfolio.symbol }) : "",
+    /**
+     * There is a total and the user has asked for it not to be shown.
+     *
+     * Distinct from `value === ""`, which also happens when there is nothing to show. Without the
+     * distinction the bar draws the identical strip — a lone mark — for "hiding my portfolio while
+     * screen-sharing" and "Anchor is not set up", and those two say opposite things about whether
+     * anything is working.
+     */
+    valueHidden: !showValue && portfolio.total !== null,
     change: showValue ? portfolio.change : null,
     offers,
     deadline: next.length > 0 ? next[0].label : "",

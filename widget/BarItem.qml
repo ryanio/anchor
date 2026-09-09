@@ -72,7 +72,24 @@ Rectangle {
   color: root.label.attention ? root.urgent : root.foreground
 }
 
-Text {
+// A hidden number still occupies its slot.
+  //
+  // Without this the bar is a lone mark, which is exactly what an unconfigured install draws — the
+  // two states were 4% apart in luminance on an 11px glyph, which is not a signal anybody reads.
+  // Three dots say "there is a figure here and you asked me not to show it"; nothing says "there
+  // is nothing here yet".
+  Text {
+    anchors.verticalCenter: parent.verticalCenter
+    visible: !root.vertical && root.label.valueHidden
+    textFormat: Text.PlainText
+    text: "•••"
+    color: root.dim
+    font.family: root.fontFamily
+    font.pixelSize: Style.font.body
+    renderType: Text.NativeRendering
+  }
+
+  Text {
   anchors.verticalCenter: parent.verticalCenter
   visible: !root.vertical && root.label.value !== ""
   textFormat: Text.PlainText

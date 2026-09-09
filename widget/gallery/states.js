@@ -27,6 +27,7 @@ function health(overrides) {
     {
       ok: true,
       wallet: ADDRESS,
+      wallets: [ADDRESS],
       chains: ["ethereum"],
       primaryChain: "ethereum",
       collections: ["sample-cats"],
@@ -298,7 +299,11 @@ const CASES = [
       "claim about which addresses, and it has to stay legible when there are more than one.",
     reading: healthy({
       health: health({
-        wallet: [ADDRESS, ADDRESS_2, OTHER].join(","),
+        // `wallets` is the truth and `wallet` is its first element — server.ts says so outright.
+        // This fixture used to set `wallet: "a,b,c"` and rendered as a single wallet, which meant
+        // the multi-wallet state had still never actually been looked at.
+        wallets: [ADDRESS, ADDRESS_2, OTHER],
+        wallet: ADDRESS,
         collections: ["sample-cats", "sample-apes"],
       }),
     }),

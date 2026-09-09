@@ -226,11 +226,13 @@ Column {
       width: parent.width
       visible: text !== ""
       textFormat: Text.PlainText
-      text: root.status === Model.STATUS.OFFLINE
-        ? "service unreachable — last reading " + root.ageText + " old"
-        : root.status === Model.STATUS.STALE
-          ? root.provenance + "  ·  stale, retrying"
-          : root.provenance
+      // Provenance in every state, including offline. It was replaced by a status sentence there,
+      // which said what the hero directly above it already said and repeated the age that
+      // provenance carries anyway — "as of 5m ago" *is* "last reading 5m old". Which addresses the
+      // number is for does not stop mattering because the service went away; it matters more.
+      text: root.status === Model.STATUS.STALE
+        ? root.provenance + "  ·  stale, retrying"
+        : root.provenance
       wrapMode: Text.WrapAtWordBoundaryOrAnywhere
       color: root.panelDim
       font.family: root.fontFamily
@@ -279,12 +281,24 @@ Column {
   // header, the counter, the segments and the numbered discs, the panel was saying the same
   // fact four ways on open — and the hero above already names what is missing.
 
+  /**
+   * The required steps that are not done yet.
+   *
+   * The block below is shown when this is non-empty, rather than whenever setup is incomplete *or*
+   * the service is offline. Those are not the same: a fully configured install whose service has
+   * stopped is offline with every step done, and the block rendered as a full three-segment
+   * progress bar with nothing underneath it — a lid on an empty box, and the one thing the design
+   * rules call out, decoration. An offline install that is *also* unconfigured still has a current
+   * step, so it still gets the block and the button on it.
+   */
+  readonly property var pendingSteps: root.progress.required.filter((step) => step.state !== "done")
+
   PanelBlock {
     id: setupBlock
     color: root.panelRaised
     line: root.panelLine
     spacing: Style.space(7)
-    visible: root.needsSetup || root.status === Model.STATUS.OFFLINE
+    visible: root.pendingSteps.length > 0
 
     StepProgress {
       width: parent.width
@@ -301,7 +315,7 @@ Column {
       Repeater {
         // Done steps are filtered out here rather than hidden in the delegate: a step that
         // has been dealt with should leave the queue, not sit in it wearing a tick.
-        model: root.progress.required.filter((step) => step.state !== "done")
+        model: root.pendingSteps
 
         delegate: SetupStep {
           required property var modelData

@@ -23,6 +23,7 @@ const ROUTES = [
   "/health",
   "/portfolio",
   "/portfolio/value",
+  "/portfolio/history",
   "/balances",
   "/activity",
   "/collections",
@@ -38,7 +39,13 @@ const ROUTES = [
 ];
 
 /** Routes that read the configured wallet, and so need one configured. */
-const WALLET_ROUTES = new Set(["/portfolio", "/portfolio/value", "/balances", "/activity"]);
+const WALLET_ROUTES = new Set([
+  "/portfolio",
+  "/portfolio/value",
+  "/portfolio/history",
+  "/balances",
+  "/activity",
+]);
 
 export interface ServerDeps {
   /** Which credentials are present. Local only — no network call, so `/health` stays cheap. */
@@ -177,6 +184,19 @@ export function createApp(config: Config, client: OpenSeaClient, deps: ServerDep
           res,
           200,
           envelope(await client.portfolioStats(primaryWallet, config.ttl.portfolio, chosen)),
+          headOnly,
+        );
+        return;
+      }
+
+      if (path === "/portfolio/history") {
+        const timeframe = url.searchParams.get("timeframe");
+        const allowed = ["HOUR", "DAY", "WEEK", "MONTH"] as const;
+        const chosen = allowed.find((t) => t === timeframe);
+        send(
+          res,
+          200,
+          envelope(await client.portfolioHistory(primaryWallet, config.ttl.portfolio, chosen)),
           headOnly,
         );
         return;

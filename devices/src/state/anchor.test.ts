@@ -9,7 +9,7 @@
 
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import { describeAge, readCollections, readTokens, TIMEFRAMES } from "./anchor.ts";
+import { describeAge, readCollections, readStats, readTokens, TIMEFRAMES } from "./anchor.ts";
 
 describe("readTokens", () => {
   const balances = {
@@ -87,5 +87,61 @@ describe("TIMEFRAMES", () => {
     // `/portfolio/value` validates against this list in service/src/server.ts; a fifth value here
     // would silently fall back to the API's default rather than erroring.
     assert.deepEqual([...TIMEFRAMES], ["HOUR", "DAY", "WEEK", "MONTH"]);
+  });
+});
+
+/**
+ * The spec and the live API disagree about spelling, so both are pinned.
+ *
+ * `@opensea/api-types` declares snake_case; `api.opensea.io` answers in camelCase. Reading the
+ * generated types is normally what prevents a wrong field name — here the generated types *are* the
+ * wrong field name, and only a real response revealed it. Both shapes are tested so that whichever
+ * side changes, this keeps working and the test says which spelling arrived.
+ */
+describe("field spellings", () => {
+  test("portfolio stats read from the camelCase the API actually sends", () => {
+    // Measured from api.opensea.io on 2026-09-08.
+    const live = {
+      totalValueUsd: "1381.84",
+      nftValueUsd: "50.89",
+      tokenValueUsd: "1330.95",
+      pnlAbsolute: "+10.98",
+      pnlPercentage: "+0.80",
+      timeframe: "DAY",
+    };
+    const stats = readStats(live);
+    assert.equal(stats?.totalUsd, "1381.84");
+    assert.equal(stats?.nftUsd, "50.89");
+    assert.equal(stats?.pnlPercentage, "+0.80");
+  });
+
+  test("portfolio stats still read from the snake_case the spec declares", () => {
+    const spec = { total_value_usd: "10", nft_value_usd: "4", token_value_usd: "6", timeframe: "DAY" };
+    assert.equal(readStats(spec)?.totalUsd, "10");
+    assert.equal(readStats(spec)?.nftUsd, "4");
+  });
+
+  test("token balances read from either spelling", () => {
+    const live = { tokenBalances: [{ symbol: "ETH", usdValue: "1330.95" }] };
+    const spec = { token_balances: [{ symbol: "ETH", usd_value: "1330.95", status: "OK" }] };
+    for (const [name, payload] of [
+      ["live", live],
+      ["spec", spec],
+    ] as const) {
+      const [only] = readTokens(payload);
+      assert.equal(only?.symbol, "ETH", name);
+      assert.equal(only?.usdValue, 1330.95, name);
+    }
+  });
+
+  test("a missing spam classification is treated as OK, not as spam", () => {
+    // The live response carries no `status` at all. Filtering everything out because a documented
+    // field is absent would be a worse failure than showing the list.
+    const [only] = readTokens({ tokenBalances: [{ symbol: "ETH", usdValue: "1" }] });
+    assert.equal(only?.symbol, "ETH");
+  });
+
+  test("an explicit spam classification is still honoured", () => {
+    assert.deepEqual(readTokens({ tokenBalances: [{ symbol: "X", usdValue: "9", status: "SPAM" }] }), []);
   });
 });

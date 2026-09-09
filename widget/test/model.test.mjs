@@ -152,6 +152,47 @@ test("renders an amount in the denomination it arrived in and no other", () => {
   assert.equal(Model.formatMoney("1.5", { symbol: "🤑" }), "1.5");
 });
 
+test("a hidden value is distinguishable from no value", () => {
+  // The bug: with `showValue` off the bar drew a lone mark, which is exactly what an unconfigured
+  // install draws. Measured on the two rendered strips, they were 4% apart in luminance on an 11px
+  // glyph — not a signal anybody reads. `value` alone cannot tell them apart, so the label says
+  // which case it is.
+  const configured = stateWith({
+    health: health(),
+    portfolio: { data: { stats: { totalValueUsd: "1234.56" } }, receivedAt: NOW },
+    activity: { data: { assetEvents: [] }, receivedAt: NOW },
+    updatedAt: NOW,
+  });
+
+  const shown = Model.barLabel(configured, NOW, Model.mergeSettings({}));
+  assert.equal(shown.value, "$1.23K");
+  assert.equal(shown.valueHidden, false);
+
+  const hidden = Model.barLabel(configured, NOW, Model.mergeSettings({ showValue: false }));
+  assert.equal(hidden.value, "", "the figure itself must not reach the bar");
+  assert.equal(hidden.valueHidden, true);
+
+  // Nothing to hide is not hiding. An unconfigured install must not draw the placeholder.
+  const fresh = stateWith({
+    health: health({ wallet: "", collections: [], credentials: { apiKey: false, pat: false } }),
+  });
+  assert.equal(Model.barLabel(fresh, NOW, Model.mergeSettings({ showValue: false })).valueHidden, false);
+});
+
+test("an offline status line is short enough for the place it is shown", () => {
+  // It is a hero subtitle and a one-line tooltip, both of which elide. The long form ran off the
+  // end — "DATA SERVICE UNREACHABLE · LAST READING NOW…" — while repeating what the panel prints
+  // directly underneath it.
+  const warm = stateWith({ health: health(), healthError: "connection refused", updatedAt: NOW - 60_000 });
+  const cold = stateWith({ healthError: "connection refused" });
+
+  assert.equal(Model.statusDetail(warm, NOW), "data service not answering");
+  assert.equal(Model.statusDetail(cold, NOW), "data service not running");
+  for (const state of [warm, cold]) {
+    assert.ok(Model.statusDetail(state, NOW).length <= 30, "an offline line has to fit the hero");
+  }
+});
+
 test("USD is always two decimal places, and only USD", () => {
   // The bug this exists for: `$125,430.5` reached Ryan's bar. USD has exactly two decimal places
   // by definition, so a dollar figure with one is not a dollar figure.
