@@ -69,7 +69,9 @@ export function brightnessStep(delta: number): void {
 }
 
 export function workspaceStep(delta: number): void {
-  void hypr.dispatch("workspace", delta > 0 ? `+${delta}` : `${delta}`);
+  // `e+1` / `e-1` move between *existing* workspaces, which is what a dial should do — stepping onto
+  // empty workspace 7 because the dial was spun is not navigation.
+  void hypr.focusWorkspace(delta > 0 ? "e+1" : "e-1");
 }
 
 /** Cycle themes in the order `omarchy theme list` reports. */
@@ -113,8 +115,17 @@ export function dispatch(action: string, context: ActionContext): boolean {
     case "omarchy":
       spawnDetached("omarchy", args);
       return true;
+    case "workspace": {
+      const target = args[0];
+      if (target === undefined) return false;
+      void hypr.focusWorkspace(target);
+      return true;
+    }
     case "hypr":
-      void hypr.dispatch(...args);
+      // Raw Lua, for anything without a named action here. Joined rather than passed as argv:
+      // hyprctl evaluates its argument as a Lua expression.
+      if (args.length === 0) return false;
+      void hypr.dispatch(args.join(" "));
       return true;
     case "exec": {
       const [program, ...rest] = args;

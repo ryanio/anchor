@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { randomUUID } from "node:crypto";
+import { decodeJwtPayload } from "@opensea/sdk";
 /**
  * Anchor data service entry point.
  *
@@ -15,7 +16,7 @@ import { configPath, loadConfig } from "./config.ts";
 import { getApiKey, getPat, keyringAvailable, looksLikeCredential, setApiKey, setPat } from "./keyring.ts";
 import { OpenSeaClient } from "./opensea.ts";
 import { createApp, HOST } from "./server.ts";
-import { describeTokenShape, resolveWallets } from "./wallet-token.ts";
+import { describeTokenShape, resolveWallets, walletsFromClaims } from "./wallet-token.ts";
 
 /** `/health` may be polled once a second; spawning secret-tool that often is not free. */
 const CREDENTIAL_CACHE_MS = 30_000;
@@ -151,7 +152,25 @@ async function main(): Promise<void> {
   const configured = loadConfig();
   // A wallet PAT is issued *to* a wallet and carries the address as a claim, so the empty case has
   // an answer that needs no network call and no scope. Config still wins: see `wallet-token.ts`.
-  const resolvedWallets = resolveWallets(configured.wallets, await getPat(), configured.chains);
+  let resolvedWallets = resolveWallets(configured.wallets, await getPat(), configured.chains);
+  if (resolvedWallets.wallets.length === 0) {
+    // The stored PAT is usually opaque, so it carries no claims — but exchanging it yields a JWT
+    // that carries both the authenticated `wallet` and a `linked_wallets` list. This is one network
+    // call at startup, only on the path where nothing else supplied a wallet, and every failure
+    // leaves the service exactly as it was.
+    try {
+      const accessToken = await new WalletTokenProvider({ getPat }).token();
+      if (accessToken !== null) {
+        const wallets = walletsFromClaims(decodeJwtPayload(accessToken), configured.chains);
+        if (wallets.length > 0) {
+          resolvedWallets = { wallets, source: "token", detail: "" };
+        }
+      }
+    } catch {
+      // Keep the reason from `resolveWallets`; an exchange failure is not more informative than
+      // "no wallet configured", and auth.ts has already refused to quote the response body.
+    }
+  }
   const config = { ...configured, wallets: [...resolvedWallets.wallets] };
   const cache = new Cache();
   const walletToken = new WalletTokenProvider({ getPat });

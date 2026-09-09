@@ -44,8 +44,32 @@ async function ctlJson<T>(args: readonly string[]): Promise<T | null> {
   }
 }
 
-export async function dispatch(...args: readonly string[]): Promise<boolean> {
-  return (await ctl(["dispatch", ...args])) !== null;
+/**
+ * Run a dispatcher, as a Lua expression.
+ *
+ * Hyprland 0.56 moved `hyprctl dispatch` to Lua: the argument is wrapped in `return hl.dispatch(…)`,
+ * so the old `dispatch("workspace", "3")` form now parses as `hl.dispatch(workspace 3)` and fails
+ * with a syntax error — silently, from a panel's point of view, because nothing is printed to a key.
+ *
+ * Callers pass a dispatcher expression such as `hl.dsp.focus({ workspace = "3" })`. The spellings
+ * come from Omarchy's own `bindings/tiling.lua`, which is the authority for this machine, not from
+ * memory: `hl.dsp.focus` switches workspace, `hl.dsp.window.move` moves a window to one.
+ */
+export async function dispatch(lua: string): Promise<boolean> {
+  const result = await ctl(["dispatch", lua]);
+  // hyprctl prints `ok` on success and an `error: …` line on failure, but exits 0 either way, so
+  // the exit code alone would report a Lua syntax error as a successful dispatch.
+  return result !== null && !result.toLowerCase().startsWith("error");
+}
+
+/** Quote a value for a Lua string literal. Workspace targets are `"3"`, `"e+1"`, `"previous"`. */
+function luaString(value: string): string {
+  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+}
+
+/** Switch to a workspace: an id, or a relative target such as `e+1`. */
+export async function focusWorkspace(target: string): Promise<boolean> {
+  return dispatch(`hl.dsp.focus({ workspace = ${luaString(target)} })`);
 }
 
 export async function activeWorkspace(): Promise<number | null> {

@@ -569,6 +569,21 @@ export class OpenSeaClient {
     );
   }
 
+  /**
+   * Net worth over time, for a sparkline. GET /account/{address}/portfolio/history
+   *
+   * `accounts.getPortfolioHistory` rather than the root `getPortfolioHistory`, which the SDK marks
+   * deprecated and removes in the next major.
+   */
+  portfolioHistory(address: string, ttl: number, timeframe?: "HOUR" | "DAY" | "WEEK" | "MONTH") {
+    return this.#call(ttl, "account", "/portfolio/history", (api) =>
+      api.accounts.getPortfolioHistory(segment(address), {
+        ...(timeframe === undefined ? {} : { timeframe }),
+        ...({ chains: [...this.#chains] } as object),
+      }),
+    );
+  }
+
   /** Fungible balances across every configured chain. GET /account/{address}/tokens */
   tokenBalances(address: string, ttl: number, opts: { limit?: number; cursor?: string } = {}) {
     return this.#call(ttl, "account", "/balances", (api) =>

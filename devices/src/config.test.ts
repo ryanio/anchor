@@ -78,7 +78,7 @@ describe("the packaged default config", () => {
     const { config } = loadConfig();
     assert.deepEqual(
       config.pages.map((page) => page.name),
-      ["desktop", "portfolio", "anchor"],
+      ["desktop", "portfolio", "chains", "gallery"],
     );
   });
 
@@ -130,7 +130,17 @@ describe("the packaged default config", () => {
   });
 
   test("every page action names a verb the dispatcher knows", () => {
-    const known = new Set(["omarchy", "hypr", "exec", "page", "volume", "brightness", "theme", "noop"]);
+    const known = new Set([
+      "omarchy",
+      "hypr",
+      "workspace",
+      "exec",
+      "page",
+      "volume",
+      "brightness",
+      "theme",
+      "noop",
+    ]);
     const { config } = loadConfig();
     for (const page of config.pages) {
       for (const key of page.keys) {
@@ -144,6 +154,31 @@ describe("the packaged default config", () => {
           `${page.name} dial ${dial.index}: ${dial.press}`,
         );
       }
+    }
+  });
+
+  test("every page can reach the first page, so no page is a dead end", () => {
+    // A panel is not a website: there is no back button, no url bar and no way out of a page that
+    // links only to pages that link back to it. This exact loop shipped once — desktop -> money ->
+    // chains -> money — and the only way home was a swipe nobody had been told about.
+    const { config } = loadConfig();
+    const home = config.pages[0]?.name ?? "";
+    const edges = new Map(
+      config.pages.map((page) => [
+        page.name,
+        page.keys.filter((key) => key.action.startsWith("page ")).map((key) => key.action.slice(5).trim()),
+      ]),
+    );
+    for (const page of config.pages) {
+      const seen = new Set<string>();
+      const queue = [page.name];
+      while (queue.length > 0) {
+        const at = queue.shift();
+        if (at === undefined || seen.has(at)) continue;
+        seen.add(at);
+        queue.push(...(edges.get(at) ?? []));
+      }
+      assert.ok(seen.has(home), `${page.name} cannot reach ${home} by any sequence of key presses`);
     }
   });
 

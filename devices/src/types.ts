@@ -83,6 +83,15 @@ export interface BarSegment {
   readonly icon?: string;
   readonly text: string;
   readonly tone?: TokenName;
+  /**
+   * Characters to reserve, so a changing reading does not move its neighbours.
+   *
+   * A status strip is read at a glance, and the eye finds a value by where it sits. Packing
+   * segments by their current width means `cpu 5%` ticking to `cpu 14%` shifts everything to its
+   * right by one character — every second, forever. Reserving the width a reading can grow to keeps
+   * each one in place; the text itself is not padded, only the space after it.
+   */
+  readonly minChars?: number;
 }
 
 /**
@@ -122,8 +131,35 @@ export type Surface =
       /** 0..1 draws a fill bar under the label; omit for a plain tile. */
       readonly meter?: number;
       readonly badge?: string;
+      /**
+       * A series drawn as a sparkline beneath the reading.
+       *
+       * A number says where you are; a sparkline says how you got there, in the same space. Values
+       * are raw — the renderer scales to the series' own range, because a portfolio that moved 2%
+       * should look like a 2% move against itself, not a flat line against zero.
+       */
+      readonly spark?: readonly number[];
+      /** Proportions drawn as a donut. Values are relative; the renderer normalises them. */
+      readonly slices?: readonly { readonly value: number; readonly tone?: TokenName }[];
+      /**
+       * Artwork, as a data URI, drawn full-bleed with the label over a scrim.
+       *
+       * A ticker tells you what you hold. A picture tells you what you own, which is what an NFT
+       * actually is — so the piece itself gets the key.
+       */
+      readonly image?: string;
     }
-  | { readonly kind: "bar"; readonly segments: readonly BarSegment[] }
+  | {
+      readonly kind: "bar";
+      readonly segments: readonly BarSegment[];
+      /**
+       * A series drawn faintly across the full width, behind the text.
+       *
+       * The strip is 800x100 and the readings use a third of it. The rest was background; a
+       * net-worth line across it costs no space and turns dead pixels into the shape of the day.
+       */
+      readonly background?: readonly number[];
+    }
   /**
    * Rows on a screen.
    *

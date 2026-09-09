@@ -27,6 +27,7 @@ async function openVirtual(model: string) {
 
 import { loadConfig } from "./config.ts";
 import { loadGlyphMetrics } from "./glyphs.ts";
+import { prefetch } from "./images.ts";
 import { Panel } from "./panel.ts";
 import { clearRasterCache } from "./raster.ts";
 import * as anchor from "./state/anchor.ts";
@@ -151,6 +152,8 @@ async function main(): Promise<void> {
     if (!force && portfolioTimeframe === panel.timeframe && portfolio.detail === "") return;
     portfolioTimeframe = panel.timeframe;
     portfolio = await anchor.portfolio(panel.timeframe);
+    // Warm the gallery in the background; a rotation should never wait on a socket.
+    void prefetch(portfolio.nfts.slice(0, 24).map((piece) => piece.imageUrl)).then(() => repaint());
   };
 
   const repaint = async (): Promise<void> => {
@@ -211,8 +214,13 @@ async function main(): Promise<void> {
     process.exit(0);
   }
 
+  let deckBrightness = panel.deckBrightness;
   device.onInput((input) => {
     if (!panel.handle(input)) return;
+    if (panel.deckBrightness !== deckBrightness) {
+      deckBrightness = panel.deckBrightness;
+      void device.setBrightness(deckBrightness);
+    }
     // A page switch or a timeframe scrub changes what data is wanted, so ask before repainting.
     void refreshPortfolio().then(() => repaint());
   });

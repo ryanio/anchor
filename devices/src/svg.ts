@@ -54,6 +54,15 @@ export function fit(text: string, fontSize: number, maxWidth: number): string {
  * fixed size either wastes the tile or overflows it. Shrinking beats truncating here: the last
  * digits of a number are not optional the way the tail of a window title is.
  */
+/** A stable id for an inline definition. Not a hash for security — only for uniqueness in one file. */
+function hashString(value: string): number {
+  let hash = 0;
+  for (let index = 0; index < value.length; index += 97) {
+    hash = (hash * 31 + value.charCodeAt(index)) | 0;
+  }
+  return hash;
+}
+
 export function autoSize(text: string, maxWidth: number, maxSize: number, minSize: number): number {
   for (let size = maxSize; size > minSize; size--) {
     if (advance(text, size) <= maxWidth) return size;
@@ -79,6 +88,71 @@ function text(x: number, y: number, size: number, fill: string, body: string, bo
   );
 }
 
+/**
+ * A sparkline: the series scaled to its own range, not to zero.
+ *
+ * Anchoring at zero would render every real portfolio move as a flat line near the top. The range
+ * is the series' own min and max, so the shape shows the movement that actually happened; a flat
+ * series draws a centred line rather than dividing by zero.
+ */
+function sparkline(
+  points: readonly number[],
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  color: string,
+): string {
+  if (points.length < 2) return "";
+  const low = Math.min(...points);
+  const high = Math.max(...points);
+  const span = high - low;
+  const at = (value: number): number => (span === 0 ? y + h / 2 : y + h - ((value - low) / span) * h);
+  const step = w / (points.length - 1);
+  const coords = points.map((value, index) => `${(x + index * step).toFixed(1)},${at(value).toFixed(1)}`);
+  const area = `${x},${y + h} ${coords.join(" ")} ${x + w},${y + h}`;
+  return (
+    `<polygon points="${area}" fill="${color}" fill-opacity="0.18"/>` +
+    `<polyline points="${coords.join(" ")}" fill="none" stroke="${color}" stroke-width="2" ` +
+    `stroke-linejoin="round" stroke-linecap="round"/>`
+  );
+}
+
+/** A donut. Proportions only — no legend, because a 120px key has no room to lie in. */
+function donut(
+  slices: readonly { value: number; tone?: TokenName }[],
+  tokens: Tokens,
+  cx: number,
+  cy: number,
+  radius: number,
+  thickness: number,
+): string {
+  const total = slices.reduce((sum, slice) => sum + Math.max(0, slice.value), 0);
+  if (total <= 0)
+    return `<circle cx="${cx}" cy="${cy}" r="${radius}" fill="none" stroke="${tokens.line}" stroke-width="${thickness}"/>`;
+
+  const palette: TokenName[] = ["accent", "positive", "warning", "negative", "inkDim"];
+  const circumference = 2 * Math.PI * radius;
+  let offset = 0;
+  const parts = [
+    `<circle cx="${cx}" cy="${cy}" r="${radius}" fill="none" stroke="${tokens.line}" stroke-width="${thickness}"/>`,
+  ];
+  slices.forEach((slice, index) => {
+    const fraction = Math.max(0, slice.value) / total;
+    if (fraction <= 0) return;
+    const length = fraction * circumference;
+    const color = tokens[slice.tone ?? palette[index % palette.length] ?? "accent"];
+    // Dash one arc per slice and rotate it into place; simpler than arc paths and exact.
+    parts.push(
+      `<circle cx="${cx}" cy="${cy}" r="${radius}" fill="none" stroke="${color}" stroke-width="${thickness}" ` +
+        `stroke-dasharray="${length.toFixed(2)} ${(circumference - length).toFixed(2)}" ` +
+        `stroke-dashoffset="${(-offset).toFixed(2)}" transform="rotate(-90 ${cx} ${cy})"/>`,
+    );
+    offset += length;
+  });
+  return parts.join("");
+}
+
 function renderTile(surface: Extract<Surface, { kind: "tile" }>, tokens: Tokens, slot: SlotSpec): string {
   const { width: w, height: h } = slot;
   const tone = toneColor(tokens, surface.tone);
@@ -86,6 +160,7 @@ function renderTile(surface: Extract<Surface, { kind: "tile" }>, tokens: Tokens,
   // A hairline edge gives the tile a defined boundary against the gap, which is what stops a dark
   // key reading as a hole. Active keys take the accent for it, so the state is legible from the
   // shape of the key and not only from its fill.
+  const hasImage = typeof surface.image === "string" && surface.image !== "";
   const edge = active ? tone : tokens.line;
   const parts: string[] = [
     `<rect width="${w}" height="${h}" fill="${tokens.sunken}"/>`,
@@ -94,9 +169,11 @@ function renderTile(surface: Extract<Surface, { kind: "tile" }>, tokens: Tokens,
 
   const hasMeter = typeof surface.meter === "number";
   const hasValue = typeof surface.value === "string" && surface.value !== "";
+  const hasSpark = Array.isArray(surface.spark) && surface.spark.length > 1;
+  const hasSlices = Array.isArray(surface.slices) && surface.slices.length > 0;
   // A reading takes the middle of the tile; the icon shrinks to a marker and the label to a caption.
   const iconY = hasValue ? h * 0.2 : hasMeter ? h * 0.29 : h * 0.4;
-  const labelY = hasValue ? h * 0.78 : hasMeter ? h * 0.62 : h * 0.76;
+  const labelY = hasSpark ? h * 0.64 : hasValue ? h * 0.78 : hasMeter ? h * 0.62 : h * 0.76;
 
   if (surface.icon) {
     const iconSize = Math.round(hasValue ? h * 0.16 : h * 0.38);
@@ -111,10 +188,38 @@ function renderTile(surface: Extract<Surface, { kind: "tile" }>, tokens: Tokens,
       ),
     );
   }
+  if (hasImage) {
+    // Clipped to the tile's own radius so the art sits in the key rather than on it, with a scrim
+    // so a label stays readable over a bright piece.
+    const id = `art${Math.abs(hashString(surface.image ?? ""))}`;
+    parts.push(
+      `<defs><clipPath id="${id}"><rect x="3.5" y="3.5" width="${w - 7}" height="${h - 7}" rx="14"/></clipPath>` +
+        `<linearGradient id="${id}s" x1="0" y1="0" x2="0" y2="1">` +
+        `<stop offset="0.45" stop-color="${tokens.sunken}" stop-opacity="0"/>` +
+        `<stop offset="1" stop-color="${tokens.sunken}" stop-opacity="0.92"/></linearGradient></defs>`,
+    );
+    parts.push(
+      `<g clip-path="url(#${id})"><image href="${surface.image}" x="3.5" y="3.5" width="${w - 7}" ` +
+        `height="${h - 7}" preserveAspectRatio="xMidYMid slice"/>` +
+        `<rect x="3.5" y="3.5" width="${w - 7}" height="${h - 7}" fill="url(#${id}s)"/></g>`,
+    );
+  }
+
+  if (hasSlices) {
+    // The donut takes the middle; a value, if any, sits inside it.
+    parts.push(donut(surface.slices ?? [], tokens, w / 2, h * 0.44, h * 0.24, Math.round(h * 0.1)));
+  }
+
   if (hasValue) {
     const value = surface.value ?? "";
-    const size = autoSize(value, w - 14, Math.round(h * 0.26), Math.round(h * 0.11));
-    parts.push(text(w / 2, h * 0.47, size, tone, value, true));
+    const maxSize = hasSlices ? Math.round(h * 0.15) : Math.round(h * 0.26);
+    const width = hasSlices ? w * 0.34 : w - 14;
+    const size = autoSize(value, width, maxSize, Math.round(h * 0.09));
+    parts.push(text(w / 2, hasSlices ? h * 0.44 : hasSpark ? h * 0.4 : h * 0.47, size, tone, value, true));
+  }
+
+  if (hasSpark) {
+    parts.push(sparkline(surface.spark ?? [], 12, h * 0.72, w - 24, h * 0.18, tone));
   }
   if (surface.label) {
     const size = Math.round(h * (hasValue ? 0.105 : 0.125));
@@ -127,7 +232,7 @@ function renderTile(surface: Extract<Surface, { kind: "tile" }>, tokens: Tokens,
         // at 2.0-3.4:1 against the tile — under the 4.5:1 AA floor `scripts/check-contrast.ts`
         // holds the rest of the project to, and unreadable in practice. `ink` is 6.3:1 or better
         // everywhere, and hierarchy still comes from weight and the icon above it.
-        active ? tokens.inkStrong : tokens.ink,
+        active || hasImage ? tokens.inkStrong : tokens.ink,
         fit(surface.label, size, w - 16),
         active,
       ),
@@ -165,14 +270,29 @@ function renderBar(surface: Extract<Surface, { kind: "bar" }>, tokens: Tokens, s
   const { width: w, height: h } = slot;
   const iconSize = Math.round(h * 0.3);
   const textSize = Math.round(h * 0.22);
-  const parts: string[] = [
-    `<rect width="${w}" height="${h}" fill="${tokens.ground}"/>`,
-    `<rect width="${w}" height="2" fill="${tokens.accent}"/>`,
-  ];
+  const parts: string[] = [`<rect width="${w}" height="${h}" fill="${tokens.ground}"/>`];
 
+  // Behind the text, at low opacity: present when you look for it, invisible when you are reading.
+  if (Array.isArray(surface.background) && surface.background.length > 1) {
+    parts.push(
+      `<g opacity="0.34">${sparkline(surface.background, 0, h * 0.22, w, h * 0.72, tokens.accent)}</g>`,
+    );
+  }
+  parts.push(`<rect width="${w}" height="2" fill="${tokens.accent}"/>`);
+
+  // A segment needs room to say something. Ellipsising "Catppuccin" down to "Catp…" spends the
+  // pixels and communicates nothing, so a segment that cannot fit a legible minimum is dropped
+  // instead — the same judgement the list surface makes about a half-drawn row.
+  const MIN_LEGIBLE_CHARS = 6;
   let x = 22;
   for (const segment of surface.segments) {
-    if (x > w - 60) break;
+    const iconRoom = segment.icon ? cellWidth(segment.icon, iconSize) : 0;
+    const room = w - x - iconRoom - 30;
+    const needed = Math.min(
+      advance(segment.text, textSize),
+      advance("x".repeat(MIN_LEGIBLE_CHARS), textSize),
+    );
+    if (room < needed) break;
     if (segment.icon) {
       parts.push(
         `<text x="${x}" y="${h / 2}" font-family="monospace" font-size="${iconSize}" ` +
@@ -187,7 +307,10 @@ function renderBar(surface: Extract<Surface, { kind: "bar" }>, tokens: Tokens, s
       `<text x="${x}" y="${h / 2}" font-family="monospace" font-size="${textSize}" fill="${tokens.inkStrong}" ` +
         `dominant-baseline="central">${escapeXml(body)}</text>`,
     );
-    x += advance(body, textSize) + 30;
+    // Reserve the segment's declared width so a shorter reading leaves the gap rather than closing
+    // it, and its neighbours stay put.
+    const reserved = segment.minChars === undefined ? 0 : advance("0".repeat(segment.minChars), textSize);
+    x += Math.max(advance(body, textSize), reserved) + 30;
   }
   return parts.join("");
 }
