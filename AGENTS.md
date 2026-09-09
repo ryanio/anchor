@@ -313,7 +313,8 @@ back to an agent.
 **Do not ship a visual change you have only reasoned about.** Every visual bug in this project so far
 was invisible in the source and obvious on screen: a cheat sheet fixed three times from CSS
 arithmetic before anyone rendered it, and a bar icon "aligned" by matching top edges when the real
-problem was an aspect ratio of 0.67 in a row of square glyphs — which no size change could fix.
+problems were an aspect ratio of 0.67 in a row of square glyphs and a stroke that computed to 0.93
+device pixels — neither of which a size change can fix, and both of which a screenshot shows.
 
 **Install the widget as a symlink, or you will review the wrong build.** Quickshell loads from
 `~/.config/omarchy/plugins/anchor.pulse`, and the documented install is a copy — so a change to
