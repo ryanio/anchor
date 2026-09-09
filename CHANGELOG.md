@@ -26,6 +26,12 @@ outbound rate limit, and one place where freshness is tracked.
   Every call goes through the SDK and every response is typed from the generated OpenAPI types.
 - Loopback-only, and it requires a loopback `Host` header — binding to `127.0.0.1` stops the network
   reaching it but not a browser whose DNS rebinds to it.
+- When no wallet is configured, the address is derived from the wallet PAT's `wallet` claim via
+  `@opensea/sdk`'s `extractWalletAddress` — a local decode, so it needs no scope and cannot 401. A
+  configured wallet always wins; a token that is opaque, carries no wallet claim, or names an
+  address for a chain that is not configured contributes nothing and says which. `/health` reports
+  `walletSource`, because a wallet nobody typed in should name its source rather than just appear.
+  The SDK's warning that `sub` is an account identifier and never a wallet is pinned by a test.
 - Credentials live in the OS keyring, never in config, argv or logs. Errors are rebuilt from a status
   code, so a remote response body can never carry a credential back out.
 

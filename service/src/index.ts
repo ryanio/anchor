@@ -15,6 +15,7 @@ import { configPath, loadConfig } from "./config.ts";
 import { getApiKey, getPat, keyringAvailable, looksLikeCredential, setApiKey, setPat } from "./keyring.ts";
 import { OpenSeaClient } from "./opensea.ts";
 import { createApp, HOST } from "./server.ts";
+import { resolveWallets } from "./wallet-token.ts";
 
 /** `/health` may be polled once a second; spawning secret-tool that often is not free. */
 const CREDENTIAL_CACHE_MS = 30_000;
@@ -144,7 +145,11 @@ async function main(): Promise<void> {
     return;
   }
 
-  const config = loadConfig();
+  const configured = loadConfig();
+  // A wallet PAT is issued *to* a wallet and carries the address as a claim, so the empty case has
+  // an answer that needs no network call and no scope. Config still wins: see `wallet-token.ts`.
+  const resolvedWallets = resolveWallets(configured.wallets, await getPat(), configured.chains);
+  const config = { ...configured, wallets: [...resolvedWallets.wallets] };
   const cache = new Cache();
   const walletToken = new WalletTokenProvider({ getPat });
   const client = new OpenSeaClient({
@@ -167,10 +172,18 @@ async function main(): Promise<void> {
   );
   console.error(`anchor-service chains: ${config.chains.join(", ")} (path-scoped reads use the first)`);
   if (config.wallets.length === 0) {
-    console.error(`Warning: no wallet set. Edit ${configPath()}`);
+    console.error(`Warning: no wallet set (${resolvedWallets.detail}). Edit ${configPath()}`);
+  } else if (resolvedWallets.source === "token") {
+    // Say where it came from. A wallet nobody typed into the config is exactly the kind of number
+    // that should name its source rather than simply appear.
+    console.error(`anchor-service wallet: ${config.wallets[0]} (from the wallet PAT, not ${configPath()})`);
   }
 
-  const server = createApp(config, client, { credentials });
+  const server = createApp(config, client, {
+    credentials,
+    walletSource: resolvedWallets.source,
+    walletDetail: resolvedWallets.detail,
+  });
   server.listen(config.port, HOST, () => {
     console.error(`anchor-service listening on http://${HOST}:${config.port}`);
   });
