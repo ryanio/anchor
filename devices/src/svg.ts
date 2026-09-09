@@ -13,6 +13,7 @@
  * comes from size, weight and colour within the family — never a second typeface.
  */
 
+import { cellWidth, centerCorrection } from "./glyphs.ts";
 import { mix, type Tokens } from "./tokens.ts";
 import type { Emphasis, SlotSpec, Surface, TokenName } from "./types.ts";
 
@@ -68,9 +69,13 @@ function renderTile(surface: Extract<Surface, { kind: "tile" }>, tokens: Tokens,
   const { width: w, height: h } = slot;
   const tone = toneColor(tokens, surface.tone);
   const active = surface.emphasis === "active";
+  // A hairline edge gives the tile a defined boundary against the gap, which is what stops a dark
+  // key reading as a hole. Active keys take the accent for it, so the state is legible from the
+  // shape of the key and not only from its fill.
+  const edge = active ? tone : tokens.line;
   const parts: string[] = [
     `<rect width="${w}" height="${h}" fill="${tokens.sunken}"/>`,
-    `<rect x="3" y="3" width="${w - 6}" height="${h - 6}" rx="14" fill="${tileFill(tokens, surface.emphasis, tone)}"/>`,
+    `<rect x="3.5" y="3.5" width="${w - 7}" height="${h - 7}" rx="14" fill="${tileFill(tokens, surface.emphasis, tone)}" stroke="${edge}" stroke-width="1"/>`,
   ];
 
   const hasMeter = typeof surface.meter === "number";
@@ -78,7 +83,17 @@ function renderTile(surface: Extract<Surface, { kind: "tile" }>, tokens: Tokens,
   const labelY = hasMeter ? h * 0.62 : h * 0.76;
 
   if (surface.icon) {
-    parts.push(text(w / 2, iconY, Math.round(h * 0.38), active ? tone : tokens.ink, surface.icon));
+    const iconSize = Math.round(h * 0.38);
+    // Correct for the glyph's ink sitting right of its advance box; see `glyphs.ts`.
+    parts.push(
+      text(
+        w / 2 + centerCorrection(surface.icon, iconSize),
+        iconY,
+        iconSize,
+        active ? tone : tokens.ink,
+        surface.icon,
+      ),
+    );
   }
   if (surface.label) {
     const size = Math.round(h * 0.125);
@@ -87,7 +102,11 @@ function renderTile(surface: Extract<Surface, { kind: "tile" }>, tokens: Tokens,
         w / 2,
         labelY,
         size,
-        active ? tokens.inkStrong : tokens.inkDim,
+        // `ink`, not `inkDim`. Measured across every stock theme, a dimmed label on a key comes out
+        // at 2.0-3.4:1 against the tile — under the 4.5:1 AA floor `scripts/check-contrast.ts`
+        // holds the rest of the project to, and unreadable in practice. `ink` is 6.3:1 or better
+        // everywhere, and hierarchy still comes from weight and the icon above it.
+        active ? tokens.inkStrong : tokens.ink,
         fit(surface.label, size, w - 16),
         active,
       ),
@@ -125,9 +144,6 @@ function renderBar(surface: Extract<Surface, { kind: "bar" }>, tokens: Tokens, s
   const { width: w, height: h } = slot;
   const iconSize = Math.round(h * 0.3);
   const textSize = Math.round(h * 0.22);
-  // Nerd Font symbols keep the monospace advance but paint wider than it, so an icon gets its own
-  // cell rather than being advanced past. Measured: advance 24px against 47px of ink at size 40.
-  const iconCell = Math.round(iconSize * 1.35);
   const parts: string[] = [
     `<rect width="${w}" height="${h}" fill="${tokens.ground}"/>`,
     `<rect width="${w}" height="2" fill="${tokens.accent}"/>`,
@@ -141,7 +157,9 @@ function renderBar(surface: Extract<Surface, { kind: "bar" }>, tokens: Tokens, s
         `<text x="${x}" y="${h / 2}" font-family="monospace" font-size="${iconSize}" ` +
           `fill="${toneColor(tokens, segment.tone)}" dominant-baseline="central">${escapeXml(segment.icon)}</text>`,
       );
-      x += iconCell;
+      // Each icon reserves its own measured ink width; advancing by the monospace advance alone
+      // would run the label straight through the glyph.
+      x += cellWidth(segment.icon, iconSize);
     }
     const body = fit(segment.text, textSize, w - x - 30);
     parts.push(

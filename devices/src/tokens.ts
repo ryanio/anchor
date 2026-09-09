@@ -133,9 +133,59 @@ export function toTokens(name: string, colors: Record<string, string>): Tokens {
   };
 }
 
+/** WCAG relative luminance, for the legibility floor below. */
+function luminance(color: string): number {
+  const channels = toRgb(color).map((value) => {
+    const s = value / 255;
+    return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * (channels[0] ?? 0) + 0.7152 * (channels[1] ?? 0) + 0.0722 * (channels[2] ?? 0);
+}
+
+function ratio(a: string, b: string): number {
+  const [lighter, darker] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+  return ((lighter ?? 0) + 0.05) / ((darker ?? 0) + 0.05);
+}
+
+/**
+ * Nudge a mark colour until it is legible on `background`, blending toward `toward`.
+ *
+ * Themes are designed for a large screen at arm's length, not a 120px key on a desk, and some do
+ * not clear the bar. Omarchy's own `rose-pine` puts a #56949f accent on a #ede7e1 ground: 2.79:1,
+ * under the 3:1 AA floor for a UI mark, so an active key's underline would be near-invisible on it.
+ *
+ * This blends toward the theme's own foreground rather than to black or white, so the result still
+ * belongs to the palette — the colour is still derived from tokens, never picked at a call site.
+ * A theme that already clears the floor is returned untouched, which is almost all of them.
+ */
+export function ensureLegible(color: string, background: string, toward: string, target: number): string {
+  if (ratio(color, background) >= target) return color;
+  for (let step = 1; step <= 20; step++) {
+    const candidate = mix(color, toward, step / 20);
+    if (ratio(candidate, background) >= target) return candidate;
+  }
+  return toward;
+}
+
 export function loadTokens(themeName?: string): Tokens {
   const { name, colors } = readThemeColors(themeName);
-  return toTokens(name, colors);
+  return legible(toTokens(name, colors));
+}
+
+/**
+ * Apply the legibility floor to the colours that are drawn *as marks* — an icon, an underline, a
+ * meter fill. Surface colours are not adjusted: a background is not required to contrast with
+ * itself, and moving one would change the design rather than rescue it.
+ */
+export function legible(tokens: Tokens): Tokens {
+  const floor = (color: string): string => ensureLegible(color, tokens.ground, tokens.ink, 3);
+  return {
+    ...tokens,
+    accent: floor(tokens.accent),
+    positive: floor(tokens.positive),
+    negative: floor(tokens.negative),
+    warning: floor(tokens.warning),
+  };
 }
 
 /** `#rrggbb` to an `[r, g, b]` triple. Returns black for anything unparseable. */

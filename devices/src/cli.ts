@@ -26,6 +26,7 @@ async function openVirtual(model: string) {
 }
 
 import { loadConfig } from "./config.ts";
+import { loadGlyphMetrics } from "./glyphs.ts";
 import { Panel } from "./panel.ts";
 import { clearRasterCache } from "./raster.ts";
 import * as anchor from "./state/anchor.ts";
@@ -100,6 +101,16 @@ async function main(): Promise<void> {
   const device = options.dryRun ? await openVirtual(options.model) : await openStreamDeck(tokens);
   const panel = new Panel(config, tokens);
   const desktop = new DesktopState();
+
+  // Measure the glyphs this config uses before the first paint, so icons are centred from frame one.
+  // Cached on disk per font, so this costs subprocesses once per machine rather than once per run.
+  await loadGlyphMetrics(
+    config.pages.flatMap((page) => [
+      ...page.keys.map((key) => key.icon),
+      ...page.dials.map((dial) => dial.icon),
+      ...page.segments.map((segment) => segment.icon),
+    ]),
+  );
 
   process.stderr.write(
     `anchor-devices: ${device.id} · config ${source} · theme ${tokens.themeName} · ` +
