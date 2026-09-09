@@ -4,9 +4,9 @@
  *
  * Split out of the capture script for two reasons. The obvious one is size — the page is mostly CSS
  * and browser JavaScript, and it had grown larger than the screenshot logic it shared a file with.
- * The useful one is `--page-only`: capture wipes `review/`, needs a Wayland session and Quickshell,
- * and takes about a minute, so changing a colour on the page used to mean re-photographing
- * twenty-three surfaces to see it. The two halves run apart now.
+ * The useful one is `--page-only`: capture needs a Wayland session, Quickshell and about a minute,
+ * so changing a colour on the page used to mean re-photographing every surface to see it. The two
+ * halves run apart now.
  *
  * ## What the page is for
  *
@@ -42,8 +42,19 @@ export interface SurfaceMeta {
   strip?: boolean;
 }
 
-/** One surface, and the file it was photographed into — or why it was not. */
-export type Shot = { surface: SurfaceMeta; file: string | null; reason?: string };
+/**
+ * One surface, and the file it was photographed into — or why it was not.
+ *
+ * `capturedAt` is the shot's mtime in milliseconds. A scoped capture refreshes part of a review and
+ * leaves the rest, so the page has to be able to say which shots did not come from the same run —
+ * an old photograph with nothing to say it is old is the failure this project keeps repeating.
+ */
+export type Shot = {
+  surface: SurfaceMeta;
+  file: string | null;
+  reason?: string;
+  capturedAt?: number;
+};
 
 /**
  * The order the chapters are worth walking, and one line of why each exists.
@@ -113,6 +124,7 @@ export function page(shots: Shot[]): string {
     looking: shot.surface.looking,
     chapter,
     file: shot.file,
+    shotAt: shot.capturedAt ?? 0,
     reason: shot.file === null ? (shot.reason ?? "unknown reason") : "",
   }));
 
@@ -150,6 +162,7 @@ export function page(shots: Shot[]): string {
     <span class="idx">${index.get(surface.id) ?? 0}</span>
     <h2>${esc(surface.title)}</h2>
     <span class="count" data-count-for="${id}"></span>
+    <span class="age" data-age-for="${id}"></span>
   </header>
   <p class="looking">${esc(surface.looking)}</p>
   ${body}
@@ -246,6 +259,17 @@ ${chapter.shots.map(card).join("\n")}
     color: var(--text); border-color: rgb(var(--accent-rgb) / .5); background: rgb(var(--accent-rgb) / .1);
   }
   .chips .hint { color: var(--dim); font-size: 12px; margin-left: auto; }
+  /* A shot left over from an earlier run is a photograph of an older build. Keeping it beats
+     deleting it — an old panel can still be reviewed — but only if the page says so. */
+  /* Stated, not shouted. A scoped capture is the ordinary way to refresh part of a review, so this
+     line is on screen most of the time and an alarm that is always on is not an alarm. */
+  .stale-note {
+    margin: 10px 0 0; font-size: 12.5px; color: var(--muted);
+    border-left: 2px solid rgb(var(--ember-rgb) / .55); padding-left: 10px;
+  }
+  .age { font-size: 11.5px; color: var(--dim); font-variant-numeric: tabular-nums; }
+  .card header .age { margin-left: auto; }
+  .age.old { color: var(--ember); }
 
   /* ── chapters ─────────────────────────────────────────────────────────────────────────────── */
   .chapter {
@@ -478,6 +502,7 @@ ${chapter.shots.map(card).join("\n")}
       <button class="chip" data-filter="noted" aria-pressed="false">With notes</button>
       <span class="hint">click a shot to pin a note · <kbd>W</kbd> starts the walk</span>
     </div>
+    <p class="stale-note" id="stale-note" hidden></p>
   </div>
 </header>
 
@@ -490,6 +515,7 @@ ${body}
     <div class="fx-top">
       <span class="fx-chapter" id="fx-chapter"></span>
       <span class="fx-pos" id="fx-pos"></span>
+      <span class="age" id="fx-age"></span>
       <span class="grow"></span>
       <span class="fx-tools" id="fx-tools">
         <button class="btn" id="fx-zoom-out" title="Zoom out">−</button>
@@ -547,7 +573,9 @@ ${body}
   // is nothing to look at, so it is not a stop on the tour and not a denominator either.
   var WALK = DATA.filter(function (s) { return s.file !== null; });
   var byId = {};
-  WALK.forEach(function (s, i) { s.at = i; byId[s.id] = s; });
+  // Named idx, not at. Every surface already carries shotAt, and two letters between a position in
+  // the walk and a millisecond timestamp is how the second one silently became the first.
+  WALK.forEach(function (s, i) { s.idx = i; byId[s.id] = s; });
 
   var KEY = "anchor-review-v2";
   var OLD = "anchor-review-v1";
@@ -657,6 +685,50 @@ ${body}
     if (document.getElementById("fx-notes").getAttribute("data-for") === id) {
       hint.hidden = items.length > 0;
     }
+  }
+
+  // ── how old a shot is ────────────────────────────────────────────────────────────────────────
+
+  // A capture run takes about a minute, so everything from one lands within minutes of everything
+  // else. An hour is comfortably outside that: a shot older than the newest by more than an hour
+  // came from an earlier run, and saying so is the price of a scoped capture no longer deleting
+  // the shots it was not asked to retake.
+  var RUN_WINDOW = 60 * 60 * 1000;
+  var NEWEST = WALK.reduce(function (max, s) { return s.shotAt > max ? s.shotAt : max; }, 0);
+
+  function ago(ms) {
+    var s = Math.max(0, Math.round(ms / 1000));
+    if (s < 90) return s + "s ago";
+    var m = Math.round(s / 60);
+    if (m < 90) return m + " min ago";
+    var h = Math.round(m / 60);
+    if (h < 36) return h + "h ago";
+    return Math.round(h / 24) + " days ago";
+  }
+
+  function isOld(s) { return s.shotAt > 0 && NEWEST - s.shotAt > RUN_WINDOW; }
+
+  function paintAges() {
+    var now = Date.now();
+    var old = 0;
+    WALK.forEach(function (s) {
+      if (!s.shotAt) return;
+      var stale = isOld(s);
+      if (stale) old++;
+      document.querySelectorAll('[data-age-for="' + s.id + '"]').forEach(function (el) {
+        el.textContent = ago(now - s.shotAt);
+        el.classList.toggle("old", stale);
+        el.title = stale
+          ? "From an earlier capture run than the rest of this page"
+          : "When this shot was taken";
+      });
+    });
+    var note = document.getElementById("stale-note");
+    note.hidden = old === 0;
+    note.textContent =
+      old + (old === 1 ? " shot is" : " shots are") + " from an earlier capture than the newest — " +
+      "the last run did not retake " + (old === 1 ? "it" : "them") + ". Each card says how old it is; " +
+      "node scripts/review.ts with no arguments refreshes everything.";
   }
 
   // ── tallies ──────────────────────────────────────────────────────────────────────────────────
@@ -778,6 +850,7 @@ ${body}
     document.getElementById("fx-tools").hidden = end;
     document.getElementById("fx-chapter").hidden = end;
     document.getElementById("fx-pos").hidden = end;
+    document.getElementById("fx-age").hidden = end;
     if (end) {
       var noted = WALK.filter(function (s) { return statusOf(s.id) === "noted"; }).length;
       document.getElementById("fx-done-line").textContent =
@@ -791,6 +864,10 @@ ${body}
     var s = WALK[i];
     document.getElementById("fx-chapter").textContent = s.chapter;
     document.getElementById("fx-pos").textContent = i + 1 + " / " + WALK.length;
+    var fxAge = document.getElementById("fx-age");
+    fxAge.hidden = s.shotAt === 0;
+    fxAge.textContent = s.shotAt ? ago(Date.now() - s.shotAt) : "";
+    fxAge.classList.toggle("old", isOld(s));
     document.getElementById("fx-title").textContent = s.title;
     document.getElementById("fx-looking").textContent = s.looking;
     document.getElementById("fx-prev").disabled = i === 0;
@@ -851,7 +928,7 @@ ${body}
     if (openTarget) {
       ev.preventDefault();
       var s = byId[openTarget.getAttribute("data-open")];
-      if (s) open(s.at);
+      if (s) open(s.idx);
       return;
     }
     var okTarget = ev.target.closest("[data-ok]");
@@ -1008,6 +1085,7 @@ ${body}
   document.querySelectorAll("[data-ok]").forEach(function (b) {
     b.setAttribute("aria-pressed", state.ok[b.getAttribute("data-ok")] ? "true" : "false");
   });
+  paintAges();
   refresh();
 })();
 </script>
