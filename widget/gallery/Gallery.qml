@@ -90,6 +90,7 @@ ShellRoot {
         // and fills the review page with diffs that are only the clock.
         nowMs: States.NOW
         detailsOpen: (harness.currentCase.view && harness.currentCase.view.detailsOpen) === true
+        breakdown: (harness.currentCase.view && harness.currentCase.view.breakdown) || "type"
         optionalOpen: (harness.currentCase.view && harness.currentCase.view.optionalOpen) === true
         // Nothing to animate towards in a still.
         animate: false
