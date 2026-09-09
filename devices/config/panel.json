@@ -1,5 +1,7 @@
 {
   "brightness": 70,
+  "excludeCollections": ["arttoken"],
+  "orderGalleryByValue": true,
   "pages": [
     {
       "name": "desktop",
@@ -140,7 +142,8 @@
         {
           "index": 4,
           "icon": "\uf200",
-          "source": "portfolio.split"
+          "source": "portfolio.split",
+          "action": "page chains"
         },
         {
           "index": 5,

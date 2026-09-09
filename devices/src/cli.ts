@@ -24,6 +24,24 @@ import { NoDeviceError, open as openStreamDeck } from "./adapters/streamdeck.ts"
  * USB enumerates through the same Espressif JTAG/serial descriptor whatever is running on it, so
  * matching the port name identifies a chip family and not a device.
  */
+/**
+ * Open an ESP32 pulse display over its USB CDC port.
+ *
+ * The adapter and the serial link both existed; nothing connected them, so a working board sat
+ * announcing itself to no one. Over a cable there is no socket to bind and no pairing key to hold,
+ * which is why this path needs neither — the network transport in `esp32.ts` still keeps both.
+ */
+async function openEsp32(tokens: Tokens, path?: string) {
+  const { listPorts, openSerialLink } = await import("./adapters/esp32-serial.ts");
+  const { attach } = await import("./adapters/esp32.ts");
+  const port = path ?? listPorts()[0];
+  if (port === undefined) {
+    process.stderr.write("no serial port found for an ESP32 pulse display\n");
+    process.exit(2);
+  }
+  return await attach(openSerialLink(port), tokens);
+}
+
 async function openCardputer(tokens: Tokens, path?: string) {
   const { open } = await import("./adapters/cardputer.ts");
   return await open(tokens, path, { confirmMs: path === undefined ? 3000 : 0 });
@@ -74,6 +92,8 @@ interface Options {
   model: string;
   cardputer: boolean;
   cardputerPath?: string;
+  esp32: boolean;
+  esp32Path?: string;
 }
 
 function parseArgs(argv: readonly string[]): Options {
@@ -83,6 +103,7 @@ function parseArgs(argv: readonly string[]): Options {
     dryRun: false,
     model: "plus",
     cardputer: false,
+    esp32: false,
   };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -114,9 +135,14 @@ function parseArgs(argv: readonly string[]): Options {
           "  --dry-run           render with no hardware attached; implies --once\n" +
           "  --model <name>      geometry for --dry-run (plus, original, mini, xl)\n" +
           "  --cardputer [port]  drive an M5Stack Cardputer over USB CDC instead of a Stream Deck\n" +
+          "  --esp32 [port]      drive an ESP32 pulse display over USB CDC\n" +
           "  --list              list attached devices and exit\n",
       );
       process.exit(0);
+    } else if (arg === "--esp32") {
+      options.esp32 = true;
+      const next = argv[i + 1];
+      if (next !== undefined && !next.startsWith("--")) options.esp32Path = argv[++i];
     }
   }
   return options;
@@ -157,9 +183,11 @@ async function main(): Promise<void> {
   let tokens = loadTokens(options.theme);
   const device = options.dryRun
     ? await openVirtual(options.model)
-    : options.cardputer
-      ? await openCardputer(tokens, options.cardputerPath)
-      : await openStreamDeck(tokens);
+    : options.esp32
+      ? await openEsp32(tokens, options.esp32Path)
+      : options.cardputer
+        ? await openCardputer(tokens, options.cardputerPath)
+        : await openStreamDeck(tokens);
   const panel = new Panel(config, tokens);
   const desktop = new DesktopState();
 

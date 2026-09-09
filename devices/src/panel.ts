@@ -35,6 +35,14 @@ export interface KeyReading {
   readonly spark?: readonly number[];
   readonly slices?: readonly { readonly value: number; readonly tone?: TokenName }[];
   readonly image?: string;
+  /**
+   * What pressing this key should do, when the key itself is showing something.
+   *
+   * A key whose content rotates cannot have its action written in config: the piece on it changes
+   * every few seconds, and the useful thing to do is open *that* piece. So the source supplies the
+   * action alongside the reading, and config only has to say what the key is for.
+   */
+  readonly action?: string;
 }
 
 /**
@@ -69,6 +77,13 @@ function signTone(value: string | null): TokenName | undefined {
 
 const NOT_LOADED: KeyReading = { value: "—" };
 
+/** Open the wallet's own OpenSea page, when the service knows which wallet that is. */
+function profileAction(service: ServiceStatus): string | undefined {
+  return service.wallet === undefined || service.wallet === ""
+    ? undefined
+    : `omarchy launch browser https://opensea.io/${service.wallet}`;
+}
+
 /**
  * Readings a key can show. The argument after `:` selects a rank, so `token:1` is the largest
  * holding — which keeps three top-token keys from needing three near-identical sources.
@@ -100,20 +115,26 @@ export const KEY_SOURCES: Readonly<Record<string, (state: PanelState, argument: 
     // The chain is only added when the symbol is actually ambiguous, so the common case stays short.
     const ambiguous = holdings.filter((other) => other.symbol === holding.symbol).length > 1;
     const label = ambiguous && holding.chain !== "" ? `${holding.symbol}·${holding.chain}` : holding.symbol;
-    return { value: usd(String(holding.usdValue)), label };
+    return {
+      value: usd(String(holding.usdValue)),
+      label,
+      action: holding.openseaUrl === "" ? undefined : `omarchy launch browser ${holding.openseaUrl}`,
+    };
   },
-  "portfolio.spark": ({ portfolio, timeframe }) => {
+  "portfolio.spark": ({ portfolio, timeframe, service }) => {
     const pnl = portfolio?.stats?.pnlPercentage ?? null;
     return {
+      action: profileAction(service),
       value: usd(portfolio?.stats?.totalUsd ?? null),
       label: (timeframe ?? "DAY").toLowerCase(),
       tone: signTone(pnl),
       spark: portfolio?.history,
     };
   },
-  "portfolio.pnlSpark": ({ portfolio, timeframe }) => {
+  "portfolio.pnlSpark": ({ portfolio, timeframe, service }) => {
     const pnl = portfolio?.stats?.pnlPercentage ?? null;
     return {
+      action: profileAction(service),
       value: percent(pnl),
       label: `P&L ${(timeframe ?? "DAY").toLowerCase()}`,
       tone: signTone(pnl),
@@ -166,6 +187,7 @@ export const KEY_SOURCES: Readonly<Record<string, (state: PanelState, argument: 
     if (piece === undefined) return { ...NOT_LOADED, label: "Gallery" };
     const art = cachedThumbnail(piece.imageUrl);
     return {
+      action: piece.openseaUrl === "" ? undefined : `omarchy launch browser ${piece.openseaUrl}`,
       value: "",
       // No caption once the art is here: a title over a picture is a label on a painting, and the
       // key is 120px. Until the art arrives the name is all there is, so it stands in.
@@ -276,6 +298,14 @@ export class Panel {
   #selected = 0;
   #filter = "";
   #deckBrightness = 70;
+  /**
+   * The action each key would perform, as of the last frame.
+   *
+   * Recorded during `build` because that is where the reading is known, and a press arrives later
+   * with no state attached. Keyed by slot, so the action always matches the thing on the key rather
+   * than whatever the gallery has rotated to since.
+   */
+  readonly #dynamicActions = new Map<string, string>();
 
   constructor(config: PanelConfig, tokens: Tokens) {
     const first = config.pages[0];
@@ -383,6 +413,8 @@ export class Panel {
       if (!slots.has(id)) continue;
       const active = actions.resolveActive(key.state, state.desktop, this.#pageName);
       const reading = key.source === "" ? null : readKeySource(key.source, state);
+      if (reading?.action === undefined) this.#dynamicActions.delete(id);
+      else this.#dynamicActions.set(id, reading.action);
       frame.set(id, {
         kind: "tile",
         icon: key.icon || undefined,
@@ -465,7 +497,10 @@ export class Panel {
           return true;
         }
         const key = page.keys.find((k) => keySlot(k.index) === input.slot);
+        // Config wins; otherwise do whatever the key is currently showing.
+        const dynamic = this.#dynamicActions.get(input.slot);
         if (key && key.action !== "") actions.dispatch(key.action, context);
+        else if (dynamic !== undefined) actions.dispatch(dynamic, context);
         const dial = page.dials.find((d) => dialSlot(d.index) === input.slot);
         if (dial && dial.press !== "") actions.dispatch(dial.press, context);
         return true;

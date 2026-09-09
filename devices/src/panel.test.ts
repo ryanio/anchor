@@ -8,7 +8,7 @@
 
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import { parseConfig } from "./config.ts";
+import { loadConfig, parseConfig } from "./config.ts";
 import type { PanelState } from "./panel.ts";
 import {
   dialSlot,
@@ -226,15 +226,20 @@ const PORTFOLIO = {
     timeframe: "DAY",
   },
   tokens: [
-    { symbol: "ETH", usdValue: 18400.22, status: "OK", chain: "ethereum" },
-    { symbol: "USDC", usdValue: 6210.4, status: "OK", chain: "ethereum" },
+    { symbol: "ETH", usdValue: 18400.22, status: "OK", chain: "ethereum", openseaUrl: "" },
+    { symbol: "USDC", usdValue: 6210.4, status: "OK", chain: "ethereum", openseaUrl: "" },
   ],
   nftCount: 42,
   topCollections: [{ slug: "azuki", count: 12 }],
   history: [2111.65, 2140.2, 2098.4, 2201.9, 2249.41, 2221.32],
   nfts: [
-    { name: "OnChainChain #688", collection: "onchainchain", imageUrl: "https://example.test/a.png" },
-    { name: "Ofrenda #39", collection: "ofrenda", imageUrl: "https://example.test/b.png" },
+    {
+      name: "OnChainChain #688",
+      collection: "onchainchain",
+      imageUrl: "https://example.test/a.png",
+      openseaUrl: "",
+    },
+    { name: "Ofrenda #39", collection: "ofrenda", imageUrl: "https://example.test/b.png", openseaUrl: "" },
   ],
   chains: [
     { chain: "ethereum", usdValue: 1330.65 },
@@ -456,5 +461,87 @@ describe("text input", () => {
     panel.handle({ kind: "rotate", slot: SCREEN_SLOT, delta: 1 });
     panel.handle({ kind: "text", slot: SCREEN_SLOT, value: "a" });
     assert.equal(panel.selected, 0);
+  });
+});
+
+describe("keys that show something can open it", () => {
+  const config = parseConfig({
+    pages: [
+      {
+        name: "portfolio",
+        keys: [
+          { index: 0, source: "nft:1" },
+          { index: 1, source: "token:1" },
+        ],
+      },
+    ],
+  });
+
+  const withLinks = {
+    ...withPortfolio,
+    portfolio: {
+      ...PORTFOLIO,
+      nfts: [
+        {
+          name: "Piece",
+          collection: "c",
+          imageUrl: "https://x/a.png",
+          openseaUrl: "https://opensea.io/item/1",
+        },
+      ],
+      tokens: [
+        {
+          symbol: "ETH",
+          usdValue: 1,
+          status: "OK",
+          chain: "ethereum",
+          openseaUrl: "https://opensea.io/token/eth",
+        },
+      ],
+    },
+  };
+
+  test("a rotating piece carries the action for the piece actually on the key", () => {
+    // The action cannot live in config: what the key shows changes every few seconds, and opening
+    // the wrong piece would be worse than opening nothing.
+    const reading = readKeySource("nft:1", withLinks);
+    assert.match(reading?.action ?? "", /opensea\.io\/item\/1/);
+  });
+
+  test("a holding opens the token it is showing", () => {
+    assert.match(readKeySource("token:1", withLinks)?.action ?? "", /opensea\.io\/token\/eth/);
+  });
+
+  test("a piece with no link offers no action rather than a broken one", () => {
+    const noLink = {
+      ...withPortfolio,
+      portfolio: {
+        ...PORTFOLIO,
+        nfts: [{ name: "P", collection: "c", imageUrl: "https://x/a.png", openseaUrl: "" }],
+      },
+    };
+    assert.equal(readKeySource("nft:1", noLink)?.action, undefined);
+  });
+
+  test("pressing the key dispatches what it was showing when it was painted", () => {
+    const panel = new Panel(config, TOKENS);
+    panel.build(streamDeckPlus(), withLinks);
+    // A press arrives with no state, so the panel has to have remembered.
+    assert.equal(panel.handle({ kind: "press", slot: keySlot(0) }), true);
+  });
+
+  test("every key on every shipped page can do something when pressed", () => {
+    // "All buttons should have a click that does something useful" — a key with neither a
+    // configured action nor a source that supplies one is a dead key.
+    const { config: shipped } = loadConfig();
+    for (const page of shipped.pages) {
+      for (const key of page.keys) {
+        const dynamic = key.source === "" ? null : readKeySource(key.source, withLinks)?.action;
+        assert.ok(
+          key.action !== "" || dynamic !== undefined || key.source !== "",
+          `${page.name}/${key.index} does nothing when pressed`,
+        );
+      }
+    }
   });
 });

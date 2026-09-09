@@ -55,6 +55,16 @@ export interface PageConfig {
 
 export interface PanelConfig {
   readonly brightness: number;
+  /**
+   * Collection slugs to keep out of the gallery, matched as case-insensitive prefixes.
+   *
+   * A prefix rather than an exact slug because collections arrive in variants — `arttoken-1155`,
+   * `arttoken-for-katerina` — and listing each one as it shows up is a chore the owner should not
+   * have to keep up with.
+   */
+  readonly excludeCollections: readonly string[];
+  /** Order the gallery by collection floor, so valuable pieces come round more often. */
+  readonly orderGalleryByValue: boolean;
   readonly pages: readonly PageConfig[];
 }
 
@@ -173,7 +183,21 @@ export function parseConfig(raw: unknown): PanelConfig {
     return { name, keys, dials, segments };
   });
 
-  return { brightness, pages };
+  const excludeRaw = root.excludeCollections;
+  if (excludeRaw !== undefined && !Array.isArray(excludeRaw)) {
+    throw new ConfigError("excludeCollections must be an array of collection slug prefixes");
+  }
+  const orderRaw = root.orderGalleryByValue;
+  if (orderRaw !== undefined && typeof orderRaw !== "boolean") {
+    throw new ConfigError("orderGalleryByValue must be true or false");
+  }
+
+  return {
+    brightness,
+    excludeCollections: (excludeRaw ?? []).map((entry: unknown) => String(entry)),
+    orderGalleryByValue: orderRaw ?? false,
+    pages,
+  };
 }
 
 export function userConfigPath(): string {

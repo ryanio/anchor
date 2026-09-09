@@ -21,6 +21,8 @@ export interface Envelope {
 
 export interface ServiceStatus {
   readonly reachable: boolean;
+  /** The first configured wallet, so a key can open its OpenSea profile. */
+  readonly wallet?: string;
   /** Set when the service answered but the request itself failed, e.g. no wallet configured. */
   readonly detail: string;
   /** A wallet is configured. Without one the wallet routes answer 428, measured below. */
@@ -81,6 +83,7 @@ export async function status(timeoutMs = 1500): Promise<ServiceStatus> {
   const hasWallet = typeof health.wallet === "string" && health.wallet !== "";
   return {
     reachable: true,
+    wallet: typeof health.wallet === "string" ? health.wallet : (health.wallets ?? [])[0],
     detail: hasWallet ? "" : "no wallet",
     hasWallet,
     primaryChain: typeof health.primaryChain === "string" ? health.primaryChain : "",
@@ -140,6 +143,7 @@ export interface TokenHolding {
   readonly symbol: string;
   readonly usdValue: number;
   readonly status: string;
+  readonly openseaUrl: string;
   /** The chain it is held on. A symbol alone is ambiguous once more than one chain is configured. */
   readonly chain: string;
 }
@@ -149,6 +153,8 @@ export interface OwnedNft {
   readonly name: string;
   readonly collection: string;
   readonly imageUrl: string;
+  /** Where the piece lives on OpenSea, so a key press can open the thing it is showing. */
+  readonly openseaUrl: string;
 }
 
 /** One chain's share of the portfolio, from token balances. */
@@ -214,7 +220,13 @@ function field(raw: Record<string, unknown>, ...names: readonly string[]): unkno
 
 export function readStats(data: unknown): PortfolioStats | null {
   if (typeof data !== "object" || data === null) return null;
-  const raw = data as Record<string, unknown>;
+  const outer = data as Record<string, unknown>;
+  // The service aggregates every configured wallet now, so the figures moved under `stats` with a
+  // per-wallet breakdown beside them. Both shapes are read: one wallet's response is still flat,
+  // and a reader that only understood the new shape would break the moment it talked to an older
+  // service — which is the failure that put em dashes on the panel in the first place.
+  const nested = outer.stats;
+  const raw = (typeof nested === "object" && nested !== null ? nested : outer) as Record<string, unknown>;
   const total = str(field(raw, "total_value_usd", "totalValueUsd"));
   if (total === null) return null;
   return {
@@ -236,9 +248,11 @@ export function readStats(data: unknown): PortfolioStats | null {
  */
 export function readTokens(data: unknown): TokenHolding[] {
   if (typeof data !== "object" || data === null) return [];
-  const list = field(data as Record<string, unknown>, "token_balances", "tokenBalances");
+  // `balances` is what the aggregating service wraps them in; the other two are what a single
+  // wallet's response uses, in the spec's spelling and the API's.
+  const list = field(data as Record<string, unknown>, "balances", "tokenBalances", "token_balances");
   if (!Array.isArray(list)) return [];
-  return list
+  const holdings = list
     .flatMap((entry): TokenHolding[] => {
       if (typeof entry !== "object" || entry === null) return [];
       const raw = entry as Record<string, unknown>;
@@ -256,10 +270,23 @@ export function readTokens(data: unknown): TokenHolding[] {
           usdValue: Number.isFinite(usdValue) ? usdValue : 0,
           status,
           chain: str(field(raw, "chain")) ?? "",
+          openseaUrl: str(field(raw, "opensea_url", "openseaUrl")) ?? "",
         },
       ];
     })
     .sort((a, b) => b.usdValue - a.usdValue);
+
+  // One asset, once. The service fans out across every configured wallet, so a token held in nine
+  // wallets arrives as nine rows — and two keys reading "WETH·ethereum $1,002" and
+  // "WETH·ethereum $518" describe one position badly. A portfolio total sums what you hold; the
+  // per-wallet split is a different question, and the service still answers it separately.
+  const merged = new Map<string, TokenHolding>();
+  for (const holding of holdings) {
+    const key = `${holding.symbol}|${holding.chain}`;
+    const seen = merged.get(key);
+    merged.set(key, seen === undefined ? holding : { ...seen, usdValue: seen.usdValue + holding.usdValue });
+  }
+  return [...merged.values()].sort((a, b) => b.usdValue - a.usdValue);
 }
 
 /**
@@ -314,7 +341,7 @@ export function readHistory(data: unknown): number[] {
  */
 export function readChains(data: unknown): ChainTotal[] {
   if (typeof data !== "object" || data === null) return [];
-  const list = field(data as Record<string, unknown>, "token_balances", "tokenBalances");
+  const list = field(data as Record<string, unknown>, "balances", "tokenBalances", "token_balances");
   if (!Array.isArray(list)) return [];
   const totals = new Map<string, number>();
   for (const entry of list) {
@@ -337,7 +364,23 @@ export function readChains(data: unknown): ChainTotal[] {
  * `displayImageUrl` is preferred over `imageUrl` — it is the rendered preview, where `imageUrl` can
  * be the original asset. Pieces with no media at all are dropped rather than shown as blank keys.
  */
-export function readNfts(data: unknown): OwnedNft[] {
+/**
+ * Whether a collection is excluded from the gallery.
+ *
+ * Prefix match, case-insensitive, so `arttoken` covers `arttoken-1155` and `arttoken-for-katerina`
+ * without listing every variant as it appears. A wallet accumulates things its owner did not choose
+ * — airdrops, test mints, one collection minted in fifty variants — and a gallery that shows them
+ * is showing someone else's decisions.
+ */
+export function isExcluded(collection: string, exclude: readonly string[]): boolean {
+  const slug = collection.toLowerCase();
+  return exclude.some((pattern) => {
+    const p = pattern.trim().toLowerCase();
+    return p !== "" && slug.startsWith(p);
+  });
+}
+
+export function readNfts(data: unknown, exclude: readonly string[] = []): OwnedNft[] {
   if (typeof data !== "object" || data === null) return [];
   const list = field(data as Record<string, unknown>, "nfts");
   if (!Array.isArray(list)) return [];
@@ -347,14 +390,52 @@ export function readNfts(data: unknown): OwnedNft[] {
     const imageUrl =
       str(field(raw, "display_image_url", "displayImageUrl")) ?? str(field(raw, "image_url", "imageUrl"));
     if (imageUrl === null) return [];
+    const collection = str(field(raw, "collection")) ?? "";
+    if (isExcluded(collection, exclude)) return [];
     return [
       {
         name: str(field(raw, "name")) ?? "",
-        collection: str(field(raw, "collection")) ?? "",
+        collection,
         imageUrl,
+        openseaUrl: str(field(raw, "opensea_url", "openseaUrl")) ?? "",
       },
     ];
   });
+}
+
+/**
+ * Order a gallery by what each piece is worth, most valuable first.
+ *
+ * The spec's `Nft` carries no price, so worth has to come from somewhere: the collection floor, out
+ * of `/collections/{slug}/stats`. That is one request per distinct collection — seventeen here, not
+ * fifty — and the service caches them, so it is paid once per TTL rather than once per paint.
+ *
+ * A floor is not what a particular piece is worth, and a rare one in a cheap collection will sort
+ * too low. It is the only price the API offers for something held rather than listed, and ordering
+ * by it beats ordering by whatever sequence the API happened to return. Collections whose floor
+ * cannot be read keep their place rather than sinking, so a failed lookup hides nothing.
+ */
+export async function orderByValue(nfts: readonly OwnedNft[], timeoutMs = 8000): Promise<OwnedNft[]> {
+  const slugs = [...new Set(nfts.map((piece) => piece.collection).filter((slug) => slug !== ""))];
+  const floors = new Map<string, number>();
+
+  await Promise.all(
+    slugs.map(async (slug) => {
+      const result = await get(`/collections/${encodeURIComponent(slug)}/stats`, timeoutMs);
+      if (result === null || result.status !== 200 || !isEnvelope(result.body)) return;
+      const data = result.body.data;
+      if (typeof data !== "object" || data === null) return;
+      const total = (data as Record<string, unknown>).total;
+      if (typeof total !== "object" || total === null) return;
+      const raw = total as Record<string, unknown>;
+      const floor = raw.floorPrice ?? raw.floor_price;
+      const value = typeof floor === "number" ? floor : Number.parseFloat(String(floor ?? ""));
+      if (Number.isFinite(value)) floors.set(slug, value);
+    }),
+  );
+
+  if (floors.size === 0) return [...nfts];
+  return [...nfts].sort((a, b) => (floors.get(b.collection) ?? -1) - (floors.get(a.collection) ?? -1));
 }
 
 function metaOf(body: unknown): { ageSeconds: number | null; stale: boolean } {
@@ -365,10 +446,34 @@ function metaOf(body: unknown): { ageSeconds: number | null; stale: boolean } {
 /**
  * Fetch everything the portfolio page shows, in one pass.
  *
+ * The timeout is generous on purpose. The service fans each request out across every configured
+ * wallet and chain — nine wallets over twenty-nine chains here — and an uncached first call takes
+ * far longer than a UI request has any right to. Four seconds used to be the budget, and the panel
+ * spent every cold start showing em dashes, then silently came right if anything else happened to
+ * warm the cache. Nothing is blocked by this wait: it runs on the poller, and the panel keeps
+ * painting the last good reading while it is in flight.
+ *
  * A 428 means no wallet is configured, which is an ordinary state rather than a failure — the panel
  * says so instead of showing zeros. Zeros would be a reading; "no wallet" is the truth.
  */
-export async function portfolio(timeframe: Timeframe, timeoutMs = 4000): Promise<PortfolioSnapshot> {
+export interface PortfolioOptions {
+  /** Collection slug prefixes to keep out of the gallery. */
+  readonly excludeCollections?: readonly string[];
+  /** Order the gallery by collection floor, most valuable first. */
+  readonly orderByValue?: boolean;
+}
+
+/** Read the gallery, minus what the user excluded, ordered as they asked. */
+async function galleryFor(data: unknown, options: PortfolioOptions): Promise<OwnedNft[]> {
+  const pieces = readNfts(data, options.excludeCollections ?? []);
+  return options.orderByValue === true ? await orderByValue(pieces) : pieces;
+}
+
+export async function portfolio(
+  timeframe: Timeframe,
+  timeoutMs = 25_000,
+  options: PortfolioOptions = {},
+): Promise<PortfolioSnapshot> {
   const [value, balances, nfts, history] = await Promise.all([
     get(`/portfolio/value?timeframe=${timeframe}`, timeoutMs),
     get("/balances?limit=100", timeoutMs),
@@ -391,7 +496,7 @@ export async function portfolio(timeframe: Timeframe, timeoutMs = 4000): Promise
     tokens: balanceData === null ? [] : readTokens(balanceData),
     history: history?.status === 200 && isEnvelope(history.body) ? readHistory(history.body.data) : [],
     chains: balanceData === null ? [] : readChains(balanceData),
-    nfts: nftData === null ? [] : readNfts(nftData),
+    nfts: nftData === null ? [] : await galleryFor(nftData, options),
     nftCount: collections.reduce((sum, entry) => sum + entry.count, 0) || null,
     topCollections: collections,
     ageSeconds,

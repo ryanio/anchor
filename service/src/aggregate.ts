@@ -128,6 +128,7 @@ export function pickDecimal(source: unknown, keys: readonly string[]): string | 
 const TOTAL_KEYS = ["totalValueUsd", "total_value_usd", "netWorthUsd", "net_worth_usd", "value"];
 const NFT_KEYS = ["nftValueUsd", "nft_value_usd"];
 const TOKEN_KEYS = ["tokenValueUsd", "token_value_usd"];
+const PNL_ABS_KEYS = ["pnlAbsolute", "pnl_absolute"];
 
 /** Where a portfolio response keeps its figures, whichever shape it arrived in. */
 function stats(value: unknown): unknown {
@@ -141,6 +142,8 @@ export interface CombinedPortfolio {
     readonly totalValueUsd: string | null;
     readonly nftValueUsd: string | null;
     readonly tokenValueUsd: string | null;
+    readonly pnlAbsolute: string | null;
+    readonly pnlPercentage: string | null;
   };
   /** Per wallet, in configured order — the drill-down, and the audit trail for the total. */
   readonly wallets: readonly {
@@ -161,6 +164,24 @@ export interface CombinedPortfolio {
  * a weighted average of six P&L percentages is a number nobody asked for and everybody would read
  * as "my portfolio moved this much", which it is not.
  */
+/**
+ * A portfolio's percentage move, from the absolute move and the value it ended at.
+ *
+ * `start = end - change`, so the percentage is `change / start`. Returns null rather than a
+ * fabricated zero when either input is missing or the start would be zero — a portfolio that began
+ * at nothing has no percentage, and inventing one would be a number nobody could check.
+ */
+export function percentageOf(change: string | null, end: string | null): string | null {
+  if (change === null || end === null) return null;
+  const moved = Number.parseFloat(change);
+  const finished = Number.parseFloat(end);
+  if (!Number.isFinite(moved) || !Number.isFinite(finished)) return null;
+  const started = finished - moved;
+  if (started === 0) return null;
+  const pct = (moved / started) * 100;
+  return `${pct >= 0 ? "+" : ""}${pct.toFixed(2)}`;
+}
+
 export function combinePortfolio(fanned: Fanned<unknown>): CombinedPortfolio {
   const rows = fanned.ok.map(({ wallet, value }) => {
     const source = stats(value);
@@ -169,14 +190,23 @@ export function combinePortfolio(fanned: Fanned<unknown>): CombinedPortfolio {
       totalValueUsd: pickDecimal(source, TOTAL_KEYS),
       nftValueUsd: pickDecimal(source, NFT_KEYS),
       tokenValueUsd: pickDecimal(source, TOKEN_KEYS),
+      pnlAbsolute: pickDecimal(source, PNL_ABS_KEYS),
     };
   });
 
+  const totalValueUsd = sumDecimals(rows.map((r) => r.totalValueUsd));
+  const pnlAbsolute = sumDecimals(rows.map((r) => r.pnlAbsolute));
+
   return {
     stats: {
-      totalValueUsd: sumDecimals(rows.map((r) => r.totalValueUsd)),
+      totalValueUsd,
       nftValueUsd: sumDecimals(rows.map((r) => r.nftValueUsd)),
       tokenValueUsd: sumDecimals(rows.map((r) => r.tokenValueUsd)),
+      // Absolute P&L is a sum of dollars, so it adds. A percentage does not: averaging nine
+      // wallets' percentages would weight a $12 wallet the same as a $2,000 one. The portfolio
+      // figure is derived from the two sums instead — the move, over what it moved from.
+      pnlAbsolute,
+      pnlPercentage: percentageOf(pnlAbsolute, totalValueUsd),
     },
     wallets: rows,
     incomplete: fanned.incomplete,

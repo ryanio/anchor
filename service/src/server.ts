@@ -89,7 +89,10 @@ function send(res: ServerResponse, status: number, body: unknown, headOnly = fal
 }
 
 /** Where each response keeps its list, whichever shape it arrived in. */
-const BALANCE_KEYS = ["balances", "tokens", "items", "results"];
+// `tokenBalances` first, because that is what the API actually sends. The spec declares
+// `token_balances`; neither spelling was in this list, so the fan-out found no list at all and
+// every wallet contributed nothing — the holdings simply vanished. Same trap as docs/upstream.md.
+const BALANCE_KEYS = ["tokenBalances", "token_balances", "balances", "tokens", "items", "results"];
 const EVENT_KEYS = ["assetEvents", "asset_events", "events", "items"];
 
 function envelope<T>(entry: CacheEntry<T>) {
