@@ -54,6 +54,15 @@ export function fit(text: string, fontSize: number, maxWidth: number): string {
  * fixed size either wastes the tile or overflows it. Shrinking beats truncating here: the last
  * digits of a number are not optional the way the tail of a window title is.
  */
+/** A stable id for an inline definition. Not a hash for security — only for uniqueness in one file. */
+function hashString(value: string): number {
+  let hash = 0;
+  for (let index = 0; index < value.length; index += 97) {
+    hash = (hash * 31 + value.charCodeAt(index)) | 0;
+  }
+  return hash;
+}
+
 export function autoSize(text: string, maxWidth: number, maxSize: number, minSize: number): number {
   for (let size = maxSize; size > minSize; size--) {
     if (advance(text, size) <= maxWidth) return size;
@@ -151,6 +160,7 @@ function renderTile(surface: Extract<Surface, { kind: "tile" }>, tokens: Tokens,
   // A hairline edge gives the tile a defined boundary against the gap, which is what stops a dark
   // key reading as a hole. Active keys take the accent for it, so the state is legible from the
   // shape of the key and not only from its fill.
+  const hasImage = typeof surface.image === "string" && surface.image !== "";
   const edge = active ? tone : tokens.line;
   const parts: string[] = [
     `<rect width="${w}" height="${h}" fill="${tokens.sunken}"/>`,
@@ -178,6 +188,23 @@ function renderTile(surface: Extract<Surface, { kind: "tile" }>, tokens: Tokens,
       ),
     );
   }
+  if (hasImage) {
+    // Clipped to the tile's own radius so the art sits in the key rather than on it, with a scrim
+    // so a label stays readable over a bright piece.
+    const id = `art${Math.abs(hashString(surface.image ?? ""))}`;
+    parts.push(
+      `<defs><clipPath id="${id}"><rect x="3.5" y="3.5" width="${w - 7}" height="${h - 7}" rx="14"/></clipPath>` +
+        `<linearGradient id="${id}s" x1="0" y1="0" x2="0" y2="1">` +
+        `<stop offset="0.45" stop-color="${tokens.sunken}" stop-opacity="0"/>` +
+        `<stop offset="1" stop-color="${tokens.sunken}" stop-opacity="0.92"/></linearGradient></defs>`,
+    );
+    parts.push(
+      `<g clip-path="url(#${id})"><image href="${surface.image}" x="3.5" y="3.5" width="${w - 7}" ` +
+        `height="${h - 7}" preserveAspectRatio="xMidYMid slice"/>` +
+        `<rect x="3.5" y="3.5" width="${w - 7}" height="${h - 7}" fill="url(#${id}s)"/></g>`,
+    );
+  }
+
   if (hasSlices) {
     // The donut takes the middle; a value, if any, sits inside it.
     parts.push(donut(surface.slices ?? [], tokens, w / 2, h * 0.44, h * 0.24, Math.round(h * 0.1)));
@@ -205,7 +232,7 @@ function renderTile(surface: Extract<Surface, { kind: "tile" }>, tokens: Tokens,
         // at 2.0-3.4:1 against the tile — under the 4.5:1 AA floor `scripts/check-contrast.ts`
         // holds the rest of the project to, and unreadable in practice. `ink` is 6.3:1 or better
         // everywhere, and hierarchy still comes from weight and the icon above it.
-        active ? tokens.inkStrong : tokens.ink,
+        active || hasImage ? tokens.inkStrong : tokens.ink,
         fit(surface.label, size, w - 16),
         active,
       ),
@@ -243,10 +270,15 @@ function renderBar(surface: Extract<Surface, { kind: "bar" }>, tokens: Tokens, s
   const { width: w, height: h } = slot;
   const iconSize = Math.round(h * 0.3);
   const textSize = Math.round(h * 0.22);
-  const parts: string[] = [
-    `<rect width="${w}" height="${h}" fill="${tokens.ground}"/>`,
-    `<rect width="${w}" height="2" fill="${tokens.accent}"/>`,
-  ];
+  const parts: string[] = [`<rect width="${w}" height="${h}" fill="${tokens.ground}"/>`];
+
+  // Behind the text, at low opacity: present when you look for it, invisible when you are reading.
+  if (Array.isArray(surface.background) && surface.background.length > 1) {
+    parts.push(
+      `<g opacity="0.34">${sparkline(surface.background, 0, h * 0.22, w, h * 0.72, tokens.accent)}</g>`,
+    );
+  }
+  parts.push(`<rect width="${w}" height="2" fill="${tokens.accent}"/>`);
 
   // A segment needs room to say something. Ellipsising "Catppuccin" down to "Catp…" spends the
   // pixels and communicates nothing, so a segment that cannot fit a legible minimum is dropped

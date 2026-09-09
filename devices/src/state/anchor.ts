@@ -144,6 +144,13 @@ export interface TokenHolding {
   readonly chain: string;
 }
 
+/** An owned piece, enough to draw it and name it. */
+export interface OwnedNft {
+  readonly name: string;
+  readonly collection: string;
+  readonly imageUrl: string;
+}
+
 /** One chain's share of the portfolio, from token balances. */
 export interface ChainTotal {
   readonly chain: string;
@@ -160,6 +167,8 @@ export interface PortfolioSnapshot {
   readonly history: readonly number[];
   /** Chains holding value, largest first. */
   readonly chains: readonly ChainTotal[];
+  /** Owned pieces that have artwork to show. */
+  readonly nfts: readonly OwnedNft[];
   readonly ageSeconds: number | null;
   readonly stale: boolean;
   readonly detail: string;
@@ -172,6 +181,7 @@ export const EMPTY_PORTFOLIO: PortfolioSnapshot = {
   topCollections: [],
   history: [],
   chains: [],
+  nfts: [],
   ageSeconds: null,
   stale: false,
   detail: "not loaded",
@@ -321,6 +331,32 @@ export function readChains(data: unknown): ChainTotal[] {
     .sort((a, b) => b.usdValue - a.usdValue);
 }
 
+/**
+ * Owned pieces with artwork.
+ *
+ * `displayImageUrl` is preferred over `imageUrl` — it is the rendered preview, where `imageUrl` can
+ * be the original asset. Pieces with no media at all are dropped rather than shown as blank keys.
+ */
+export function readNfts(data: unknown): OwnedNft[] {
+  if (typeof data !== "object" || data === null) return [];
+  const list = field(data as Record<string, unknown>, "nfts");
+  if (!Array.isArray(list)) return [];
+  return list.flatMap((entry): OwnedNft[] => {
+    if (typeof entry !== "object" || entry === null) return [];
+    const raw = entry as Record<string, unknown>;
+    const imageUrl =
+      str(field(raw, "display_image_url", "displayImageUrl")) ?? str(field(raw, "image_url", "imageUrl"));
+    if (imageUrl === null) return [];
+    return [
+      {
+        name: str(field(raw, "name")) ?? "",
+        collection: str(field(raw, "collection")) ?? "",
+        imageUrl,
+      },
+    ];
+  });
+}
+
 function metaOf(body: unknown): { ageSeconds: number | null; stale: boolean } {
   if (!isEnvelope(body)) return { ageSeconds: null, stale: false };
   return { ageSeconds: body.meta.ageSeconds, stale: body.meta.stale };
@@ -346,7 +382,8 @@ export async function portfolio(timeframe: Timeframe, timeoutMs = 4000): Promise
 
   const envelope = isEnvelope(value.body) ? value.body : null;
   const { ageSeconds, stale } = metaOf(value.body);
-  const collections = nfts?.status === 200 && isEnvelope(nfts.body) ? readCollections(nfts.body.data) : [];
+  const nftData = nfts?.status === 200 && isEnvelope(nfts.body) ? nfts.body.data : null;
+  const collections = nftData === null ? [] : readCollections(nftData);
 
   const balanceData = balances?.status === 200 && isEnvelope(balances.body) ? balances.body.data : null;
   return {
@@ -354,6 +391,7 @@ export async function portfolio(timeframe: Timeframe, timeoutMs = 4000): Promise
     tokens: balanceData === null ? [] : readTokens(balanceData),
     history: history?.status === 200 && isEnvelope(history.body) ? readHistory(history.body.data) : [],
     chains: balanceData === null ? [] : readChains(balanceData),
+    nfts: nftData === null ? [] : readNfts(nftData),
     nftCount: collections.reduce((sum, entry) => sum + entry.count, 0) || null,
     topCollections: collections,
     ageSeconds,

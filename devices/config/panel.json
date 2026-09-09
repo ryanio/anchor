@@ -127,35 +127,34 @@
         },
         {
           "index": 1,
+          "source": "portfolio.pnlSpark"
+        },
+        {
+          "index": 2,
           "icon": "\uf200",
           "source": "portfolio.split"
         },
         {
-          "index": 2,
-          "source": "portfolio.pnlSpark"
-        },
-        {
           "index": 3,
-          "icon": "\uf0c1",
-          "source": "portfolio.chains"
+          "source": "nft:1"
         },
         {
           "index": 4,
-          "source": "token:1"
+          "source": "nft:2"
         },
         {
           "index": 5,
-          "source": "token:2"
+          "source": "token:1"
         },
         {
           "index": 6,
-          "source": "token:3"
+          "source": "token:2"
         },
         {
           "index": 7,
-          "icon": "\uf0c1",
-          "label": "Chains",
-          "action": "page chains"
+          "icon": "\uf108",
+          "label": "Desktop",
+          "action": "page desktop"
         }
       ],
       "dials": [
@@ -225,13 +224,15 @@
         },
         {
           "index": 6,
-          "source": "chain:7"
+          "icon": "\uf03e",
+          "label": "Gallery",
+          "action": "page gallery"
         },
         {
           "index": 7,
-          "icon": "\uf13d",
-          "label": "Money",
-          "action": "page portfolio"
+          "icon": "\uf108",
+          "label": "Desktop",
+          "action": "page desktop"
         }
       ],
       "dials": [
@@ -269,52 +270,43 @@
       ]
     },
     {
-      "name": "anchor",
+      "name": "gallery",
       "keys": [
         {
           "index": 0,
-          "label": "Money",
-          "icon": "\uf108",
-          "action": "page portfolio"
+          "source": "nft:3"
         },
         {
           "index": 1,
-          "label": "OpenSea",
-          "icon": "\uf268",
-          "action": "omarchy launch webapp https://opensea.io"
+          "source": "nft:4"
         },
         {
           "index": 2,
-          "icon": "\uf0f3",
-          "source": "portfolio.nftCount",
-          "label": "Held"
+          "source": "nft:5"
         },
         {
           "index": 3,
-          "icon": "\uf247",
-          "source": "collection:1"
+          "source": "nft:6"
         },
         {
           "index": 4,
-          "icon": "\uf247",
-          "source": "collection:2"
+          "source": "nft:7"
         },
         {
           "index": 5,
-          "icon": "\uf0e7",
-          "source": "portfolio.pnlAbsolute"
+          "source": "nft:8"
         },
         {
           "index": 6,
-          "icon": "\uf013",
-          "label": "Config",
-          "action": "exec xdg-open /home/rg/.config/anchor/config.json"
+          "icon": "\uf0c1",
+          "label": "Chains",
+          "action": "page chains"
         },
         {
           "index": 7,
-          "label": "Lock",
-          "icon": "\uf023",
-          "action": "omarchy system lock"
+          "icon": "\uf108",
+          "label": "Desktop",
+          "action": "page desktop"
         }
       ],
       "dials": [
@@ -328,13 +320,14 @@
       ],
       "segments": [
         {
-          "source": "anchor.service",
+          "source": "anchor.total",
           "icon": "\uf13d",
           "tone": "accent"
         },
         {
-          "source": "clock",
-          "icon": "\uf017"
+          "source": "anchor.age",
+          "icon": "\uf021",
+          "tone": "inkDim"
         },
         {
           "source": "theme",

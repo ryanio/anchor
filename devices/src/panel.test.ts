@@ -232,6 +232,10 @@ const PORTFOLIO = {
   nftCount: 42,
   topCollections: [{ slug: "azuki", count: 12 }],
   history: [2111.65, 2140.2, 2098.4, 2201.9, 2249.41, 2221.32],
+  nfts: [
+    { name: "OnChainChain #688", collection: "onchainchain", imageUrl: "https://example.test/a.png" },
+    { name: "Ofrenda #39", collection: "ofrenda", imageUrl: "https://example.test/b.png" },
+  ],
   chains: [
     { chain: "ethereum", usdValue: 1330.65 },
     { chain: "blast", usdValue: 129.35 },

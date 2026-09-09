@@ -141,8 +141,25 @@ export type Surface =
       readonly spark?: readonly number[];
       /** Proportions drawn as a donut. Values are relative; the renderer normalises them. */
       readonly slices?: readonly { readonly value: number; readonly tone?: TokenName }[];
+      /**
+       * Artwork, as a data URI, drawn full-bleed with the label over a scrim.
+       *
+       * A ticker tells you what you hold. A picture tells you what you own, which is what an NFT
+       * actually is — so the piece itself gets the key.
+       */
+      readonly image?: string;
     }
-  | { readonly kind: "bar"; readonly segments: readonly BarSegment[] }
+  | {
+      readonly kind: "bar";
+      readonly segments: readonly BarSegment[];
+      /**
+       * A series drawn faintly across the full width, behind the text.
+       *
+       * The strip is 800x100 and the readings use a third of it. The rest was background; a
+       * net-worth line across it costs no space and turns dead pixels into the shape of the day.
+       */
+      readonly background?: readonly number[];
+    }
   /**
    * Rows on a screen.
    *

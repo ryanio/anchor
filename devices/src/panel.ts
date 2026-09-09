@@ -9,6 +9,7 @@
 
 import * as actions from "./actions.ts";
 import type { PageConfig, PanelConfig } from "./config.ts";
+import { cachedThumbnail } from "./images.ts";
 import type { ServiceStatus } from "./state/anchor.ts";
 import { describeAge, type PortfolioSnapshot, TIMEFRAMES, type Timeframe } from "./state/anchor.ts";
 import type { DesktopSnapshot } from "./state/desktop.ts";
@@ -22,6 +23,8 @@ export interface PanelState {
   readonly themeName?: string;
   readonly portfolio?: PortfolioSnapshot;
   readonly timeframe?: Timeframe;
+  /** Advances on a slow beat so galleries rotate. Set by the runner, not by a clock in here. */
+  readonly rotation?: number;
 }
 
 /** What a data-backed key shows: a reading, an optional caption, and a tone. */
@@ -31,6 +34,7 @@ export interface KeyReading {
   readonly tone?: TokenName;
   readonly spark?: readonly number[];
   readonly slices?: readonly { readonly value: number; readonly tone?: TokenName }[];
+  readonly image?: string;
 }
 
 /**
@@ -145,6 +149,25 @@ export const KEY_SOURCES: Readonly<Record<string, (state: PanelState, argument: 
           tone: "inkDim" as TokenName,
         },
       ],
+    };
+  },
+  /**
+   * An owned piece, rotating.
+   *
+   * `nft:2` is offset by one from `nft:1`, so a row of these shows different pieces rather than the
+   * same one repeated. The artwork appears when the fetcher has it; until then the key carries the
+   * name, which is still more use than a blank.
+   */
+  nft: ({ portfolio, rotation }, argument) => {
+    const offset = Math.max(1, Number.parseInt(argument || "1", 10)) - 1;
+    const pieces = portfolio?.nfts ?? [];
+    if (pieces.length === 0) return { ...NOT_LOADED, label: "Gallery" };
+    const piece = pieces[((rotation ?? 0) + offset) % pieces.length];
+    if (piece === undefined) return { ...NOT_LOADED, label: "Gallery" };
+    return {
+      value: "",
+      label: piece.name || piece.collection || "Untitled",
+      image: cachedThumbnail(piece.imageUrl) ?? undefined,
     };
   },
   chain: ({ portfolio }, argument) => {
@@ -366,6 +389,7 @@ export class Panel {
         value: reading?.value,
         spark: reading?.spark,
         slices: reading?.slices,
+        image: reading?.image,
         emphasis: this.#pressed.has(id) ? "raised" : active ? "active" : "ground",
         tone: reading?.tone ?? key.tone,
       });
@@ -407,7 +431,12 @@ export class Panel {
         tone: segment.tone,
         minChars: SEGMENT_MIN_CHARS[segment.source],
       }));
-      frame.set(STRIP_SLOT, { kind: "bar", segments });
+      frame.set(STRIP_SLOT, {
+        kind: "bar",
+        segments,
+        // Only where it means something: the desktop strip has no portfolio behind it.
+        background: state.portfolio?.history,
+      });
     }
 
     return frame;
