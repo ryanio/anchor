@@ -13,7 +13,7 @@ describe("looksLikeCredential", () => {
   it("rejects a shell command that arrived instead of a secret", () => {
     assert.equal(looksLikeCredential("node ~/Projects/anchor/service/src/index.ts --set-pat"), false);
     assert.equal(
-      looksLikeCredential("node /home/rg/Projects/anchor/service/src/index.ts --set-api-key"),
+      looksLikeCredential("node /home/you/Projects/anchor/service/src/index.ts --set-api-key"),
       false,
     );
   });

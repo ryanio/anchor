@@ -17,7 +17,7 @@ when stdin is not a TTY so that `echo key | …` works in CI. Run through a wrap
 stdin, that fallback consumed the command's own text. The keyring held, byte for byte:
 
 ```
-node /home/rg/Projects/anchor/service/src/index.ts --set-api-key
+node ~/Projects/anchor/service/src/index.ts --set-api-key
 ```
 
 Sixty-four characters is a plausible length for an API key.

@@ -90,6 +90,32 @@ omarchy pkg install anchor
 Omarchy ships its own pacman repository (`[omarchy]` → `pkgs.omarchy.org`), so the packaging target is
 a standard `PKGBUILD`. See `packaging/`.
 
+## Configuring
+
+**Nothing you configure lives in this checkout.** Every file below is written outside the repository,
+on first run where it makes sense, so setting Anchor up never produces a diff and updating never
+overwrites your setup.
+
+| What | Where | Written by |
+|---|---|---|
+| Wallets, chains, watched collections, TTLs, port | `~/.config/anchor/config.json` | the service, on first run |
+| Credentials | your OS keyring, via `--set-api-key` / `--set-pat` | never a file |
+| Bar widget — which figures show, refresh interval | `~/.config/omarchy/shell.json` | Omarchy, or the panel's own controls |
+| Stream Deck / device panels | `~/.config/anchor/devices.json` | you, falling back to the packaged default |
+| Cache and last-known reading | `$XDG_DATA_HOME/anchor`, `$XDG_STATE_HOME/anchor` | the service and the widget |
+
+The one file in the repository that looks like configuration is
+[`devices/config/panel.json`](devices/config/panel.json), and it is the *packaged default* — copy it
+to `~/.config/anchor/devices.json` and edit that instead. Anchor reads yours first and only falls
+back to the packaged one.
+
+A wallet is not typed in most setups: a wallet PAT's token carries the addresses it is linked to, and
+the service resolves every one of them. `wallets` in the config file is for overriding that, not for
+getting started.
+
+**No secret is ever written to a file by Anchor**, including a config file, a log, or a cache. If you
+find one, that is a bug worth reporting rather than working around.
+
 ## Contributing
 
 Early and opinionated, but genuinely open. Read `docs/security.md` before proposing anything that
