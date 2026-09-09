@@ -139,7 +139,7 @@ Run the gates: `npm run typecheck` and `npm test` in `devices/`, `npm run lint` 
 |---|---|
 | Elgato Stream Deck + | Working. Measured on firmware 2.0.3.5: 8 keys at 120x120, an 800x100 LCD segment, 4 encoders with no display. Input and output verified on hardware. |
 | Other Stream Deck models | Should work — capabilities are read from the device, not hard-coded — but untested. |
-| ESP32 pulse display | Designed, not built. See `devices-esp32.md`. |
+| ESP32 pulse display | **Running on hardware.** Flashed to a bare ESP32-S3 N16R8 devkit (16MB flash, 8MB PSRAM); the board announces itself over USB CDC and answers frames. Measured end to end: a full frame is 23,219 bytes in 60 messages and lands in ~105ms; an unchanged frame costs zero bytes. **No display is attached** — the I2C scan finds nothing and the only output is the RGB LED on GPIO48, so what is verified is the link and the decoder, not a picture. The decoder is C99, compiled and run against the real host encoder on every `npm test`. See `devices-esp32.md` and `devices/firmware/esp32/README.md`. |
 | M5Stack Cardputer | Both ends written, neither run on hardware. The adapter is here; the device end is an app in **flint** (`ryanio/cardputer`), Ryan's Cardputer ADV firmware, built and photographed in its simulator. See `devices-cardputer.md`. |
 
 The Anchor page currently shows service reachability and whether a wallet is configured. It does not

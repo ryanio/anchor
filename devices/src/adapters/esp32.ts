@@ -61,13 +61,14 @@ export class PairingError extends Error {}
 /**
  * The one slot an ESP32 pulse display has.
  *
- * It belongs next to `keySlot`, `dialSlot` and `STRIP_SLOT` in `panel.ts`, where the ids live so
- * that panel and adapter cannot drift apart. It is here only because `panel.ts` does not yet
- * compose a `screen` slot at all — see the note in `docs/devices-esp32.md` under "What this needs
- * from the shared contract". Move it, do not copy it.
+ * The id lives in `panel.ts`, next to `keySlot`, `dialSlot` and `STRIP_SLOT`, and is imported here
+ * rather than declared. That was not always true: this adapter defined it, and `Panel.build()` had
+ * no branch for `kind: "screen"` at all, so a device whose only slot was a screen received an empty
+ * frame. Both are fixed — the panel composes a screen slot as a `list`, and the constant moved
+ * rather than being copied, because a slot id defined in two places gets spelled two ways.
+ *
+ * Re-exported so this adapter's own tests and callers keep their import.
  */
-// Re-exported so this adapter's own tests and callers keep their import, but the id itself now
-// lives in `panel.ts`: two adapters needed it, and a slot id defined twice gets spelled two ways.
 import { SCREEN_SLOT } from "../panel.ts";
 
 export { SCREEN_SLOT };
@@ -195,6 +196,7 @@ export class Esp32PulseDevice implements AnchorDevice {
   #seq = 0;
   #buffer: Buffer = Buffer.alloc(0);
   #inputHandler: ((input: DeviceInput) => void) | null = null;
+  #pongHandler: ((seq: number) => void) | null = null;
   #keepalive: NodeJS.Timeout | null = null;
   #closed = false;
 
@@ -305,8 +307,53 @@ export class Esp32PulseDevice implements AnchorDevice {
     await this.#link.send(encodeBlank(this.#next()));
   }
 
+  /**
+   * The shared contract's lock hook, which the Stream Deck adapter also implements.
+   *
+   * `blank()` is the primitive and stays public because the wire has a message for exactly it; this
+   * is the name `AnchorDevice` uses, so whatever subscribes to logind's `LockedHint` can treat every
+   * device the same way instead of knowing which ones have a bespoke method.
+   *
+   * Unblanking repaints rather than restoring: the frame was dropped when the panel went dark, so
+   * the next `paint` diffs against nothing and sends the whole thing. Restoring brightness over a
+   * framebuffer the device no longer has would light up a stale portfolio, which is the exact
+   * reading `docs/security.md` says must not appear.
+   */
+  async setBlanked(blanked: boolean): Promise<void> {
+    if (blanked) {
+      await this.blank();
+      return;
+    }
+    this.#frame = null;
+    await this.setBrightness(this.#options.brightness);
+  }
+
   onInput(handler: (input: DeviceInput) => void): void {
     this.#inputHandler = handler;
+  }
+
+  /**
+   * Send a PING and return its sequence number.
+   *
+   * The keepalive already does this on a timer and throws the answer away, which is right for
+   * liveness. This exists because a PONG is the only acknowledgement in the protocol that a device
+   * has *finished* with everything sent before it: the stream is ordered, so a reply to a ping
+   * issued after a COMMIT cannot arrive until that frame has been decoded and presented.
+   *
+   * That makes a ping the instrument for the one number the whole design rests on — what a frame
+   * actually costs end to end. `docs/devices-esp32.md` says outright that if a full frame on real
+   * hardware costs more than a few hundred milliseconds, shipping pixels was the wrong call. There
+   * was no way to measure it from the host before this.
+   */
+  async ping(): Promise<number> {
+    const seq = this.#next();
+    await this.#link.send(encodePing(seq));
+    return seq;
+  }
+
+  /** Called with the sequence number of each PONG. Replaces the previous handler. */
+  onPong(handler: (seq: number) => void): void {
+    this.#pongHandler = handler;
   }
 
   #ingest(chunk: Buffer): void {
@@ -324,6 +371,7 @@ export class Esp32PulseDevice implements AnchorDevice {
     this.#buffer = decoded.rest;
     for (const parsed of decoded.messages) {
       if (parsed.type === MessageType.Input) this.#inputHandler?.(parsed.input);
+      else if (parsed.type === MessageType.Pong) this.#pongHandler?.(parsed.seq);
     }
   }
 

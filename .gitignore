@@ -37,6 +37,9 @@ packaging/pkg/
 .idea/
 .vscode/
 
+# firmware build output — PlatformIO; arduino-cli builds into ~/.cache/arduino
+.pio/
+
 # site build output
 site/dist/
 

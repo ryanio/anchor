@@ -25,6 +25,7 @@ import {
 } from "./esp32.ts";
 import {
   decodeMessages,
+  encodeHeader,
   encodeHello,
   encodeInput,
   HEADER_BYTES,
@@ -275,6 +276,54 @@ describe("paint", { skip: noRasteriser }, () => {
     link.sent.length = 0;
     await device.paint(frameFor(tile("ready")));
     assert.equal(paintedPixels(sent(link).tiles), PANEL_PIXELS);
+    await device.close();
+  });
+
+  test("setBlanked is the contract's name for it, and unblanking repaints rather than restoring", async () => {
+    // `AnchorDevice.setBlanked` is what a lock-signal subscriber calls, so an adapter that only had
+    // `blank()` would be skipped by it silently — the display stays lit and nothing reports a fault.
+    const { link, device } = await connect();
+    await device.paint(frameFor(tile("ready")));
+    link.sent.length = 0;
+
+    await device.setBlanked(true);
+    assert.deepEqual(sent(link).types, [MessageType.Blank]);
+    link.sent.length = 0;
+
+    // Coming back must not just turn the backlight up: the device dropped the frame when it went
+    // dark, so brightness alone would light a panel holding nothing, or worse, something stale.
+    await device.setBlanked(false);
+    assert.deepEqual(sent(link).types, [MessageType.Brightness]);
+    link.sent.length = 0;
+
+    await device.paint(frameFor(tile("ready")));
+    assert.equal(paintedPixels(sent(link).tiles), PANEL_PIXELS);
+    await device.close();
+  });
+});
+
+describe("liveness", () => {
+  test("a pong is matched to the ping that asked for it", async () => {
+    // The stream is ordered, so a pong answering a ping sent after a commit cannot arrive until the
+    // device has finished with that frame. That is the only acknowledgement the protocol has, and
+    // it is the instrument `tools/measure.ts` uses to time a real frame on real hardware.
+    const { link, device } = await connect();
+    const seq = await device.ping();
+    assert.deepEqual(sent(link).types, [MessageType.Ping]);
+
+    const seen: number[] = [];
+    device.onPong((answered) => seen.push(answered));
+    link.receive(encodeHeader(MessageType.Pong, seq, 0));
+    assert.deepEqual(seen, [seq]);
+    await device.close();
+  });
+
+  test("a device may not answer with anything but a pong", async () => {
+    // The mirror of the firmware's own refusal. A device that replies to a ping with a tile is
+    // trying to paint the host's idea of the panel, and the link goes down rather than parsing it.
+    const { link, device } = await connect();
+    link.receive(encodeHeader(MessageType.Tile, 1, 0));
+    assert.equal(link.closed, true);
     await device.close();
   });
 });
