@@ -209,6 +209,38 @@ wide, so centring on the advance box puts an icon visibly right of centre. `src/
 each glyph through the same rasteriser and caches the result per font under
 `$XDG_CACHE_HOME/anchor/`.
 
+**Nothing in `svg.ts` may hard-code a size.** Every radius, inset, gap and font size is a fraction
+of the slot it is drawn in, with a floor: `MIN_LEGIBLE_PX`, and a mark that would fall under it is
+*not drawn* rather than drawn as four pixels of texture. This is not a style preference — the family
+runs from a 120×120 Stream Deck key to an 80×35 Cardputer tile and an 18px status bar, a factor of
+seven, and the first version of every one of these numbers was tuned on the largest of them. The
+result on the smallest was pill-shaped keys, 4px captions, a sparkline running out through a rounded
+corner and a status bar nobody could read. All of it was invisible in the source.
+
+## Reviewing every device, without owning one
+
+```bash
+node ../scripts/review.ts devices      # render every device × every state, ~0.6s
+node ../scripts/review.ts devices -w   # and again on every save
+```
+
+One command, one page — the same `review/index.html` the widget and the bar use, with the same
+pins, notes, chapters and walkthrough. A device frame is not a screenshot, but it *is* a PNG of a
+surface with a title and a question attached, which is all that page ever needed; so there is one
+review tool rather than two. The device half lives in [`src/review.ts`](src/review.ts): the device
+profiles, the state fixtures, and a renderer that goes through `Panel` → `composeSvg` → ImageMagick,
+which is the same path the hardware is painted through rather than a re-drawing of it.
+
+**A state nobody can look at is a state nobody has designed.** Add a state to `state/anchor.ts` or a
+source to `panel.ts` and add a case to `CASES` in the same change; `src/review.test.ts` fails when a
+`detail` the client can produce has no card, and when a case names a device, a page or a state that
+does not exist — because the failure mode of a review page is that it quietly gets smaller and still
+looks finished.
+
+Themes are read from disk by name (`src/themes.ts`), never through `omarchy theme dir`, which falls
+back to Tokyo Night for a name it cannot resolve. A card captioned `catppuccin-latte` showing Tokyo
+Night is the same class of lie as a plausible number, and harder to notice because it looks fine.
+
 ## Development
 
 ```bash

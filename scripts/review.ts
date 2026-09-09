@@ -4,16 +4,34 @@
  *
  *   node scripts/review.ts              capture everything available
  *   node scripts/review.ts widget site  capture only those groups
+ *   node scripts/review.ts devices      just the hardware, rendered — no session needed
+ *   node scripts/review.ts devices -w   re-render on every save, and rebuild the page
  *   node scripts/review.ts --list       show what would be captured
  *   node scripts/review.ts --page-only  rebuild the page over the shots already on disk
+ *
+ * ## One page, three ways of making a picture
+ *
+ * A surface here is anything worth looking at, and how its PNG comes to exist is the surface's own
+ * business: the bar is photographed off a live Wayland session with `grim`, the panel states come
+ * out of a Quickshell harness, and the devices are *rendered* by `devices/src/review.ts` through the
+ * same SVG and the same rasteriser the hardware is painted with. What they share is everything after
+ * that — the chapters, the pins, the notes, the walkthrough, the staleness marking and this command.
+ *
+ * That split is deliberate. There was no way to add hardware to this without either duplicating the
+ * page (three review tools, three note formats, three things to keep in sync) or pretending a device
+ * frame is a screenshot. It is not a screenshot, but it *is* a PNG of a surface with a title and a
+ * question attached, and that is the only thing the page ever needed.
  *
  * Output lands in `review/` (gitignored): the PNGs, plus `review/index.html`, which walks a person
  * through every state in chapters and lets them click anywhere on a shot to drop a numbered pin and
  * write what should change. Notes live in `localStorage`, so closing the tab does not lose them, and
  * "Copy notes" puts the whole review on the clipboard as markdown to paste back to an agent. The
  * page itself is built by `review-page.ts`, and `--page-only` rebuilds it without photographing
- * anything — capture wipes `review/` and needs a live session, which is a lot to spend on a change
- * to a stylesheet.
+ * anything — a capture needs a live session, which is a lot to spend on a change to a stylesheet.
+ *
+ * `-w` re-renders on every save, through node's own `--watch` so the process restarts and cannot
+ * serve a module it loaded before your edit. The device group takes under a second, which is the
+ * difference between looking at a change and reasoning about one.
  *
  * ## Why this exists
  *
@@ -31,15 +49,16 @@
  * `omarchy-shell` to open the widget panel. Each surface is skipped with a reason rather than
  * failing the run, so this still does something useful over SSH or in CI.
  */
-import { execFile, execFileSync } from "node:child_process";
+import { execFile, execFileSync, spawn } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { deviceCases, renderCases } from "../devices/src/review.ts";
 import { capturePanelStates, panelCases } from "./panel-states.ts";
-import { page, type SurfaceMeta } from "./review-page.ts";
-import { fileFor, shotsFor } from "./review-shots.ts";
+import { page } from "./review-page.ts";
+import { clearFor, clearKey, fileFor, type Placed, shotsFor } from "./review-shots.ts";
 
 const run = promisify(execFile);
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -47,9 +66,7 @@ const OUT = join(ROOT, "review");
 const SRC = join(ROOT, "widget");
 
 /** A surface worth looking at. `capture` writes the PNG, or throws with a reason to skip it. */
-interface Surface extends SurfaceMeta {
-  /** Where the shot lands under `review/`, when it is not `<id>.png`. */
-  fileName?: string;
+interface Surface extends Placed {
   capture: (file: string) => Promise<void>;
 }
 
@@ -306,6 +323,35 @@ function ensurePanelStates(): Promise<void> {
   return panelStates.then(() => undefined);
 }
 
+/**
+ * Render every device frame, once per run.
+ *
+ * Same shape as the panel harness above and for the same reason: thirty-odd cards come out of one
+ * pass — one config read, one set of glyph measurements, one gallery seeded — and thirty surfaces
+ * each starting that from scratch would spend the saving that makes this loop fast.
+ *
+ * Unlike the panel harness this needs no session, no compositor and no hardware, so it is the one
+ * group that always works. A case that fails to rasterise fails alone and says so.
+ */
+let deviceStates: Promise<Map<string, string>> | null = null;
+function renderDeviceStates(): Promise<Map<string, string>> {
+  deviceStates ??= renderCases(deviceCases(), OUT).then(
+    (results) => new Map(results.filter((r) => !r.ok).map((r) => [r.id, r.reason ?? "render failed"])),
+  );
+  return deviceStates;
+}
+
+async function ensureDeviceState(id: string): Promise<void> {
+  const failures = await renderDeviceStates();
+  const reason = failures.get(id);
+  if (reason !== undefined) throw new Error(reason);
+}
+
+/** Forget the last render, so a watch run does the work again rather than serving its own cache. */
+function forgetDeviceStates(): void {
+  deviceStates = null;
+}
+
 // ── the surfaces ────────────────────────────────────────────────────────────────────────────────
 
 const SURFACES: Surface[] = [
@@ -341,7 +387,24 @@ const SURFACES: Surface[] = [
       fileName: state.file,
       category: state.category,
       strip: state.strip,
+      batch: "panel",
       capture: ensurePanelStates,
+    }),
+  ),
+  ...deviceCases().map(
+    (state): Surface => ({
+      id: state.id,
+      group: "devices",
+      title: state.title,
+      looking: state.looking,
+      fileName: state.file,
+      category: state.category,
+      // A device frame is 840px wide at its largest and 280px at its smallest. Both want the row:
+      // the big one because a column would scale it down past the point of judging a 1px edge, the
+      // small one because it is shown at its own size either way.
+      wide: true,
+      batch: "devices",
+      capture: () => ensureDeviceState(state.spec.id),
     }),
   ),
 ];
@@ -388,7 +451,7 @@ if (args.includes("--list")) {
   process.exit(0);
 }
 
-const groups = args.filter((a) => !a.startsWith("--"));
+const groups = args.filter((a) => !a.startsWith("-"));
 const wanted = SURFACES.filter(
   (s) => groups.length === 0 || groups.includes(s.group) || groups.includes(s.id),
 );
@@ -407,43 +470,85 @@ const mtimeOf = (file: string): number | null => {
 };
 
 const pageOnly = args.includes("--page-only");
-const failures = new Map<string, string>();
-let taken = 0;
+const watching = args.includes("--watch") || args.includes("-w");
 
-if (pageOnly) {
-  if (!existsSync(OUT)) {
-    console.error("Nothing in review/ to build a page over. Run a capture first.");
-    process.exit(1);
-  }
-} else {
-  if (wanted.some((s) => s.group === "widget")) warnIfWidgetIsStale();
-  mkdirSync(OUT, { recursive: true });
+/** Capture (or render) the wanted surfaces, then rebuild the page over everything on disk. */
+async function runOnce(): Promise<void> {
+  const failures = new Map<string, string>();
+  let taken = 0;
 
-  for (const surface of wanted) {
-    const name = fileFor(surface);
-    // Delete the shot immediately before replacing it, so a capture that fails halfway leaves no
+  if (pageOnly) {
+    if (!existsSync(OUT)) {
+      console.error("Nothing in review/ to build a page over. Run a capture first.");
+      process.exit(1);
+    }
+  } else {
+    if (wanted.some((s) => s.group === "widget")) warnIfWidgetIsStale();
+    mkdirSync(OUT, { recursive: true });
+    forgetDeviceStates();
+
+    // Delete a shot immediately before it is replaced, so a capture that fails halfway leaves no
     // photograph behind pretending to be the new one. Only the shots being retaken go: this used to
     // empty the whole directory, and `review.ts widget` threw away twenty-four panels it had not
-    // been asked to take.
-    rmSync(join(OUT, name), { force: true });
-    try {
-      await surface.capture(join(OUT, name));
-      if (!existsSync(join(OUT, name))) throw new Error("the tool reported success but wrote no file");
-      taken++;
-      console.log(`  captured  ${surface.id}`);
-    } catch (err) {
-      const reason = err instanceof Error ? err.message.split("\n")[0]! : String(err);
-      failures.set(surface.id, reason);
-      console.log(`  skipped   ${surface.id} — ${reason}`);
+    // been asked to take. A batch is cleared once, in full — see `clearFor`.
+    const cleared = new Set<string>();
+
+    for (const surface of wanted) {
+      const name = fileFor(surface);
+      const key = clearKey(surface);
+      if (!cleared.has(key)) {
+        cleared.add(key);
+        for (const file of clearFor(surface, wanted)) rmSync(join(OUT, file), { force: true });
+      }
+      try {
+        await surface.capture(join(OUT, name));
+        if (!existsSync(join(OUT, name))) throw new Error("the tool reported success but wrote no file");
+        taken++;
+        console.log(`  captured  ${surface.id}`);
+      } catch (err) {
+        const reason = err instanceof Error ? (err.message.split("\n")[0] ?? "failed") : String(err);
+        failures.set(surface.id, reason);
+        console.log(`  skipped   ${surface.id} — ${reason}`);
+      }
     }
   }
+
+  // Over everything on disk, not over the surfaces this run wanted. A scoped run is a way to refresh
+  // part of a review, not a way to start a new one.
+  const results = shotsFor(SURFACES, mtimeOf, failures);
+
+  writeFileSync(join(OUT, "index.html"), page(results));
+  const shown = results.filter((r) => r.file !== null).length;
+  const took = pageOnly ? "" : `${taken} captured, `;
+  console.log(`\n${took}${shown} of ${results.length} on the page. Open: file://${join(OUT, "index.html")}`);
 }
 
-// Over everything on disk, not over the surfaces this run wanted. A scoped run is a way to refresh
-// part of a review, not a way to start a new one.
-const results = shotsFor(SURFACES, mtimeOf, failures);
-
-writeFileSync(join(OUT, "index.html"), page(results));
-const shown = results.filter((r) => r.file !== null).length;
-const took = pageOnly ? "" : `${taken} captured, `;
-console.log(`\n${took}${shown} of ${results.length} on the page. Open: file://${join(OUT, "index.html")}`);
+/**
+ * Re-render on every save.
+ *
+ * Delegated to node's own `--watch`, which restarts the whole process. That is not laziness, it is
+ * the only correct way to do it: an in-process watcher re-runs with the modules it imported when it
+ * started, so editing `svg.ts` would produce a fresh-looking render of the build you have just moved
+ * away from — the exact "you are reviewing the wrong build" failure this file already warns about
+ * for the widget, arriving through a different door. A restart cannot serve a stale module.
+ *
+ * The point of it is the device group, where a render is under a second and the alternative is a
+ * command between every edit. The page is rewritten each pass, so a browser on `review/index.html`
+ * only needs a refresh; it is deliberately not reloaded for you, because a page that moves under the
+ * pointer mid-note loses the note, and the notes are the whole product.
+ */
+if (watching) {
+  const rest = args.filter((arg) => arg !== "--watch" && arg !== "-w");
+  console.log("watching for changes — ctrl-c to stop\n");
+  const child = spawn(process.execPath, ["--watch", fileURLToPath(import.meta.url), ...rest], {
+    stdio: "inherit",
+  });
+  child.on("exit", (code) => process.exit(code ?? 0));
+} else {
+  const started = Date.now();
+  await runOnce();
+  if (wanted.every((s) => s.group === "devices")) {
+    console.log(`  rendered in ${((Date.now() - started) / 1000).toFixed(1)}s — add -w to keep going`);
+  }
+  process.exit(0);
+}

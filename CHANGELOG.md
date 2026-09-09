@@ -14,6 +14,16 @@ becomes `## [0.1.0] - YYYY-MM-DD` at the moment the tag is pushed, and not befor
 
 ### Added
 
+**Every device, in every state, on the review page.** `node scripts/review.ts devices` renders
+thirty-three frames — Stream Deck +, XL and Mini, two ESP32 panels and a Cardputer, across the
+states the panel is actually in: service down, service refusing, no wallet configured, still
+loading, a reading absent while everything else arrived, stale data, an empty gallery, labels that
+must truncate, a light theme, `white`, `vantablack`, and a device blanked by the lock. It needs no
+hardware, no compositor and no service, takes under a second, and `-w` re-renders on every save.
+There is one review tool rather than two: the frames land on the same `review/index.html` the widget
+and the bar use, with the same pins, notes, chapters and walkthrough. `devices/src/review.test.ts`
+fails when a failure `state/anchor.ts` can produce has no card, so the page cannot quietly shrink.
+
 **Devices** — Anchor on physical hardware, starting with the Elgato Stream Deck. Opt-in: the
 workspace keeps its own dependency, so a machine with no device attached installs nothing.
 
@@ -409,6 +419,36 @@ assuming it, so a machine without one shows the command exactly as before.
   gap, and what to delete when each is fixed.
 
 ### Changed
+- **Every size a device surface draws now follows the slot it is drawn in.** The radius, insets,
+  gaps, meter, sparkline and font sizes in `devices/src/svg.ts` were tuned on a 120×120 Stream Deck
+  key and inherited unchanged by an 80×35 Cardputer tile and an 18px status bar. What that produced,
+  found by rendering it: keys shaped like lozenges, 4px captions, a sparkline running out through a
+  rounded corner, and a status bar nobody could read. Marks now scale, a mark under the legibility
+  floor is dropped rather than drawn as texture, and no two marks are placed in the same band — a
+  reading is never dropped for a caption. The 120px face is unchanged, and a test holds it there.
+- **An artwork key keeps its outline.** The tile's edge was drawn before the image and painted out
+  by it, so a gallery key was the one key on the deck with no boundary — a dark piece on a dark
+  theme dissolved into the gap. Everything inside a key is now clipped to the key, and the edge is
+  drawn last.
+- **A gallery row on a screen device says which piece it is.** `KEY_SOURCES.nft` blanked the piece's
+  name once its artwork arrived, to keep a caption off a 120px key. A device with one screen instead
+  of eight keys draws the same page as a list, where that left rows reading "Key 2". Suppressing the
+  caption is the renderer's decision now, which is also where `types.ts` rule 1 says it belongs.
+- **A truncated label keeps both ends.** `token:N` appends the chain to a ticker precisely when the
+  ticker alone is ambiguous, and cutting from the tail removed the disambiguation and nothing else:
+  two keys holding wstETH on two chains both read `WSTETH·arbit…`.
+- **A device preview is laid out the way the device is.** `composeSvg` takes the adapter's own slot
+  geometry for a device that owns one framebuffer, so the Cardputer's status bar is at the top where
+  the firmware puts it rather than at the bottom with imaginary plastic between the tiles. A device
+  with no keys no longer loses a gap off its top margin, and a blanked device renders at the same
+  size as a lit one so the two can be compared.
+- **"not loaded" on the strip is now "loading…".** It is what a person sees for the first seconds
+  after a cold start, beside four em dashes, where a fact about our variable reads as a failure.
+- **A batch of shots is cleared once per run.** `review.ts` removes each shot immediately before
+  retaking it, which is right for a photograph and wrong for a group rendered in one pass: the
+  second member deleted its own freshly-written PNG and waited on a promise that had already
+  resolved. Thirty-two of thirty-three frames came back as "the tool reported success but wrote no
+  file", on a page that still looked finished. `scripts/review-shots.test.ts` covers it.
 - **`@opensea/sdk` 12.1.1 and `@opensea/api-types` 0.9.2.** Three findings Anchor reported upstream
   are fixed in this release. Path parameters are encoded by the SDK, so Anchor stopped encoding them
   — doing both double-encodes, which its own traversal test caught. `segment()` remains, and still

@@ -325,10 +325,18 @@ something is broken — several times it turned out to be deliberate.
 
 ```bash
 node scripts/review.ts             # capture every surface
-node scripts/review.ts widget      # or one group: widget, panel
+node scripts/review.ts widget      # or one group: widget, panel, devices
+node scripts/review.ts devices -w  # render the hardware, and again on every save
 node scripts/review.ts --page-only # rebuild the page over the shots already on disk
 node scripts/panel-states.ts       # just the panel gallery
 ```
+
+**The hardware is on the same page, and needs no hardware.** `devices/src/review.ts` renders every
+device — Stream Deck +, XL and Mini, two ESP32 panels, a Cardputer — in every state the panel can be
+in, through the same `Panel`, the same SVG and the same rasteriser the real device is painted
+through. It takes under a second, so it is a loop you use while editing rather than a command you
+run once. Adding a device or a state touches that one file; `devices/src/review.test.ts` fails if a
+failure `state/anchor.ts` can produce has no card on the page.
 
 **The panel has fifteen states and a live machine is in one of them.** Its error and warning screens
 went unreviewed for exactly that reason — there was no way to see them without arranging for the

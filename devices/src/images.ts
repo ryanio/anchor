@@ -170,6 +170,26 @@ export function artCacheSize(): number {
 }
 
 /**
+ * Put local bytes into the cache as if `url` had been fetched, and return the data URI.
+ *
+ * The review renderer's way in. A gallery key is the one tile whose layout is entirely different
+ * when it has art — clipped to the key's radius, a scrim under the caption, the caption dropped
+ * once the picture arrives — so a review that could only ever show the no-art fallback would leave
+ * that whole face unlooked at, which is the failure this project keeps having.
+ *
+ * It fetches nothing: no URL is opened, no protocol check applies because no request is made, and
+ * nothing reaches the disk cache. The bytes still go through `square`, so what a fixture puts on a
+ * key is produced by the same rasteriser and the same crop as a real piece.
+ */
+export async function seedThumbnail(url: string, bytes: Buffer, size = 120): Promise<string | null> {
+  const jpeg = await square(bytes, size);
+  if (jpeg === null) return null;
+  const uri = toDataUri(jpeg);
+  memory.set(`${size}|${url}`, uri);
+  return uri;
+}
+
+/**
  * The cached thumbnail for `url`, or null.
  *
  * Synchronous on purpose: rendering must never await. A piece appears on the key the first repaint

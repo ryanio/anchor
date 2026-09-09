@@ -189,9 +189,11 @@ export const KEY_SOURCES: Readonly<Record<string, (state: PanelState, argument: 
     return {
       action: piece.openseaUrl === "" ? undefined : `omarchy launch browser ${piece.openseaUrl}`,
       value: "",
-      // No caption once the art is here: a title over a picture is a label on a painting, and the
-      // key is 120px. Until the art arrives the name is all there is, so it stands in.
-      label: art === null ? piece.name || piece.collection || "Untitled" : "",
+      // The piece is named whether or not its picture has arrived. Suppressing the caption over
+      // artwork is `renderTile`'s job, because it is a decision about a 120px key and `types.ts`
+      // rule 1 says nothing outside a renderer knows a pixel size. Blanking it here also broke the
+      // devices that have no keys: the same page drawn as a list read "Key 2" where the gallery is.
+      label: piece.name || piece.collection || "Untitled",
       image: art ?? undefined,
     };
   },
