@@ -182,6 +182,13 @@ refuses to be constructed on a provider that cannot honour a key, because discov
 holding an approved action is discovering it too late. The policy half stays ours: the thing that
 signs and the thing that decides what may be signed are not the same dependency.
 
+**`@opensea/sdk` 12.5.0, `@opensea/api-types` 0.10.0, `@opensea/wallet-adapters` 1.2.0.** Two
+things Anchor had asked for shipped, and both replaced code here. `extractLinkedWallets` is now the
+source of the wallet set, so the service no longer reads the `linked_wallets` claim itself — order
+and the chain filter stay ours, because `wallets[0]` is the primary and the SDK leaves address
+validation to the server. `fetchImpl` on `PrivyConfig` means the executor's tests inject a stub
+instead of replacing `globalThis.fetch`, which is one fewer global for a test to leak.
+
 **Both marketplaces.** OpenSea is NFTs *and* fungible tokens, and Anchor treats them as different
 products rather than one with a quantity field. The token half covers portfolio value, balances,
 trending and top tokens, individual tokens and price history.

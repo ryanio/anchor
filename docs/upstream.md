@@ -9,7 +9,7 @@ file, a workaround quietly becomes architecture: nobody remembers it was tempora
 fix lands with no one noticing it made our code redundant — or worse, actively wrong.
 
 Findings were reported upstream on **2026-09-07**, and this file was last checked against
-`@opensea/sdk@12.4.1` and `@opensea/api-types@0.9.3`. Re-check this file whenever either package is bumped;
+`@opensea/sdk@12.5.0`, `@opensea/api-types@0.10.0` and `@opensea/wallet-adapters@1.2.0`. Re-check this file whenever either package is bumped;
 `scripts/check-versions.ts` does not check it, because "is this still needed" is a judgement call.
 
 ---
@@ -150,8 +150,9 @@ affected** — `tokenBalances` already sent `cursor`, and `GetEventsArgs.next` i
 rather than the deprecated one. Checked rather than assumed, because the two names sit next to each
 other and only one of them is a no-op.
 
-**Still missing.** `sort_by`, `sort_direction` and `disable_spam_filtering` on the token listings.
-`/tokens` still cannot sort.
+**Still missing, and narrower than it was.** 12.5.0 added `sortBy` and `disableSpamFiltering` to
+several arg types, but not to `GetTokensArgs`, which still carries only `limit`, `cursor`, `next` and
+`chains`. `/tokens` still cannot sort.
 
 **What we wrote.** Nothing — we do not expose the options that remain unreachable.
 
@@ -311,6 +312,38 @@ The second is better, because a device flow is the right shape for a desktop app
 long-lived secret sitting in a keyring.
 
 ---
+
+## 14. The token names wallets the SDK cannot reach
+
+**Status: fixed upstream and consumed** in `@opensea/sdk` 12.5.0. `extractLinkedWallets(token)` is
+now the source of the wallet set, beside `extractOpenSeaScopes` and `extractWalletAddress`.
+
+Two things stayed ours, and both are stated in `walletsFromToken`: the **order**, because
+`wallets[0]` is the primary and the two routes that cannot fan out read it, and the **chain filter**,
+because the SDK deliberately applies no format validation and leaves that to the server. One thing
+had to be added: `extractLinkedWallets` answers `[]` for a non-JWT while `decodeJwtPayload` throws,
+and a startup path must degrade rather than crash.
+
+The doc comment that shipped names the trap directly — *"Combining it with the `wallet` claim
+double-counts the primary; using only the `wallet` claim under-reports every account that has linked
+more than one."* Our implementation predates it and avoided the first half by deduping, which is
+luck rather than design.
+
+**Upstream problem (as originally filed).** A wallet PAT's JWT carried `linked_wallets` and neither
+`@opensea/sdk` nor `@opensea/cli` mentioned the claim. The SDK issued a credential describing more
+wallets than the SDK could spend, so a consumer either ignored them — silently under-reporting a
+portfolio, which is what happened here — or decoded the JWT itself.
+
+## 15. No `fetchImpl` on `PrivyConfig`
+
+**Status: fixed upstream and consumed** in `@opensea/wallet-adapters` 1.2.0. The executor's Privy
+tests inject a stub rather than replacing `globalThis.fetch` and restoring it afterwards. A test that
+reaches for a global is a test that can leak into the one after it.
+
+**Upstream problem (as originally filed).** `PrivyConfig` took `appId`, `appSecret`, `walletId`,
+`baseUrl` and `authSigningKey`. `baseUrl` lets a test point at a local server; it does not let one
+assert on a request without running one, and `onRequest` observes a request rather than substituting
+the transport.
 
 ## 12. `PrivySvmAdapter` cannot send an idempotency key
 
