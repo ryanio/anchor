@@ -262,6 +262,15 @@ deadlines and an activity count, in the Omarchy top bar, read from the local ser
   that is not in the capture. A surface counts as looked at once it is marked right or carries a note,
   and the tally says which. `--page-only` rebuilds the page over the shots already on disk, so
   changing it no longer costs a photograph session.
+- **A scoped capture no longer deletes the review it was not asked to retake.** `review.ts widget`
+  emptied `review/` before photographing the one group named, so a run that wanted the bar threw away
+  twenty-four panel shots and rebuilt the page around the single surface left — and it looked
+  finished, with one card on it. Each shot is now removed immediately before it is replaced, so a
+  half-failed capture still leaves nothing pretending to be new, and the page is built over
+  everything on disk rather than over the group that happened to run. The cost of keeping older shots
+  is that they are older, which is this project's most expensive failure shape, so every card carries
+  the age of its shot and the page says how many did not come from the newest run. `scripts/` gets a
+  test step in CI along with it: a bug with no runner is a bug that comes back.
 - **One mark, at every size.** A ring, two branches off it, a crossbar — square bounds of 36×36, and
   three files that are the same drawing at three weights. It briefly was two marks, a whole anchor
   plus a cropped variant for the bar, and two marks for one product is a cost with no payer: the bar

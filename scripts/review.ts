@@ -32,13 +32,14 @@
  * failing the run, so this still does something useful over SSH or in CI.
  */
 import { execFile, execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { capturePanelStates, panelCases } from "./panel-states.ts";
-import { page, type Shot, type SurfaceMeta } from "./review-page.ts";
+import { page, type SurfaceMeta } from "./review-page.ts";
+import { fileFor, shotsFor } from "./review-shots.ts";
 
 const run = promisify(execFile);
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -396,53 +397,53 @@ if (wanted.length === 0) {
   process.exit(1);
 }
 
-/**
- * Rebuild the page over whatever is already in `review/`.
- *
- * The page is the half of this script that changes often, and it is the half that costs nothing to
- * produce — capture is a minute of Wayland, Quickshell and a screen that must be unlocked, and it
- * starts by deleting every PNG it is about to replace. Rebuilding from disk keeps a stylesheet
- * change from costing a photograph session, and it is safe to run over SSH.
- */
-function rebuildFromDisk(): Shot[] {
-  return SURFACES.map((surface): Shot => {
-    const name = surface.fileName ?? `${surface.id}.png`;
-    return existsSync(join(OUT, name))
-      ? { surface, file: name }
-      : { surface, file: null, reason: "not on disk — run a capture without --page-only" };
-  });
-}
+/** When the shot for a file was taken, or null when there is not one. */
+const mtimeOf = (file: string): number | null => {
+  try {
+    return statSync(join(OUT, file)).mtimeMs;
+  } catch {
+    return null; // not there, which is the only thing the caller wants to know
+  }
+};
 
-let results: Shot[];
-if (args.includes("--page-only")) {
+const pageOnly = args.includes("--page-only");
+const failures = new Map<string, string>();
+let taken = 0;
+
+if (pageOnly) {
   if (!existsSync(OUT)) {
     console.error("Nothing in review/ to build a page over. Run a capture first.");
     process.exit(1);
   }
-  results = rebuildFromDisk();
 } else {
   if (wanted.some((s) => s.group === "widget")) warnIfWidgetIsStale();
-
-  if (existsSync(OUT)) for (const f of readdirSync(OUT)) rmSync(join(OUT, f), { recursive: true });
   mkdirSync(OUT, { recursive: true });
 
-  results = [];
   for (const surface of wanted) {
-    const name = surface.fileName ?? `${surface.id}.png`;
+    const name = fileFor(surface);
+    // Delete the shot immediately before replacing it, so a capture that fails halfway leaves no
+    // photograph behind pretending to be the new one. Only the shots being retaken go: this used to
+    // empty the whole directory, and `review.ts widget` threw away twenty-four panels it had not
+    // been asked to take.
+    rmSync(join(OUT, name), { force: true });
     try {
       await surface.capture(join(OUT, name));
       if (!existsSync(join(OUT, name))) throw new Error("the tool reported success but wrote no file");
-      results.push({ surface, file: name });
+      taken++;
       console.log(`  captured  ${surface.id}`);
     } catch (err) {
       const reason = err instanceof Error ? err.message.split("\n")[0]! : String(err);
-      results.push({ surface, file: null, reason });
+      failures.set(surface.id, reason);
       console.log(`  skipped   ${surface.id} — ${reason}`);
     }
   }
 }
 
+// Over everything on disk, not over the surfaces this run wanted. A scoped run is a way to refresh
+// part of a review, not a way to start a new one.
+const results = shotsFor(SURFACES, mtimeOf, failures);
+
 writeFileSync(join(OUT, "index.html"), page(results));
-const ok = results.filter((r) => r.file !== null).length;
-const verb = args.includes("--page-only") ? "on disk" : "captured";
-console.log(`\n${ok}/${results.length} ${verb}. Open: file://${join(OUT, "index.html")}`);
+const shown = results.filter((r) => r.file !== null).length;
+const took = pageOnly ? "" : `${taken} captured, `;
+console.log(`\n${took}${shown} of ${results.length} on the page. Open: file://${join(OUT, "index.html")}`);

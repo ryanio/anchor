@@ -349,8 +349,16 @@ at once it is marked **Looks right** or carries a note, and the tally at the top
 between a review that finished and one that stopped.
 
 `--page-only` rebuilds the page from the PNGs already in `review/`. Prefer it when changing
-`scripts/review-page.ts`: a full run wipes `review/`, needs an unlocked Wayland session, and takes a
-minute, none of which a stylesheet change should cost.
+`scripts/review-page.ts`: a capture needs an unlocked Wayland session and takes a minute, neither of
+which a stylesheet change should cost.
+
+**A scoped capture replaces only what it retakes.** `review.ts widget` used to empty `review/` first,
+so a run that wanted the bar deleted twenty-four panel shots and rebuilt the page around the one
+surface left — and the page looked finished, with one card on it. Each shot is now deleted
+immediately before it is replaced, and the page is built over everything on disk rather than over the
+group that ran. Which means shots on one page can come from different runs, so every card carries the
+age of its shot and the page says how many did not come from the newest one. `shotsFor` in
+`scripts/review-shots.ts` is the pure part, and `scripts/review-shots.test.ts` holds it there.
 
 **Do not ship a visual change you have only reasoned about.** Every visual bug in this project so far
 was invisible in the source and obvious on screen: a cheat sheet fixed three times from CSS
