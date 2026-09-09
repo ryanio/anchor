@@ -8,8 +8,8 @@ Each entry names what we wrote, why, and **what to delete when upstream fixes it
 file, a workaround quietly becomes architecture: nobody remembers it was temporary, and the upstream
 fix lands with no one noticing it made our code redundant — or worse, actively wrong.
 
-Findings were reported upstream on **2026-09-07**, verified against `@opensea/sdk@12.1.0` and
-`@opensea/api-types@0.9.1`. Re-check this file whenever either package is bumped;
+Findings were reported upstream on **2026-09-07**, and this file was last checked against
+`@opensea/sdk@12.4.1` and `@opensea/api-types@0.9.3`. Re-check this file whenever either package is bumped;
 `scripts/check-versions.ts` does not check it, because "is this still needed" is a judgement call.
 
 ---
@@ -105,16 +105,24 @@ upstream surfaces as a typecheck failure rather than a slug we silently reject.
 
 ## 5. Missing query parameters on SDK arg types
 
-**Upstream problem.** Documented parameters absent from the hand-written arg interfaces, so they are
-unreachable through the SDK: `GetTokensArgs` is missing `chains`, `sort_by`, `sort_direction` and
-`disable_spam_filtering`; `PortfolioArgs` is missing `chains`; `GetEventsArgs.eventType` is scalar
-where the spec documents an array.
+**Status: mostly fixed upstream and consumed** in `@opensea/sdk` 12.4.1. `PortfolioArgs.chains` and
+`GetTokensArgs.chains` now exist, and `GetEventsArgs.eventType` takes an array. Three casts are gone
+from `service/src/opensea.ts` — `{ chains } as object` twice and `{ eventType } as { eventType?:
+string }` once — and the code now says what it means.
 
-**What we wrote.** Nothing — we simply do not expose those options. `/tokens` cannot sort, and
-events cannot filter on more than one type.
+12.4.1 also deprecated `GetTokensArgs.next` in favour of `cursor`, because those endpoints never
+read a `next` query parameter: passing it alone returned the first page every time. **We were never
+affected** — `tokenBalances` already sent `cursor`, and `GetEventsArgs.next` is a real parameter
+rather than the deprecated one. Checked rather than assumed, because the two names sit next to each
+other and only one of them is a no-op.
 
-**When it's fixed.** Surface the options. This is the only entry that is a *missing feature* rather
-than compensating code, which is why there is nothing to delete.
+**Still missing.** `sort_by`, `sort_direction` and `disable_spam_filtering` on the token listings.
+`/tokens` still cannot sort.
+
+**What we wrote.** Nothing — we do not expose the options that remain unreachable.
+
+**When it's fixed.** Surface them. This is the only entry that is a *missing feature* rather than
+compensating code, which is why there is nothing to delete.
 
 ## 6. No status code on SDK errors
 

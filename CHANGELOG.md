@@ -29,6 +29,12 @@ outbound rate limit, and one place where freshness is tracked.
 - Credentials live in the OS keyring, never in config, argv or logs. Errors are rebuilt from a status
   code, so a remote response body can never carry a credential back out.
 
+**`@opensea/sdk` 12.4.1 and `@opensea/api-types` 0.9.3.** `PortfolioArgs.chains`,
+`GetTokensArgs.chains` and an array-valued `GetEventsArgs.eventType` all landed upstream, so three
+casts that existed only because the arg types were narrower than the API are gone and the calls say
+what they mean. `chains` on the portfolio call is also the parameter that makes the endpoint's
+deterministic 500 go away.
+
 **Both marketplaces.** OpenSea is NFTs *and* fungible tokens, and Anchor treats them as different
 products rather than one with a quantity field. The token half covers portfolio value, balances,
 trending and top tokens, individual tokens and price history.
