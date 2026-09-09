@@ -56,7 +56,10 @@ jobs:
       - name: Devices — install a rasteriser
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends imagemagick librsvg2-bin
+          # Not --no-install-recommends: on Ubuntu the SVG delegate lives in
+          # libmagickcore-6.q16-6-extra, which is a *recommend* of imagemagick rather than a
+          # depend. Without it `convert` runs the delegate and cannot read its own output.
+          sudo apt-get install -y imagemagick librsvg2-bin libmagickcore-6.q16-6-extra
 
       - name: Devices — typecheck and test
         run: |
