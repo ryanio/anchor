@@ -9,7 +9,8 @@
       "**/*.json",
       "!**/node_modules",
       "!**/dist",
-      "!**/package-lock.json"
+      "!**/package-lock.json",
+      "!devices/firmware/cardputer/flint"
     ]
   },
   "formatter": {
