@@ -69,7 +69,23 @@ const smallHello: Hello = {
 
 const PANEL_PIXELS = smallHello.width * smallHello.height;
 
-const tile = (label: string): Surface => ({ kind: "tile", emphasis: "ground", label });
+/**
+ * A tile whose pixels differ per label without depending on glyph rendering.
+ *
+ * These tests compare rasterised frames, and CI has neither this machine's fonts nor its Omarchy
+ * themes. A label change alone is not guaranteed to move a single pixel there: `svg.ts` drops a
+ * mark that falls below the legible floor rather than drawing it as texture, and two labels can
+ * rasterise identically under a substituted font. That is exactly what turned main red — the tests
+ * held here and failed on the runner.
+ *
+ * The meter makes the difference geometric, which no font can take away, while the label stays so
+ * each test still reads as the thing it is about.
+ */
+const tile = (label: string): Surface => {
+  let hash = 0;
+  for (const character of label) hash = (hash * 31 + character.codePointAt(0)!) % 997;
+  return { kind: "tile", emphasis: "ground", label, meter: 0.1 + (hash % 80) / 100 };
+};
 const frameFor = (surface: Surface): Frame => new Map([[SCREEN_SLOT, surface]]);
 
 /** Every message type, for reading back what the *host* wrote. */
