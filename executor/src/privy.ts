@@ -85,6 +85,7 @@
  * refuses any SPL delegation or authority transfer, an unallowlisted program, or an unrecognised
  * token instruction. See `solana.ts` for what that can and cannot establish.
  */
+import type { SvmWalletAdapter } from "@opensea/wallet-adapters";
 import { type ApprovedAction, isUsableApproval, type PolicyDecision } from "./decision.ts";
 import { caip2, containsSetApprovalForAll, encodeSafeTransferFrom, tokenIdToBigInt } from "./evm.ts";
 import type {
@@ -1021,7 +1022,16 @@ export class UnimplementedSolanaBuilder implements SolanaTransactionBuilder {
 const GUARD_HISTORY = 64;
 
 export interface PrivySolanaSignerOptions {
-  readonly api: PrivyWalletApi;
+  /**
+   * The wallet adapter that signs and broadcasts.
+   *
+   * `@opensea/wallet-adapters`' `PrivySvmAdapter` in production. An interface rather than that class
+   * so the tests substitute it, and so a different provider is a constructor argument rather than a
+   * rewrite — which is the entire reason to depend on the package instead of hand-writing its
+   * transport, as `AGENTS.md` puts it: hand-writing a client for someone else's evolving API is not
+   * thrift, it is a slow bug.
+   */
+  readonly adapter: SvmWalletAdapter;
   readonly walletId: string;
   readonly builder: SolanaTransactionBuilder;
   readonly cluster: SolanaCluster;
@@ -1052,7 +1062,7 @@ export interface PrivySolanaSignerOptions {
  * safe, and the `guard` it stamps on the receipt says which of the two happened.
  */
 export class PrivySolanaSigner implements Signer {
-  readonly #api: PrivyWalletApi;
+  readonly #adapter: SvmWalletAdapter;
   readonly #walletId: string;
   readonly #builder: SolanaTransactionBuilder;
   readonly #cluster: SolanaCluster;
@@ -1069,7 +1079,23 @@ export class PrivySolanaSigner implements Signer {
   readonly guarded: TransactionGuardResult[] = [];
 
   constructor(options: PrivySolanaSignerOptions) {
-    this.#api = options.api;
+    // Refused at construction, not at submit. Anchor retries a submission whose outcome it did not
+    // learn, and without an idempotency key a retry is a second on-chain spend. A signer that
+    // cannot be idempotent is not a signer this executor can use, and finding that out while
+    // holding an approved action is finding it out too late.
+    if (options.adapter.capabilities.idempotentSend !== true) {
+      throw new Error(
+        `refusing to build a signer on ${options.adapter.name}: it does not honour an idempotency ` +
+          "key, so a retried submission would broadcast twice",
+      );
+    }
+    if (typeof options.adapter.sendTransaction !== "function") {
+      throw new Error(
+        `refusing to build a signer on ${options.adapter.name}: it signs but cannot broadcast, and ` +
+          "Anchor has no Solana RPC connection of its own to broadcast through",
+      );
+    }
+    this.#adapter = options.adapter;
     this.#walletId = options.walletId;
     this.#builder = options.builder;
     this.#cluster = options.cluster;
@@ -1112,17 +1138,19 @@ export class PrivySolanaSigner implements Signer {
       throw new Error("refusing to sign: the transaction's fee payer is not the approved account");
     }
 
-    const signature = await this.#api.sendSolanaTransaction({
-      walletId: this.#walletId,
-      caip2: SOLANA_CAIP2[this.#cluster],
+    // Keyed on the approval, not on the attempt: a retry of the same approved action is the same
+    // transaction, and Privy answers the second one with the first one's result rather than
+    // broadcasting again. A key that changed per attempt would protect nothing.
+    const { hash } = await this.#adapter.sendTransaction!({
       transaction: toBase64(tx.serialized),
+      caip2: SOLANA_CAIP2[this.#cluster],
       idempotencyKey: `anchor-${approved.approvalId}`,
     });
 
     return {
       approvalId: approved.approvalId,
       requestId: approved.request.id,
-      transactionHash: signature,
+      transactionHash: hash,
       submittedAt: now,
       signer: `privy-solana:${this.#walletId}`,
       broadcast: true,
