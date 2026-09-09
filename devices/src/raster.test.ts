@@ -8,13 +8,7 @@
 
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import {
-  clearRasterCache,
-  RasterError,
-  rasterCacheSize,
-  rasteriserAvailable,
-  rasterize,
-} from "./raster.ts";
+import { clearRasterCache, RasterError, rasterCacheSize, rasteriserAvailable, rasterize } from "./raster.ts";
 
 const solid = (color: string, width: number, height: number): string =>
   `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">` +
