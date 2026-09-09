@@ -9,7 +9,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import type { ChainIdentifier } from "@opensea/api-types";
-import { resolveWallets, walletFromToken } from "./wallet-token.ts";
+import { describeTokenShape, resolveWallets, walletFromToken } from "./wallet-token.ts";
 
 /** Public identifiers, not credentials: OpenSea's Seaport conduit and Wrapped SOL. */
 const EVM = "0x1E0049783F008A0085193E00003D00cd54003c71";
@@ -108,5 +108,54 @@ describe("resolveWallets", () => {
     const second = "0x0000000000000000000000000000000000000002";
     const resolved = resolveWallets([EVM, second], null, ETHEREUM);
     assert.deepEqual(resolved.wallets, [EVM, second]);
+  });
+});
+
+describe("describeTokenShape", () => {
+  test("names a JWT carrying a wallet claim", () => {
+    const shape = describeTokenShape(jwt({ wallet: EVM }));
+    assert.equal(shape.kind, "jwt");
+    assert.equal(shape.hasWalletClaim, true);
+    assert.match(shape.summary, /wallet claim present/);
+  });
+
+  test("names a JWT with no wallet claim, and says why that matters", () => {
+    const shape = describeTokenShape(jwt({ scope: "read" }));
+    assert.equal(shape.kind, "jwt");
+    assert.equal(shape.hasWalletClaim, false);
+    assert.match(shape.summary, /no wallet claim/);
+  });
+
+  test("names an opaque token and says a JWT has three segments", () => {
+    const shape = describeTokenShape("abc123opaquetoken");
+    assert.equal(shape.kind, "opaque");
+    assert.equal(shape.segments, 1);
+    assert.match(shape.summary, /a JWT has 3/);
+  });
+
+  test("flags a value that is not credential-shaped", () => {
+    // The documented incident: an interactive prompt stored its own command line, and `/health`
+    // then reported the credential present. This is the line that would have caught it.
+    const shape = describeTokenShape("anchor-service --set-pat < /dev/null");
+    assert.equal(shape.kind, "not-credential-shaped");
+    assert.match(shape.summary, /shell command/);
+  });
+
+  test("reports an expired JWT as expired", () => {
+    const shape = describeTokenShape(jwt({ wallet: EVM, exp: 1000 }));
+    assert.match(shape.summary, /EXPIRED/);
+  });
+
+  test("the summary never contains the token", () => {
+    // This line is printed to a terminal, so it is the one place a credential could walk out.
+    for (const token of [
+      jwt({ wallet: EVM, secretish: "do-not-leak" }),
+      "opaque-do-not-leak-token",
+      "not credential shaped do-not-leak",
+    ]) {
+      const { summary } = describeTokenShape(token);
+      assert.equal(summary.includes(token), false, "summary must not embed the token");
+      assert.equal(summary.includes("do-not-leak"), false, "summary must not embed token content");
+    }
   });
 });

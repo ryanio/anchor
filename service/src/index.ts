@@ -15,7 +15,7 @@ import { configPath, loadConfig } from "./config.ts";
 import { getApiKey, getPat, keyringAvailable, looksLikeCredential, setApiKey, setPat } from "./keyring.ts";
 import { OpenSeaClient } from "./opensea.ts";
 import { createApp, HOST } from "./server.ts";
-import { resolveWallets } from "./wallet-token.ts";
+import { describeTokenShape, resolveWallets } from "./wallet-token.ts";
 
 /** `/health` may be polled once a second; spawning secret-tool that often is not free. */
 const CREDENTIAL_CACHE_MS = 30_000;
@@ -112,11 +112,14 @@ async function checkCredentials(): Promise<void> {
   );
 
   const pat = await getPat();
-  console.error(
-    pat === null
-      ? "No wallet PAT stored. Nothing Anchor reads needs one; see the header of auth.ts."
-      : "Wallet PAT stored. Unused by current reads, kept for writes and wallet-scoped routes.",
-  );
+  if (pat === null) {
+    console.error("No wallet PAT stored. Nothing Anchor reads needs one; see the header of auth.ts.");
+    return;
+  }
+  // The API key gets a live probe above; the PAT gets a shape line. Neither settles for "present",
+  // which is the claim that let a shell command pass as a credential for a day.
+  console.error("Wallet PAT stored. Unused by current reads, kept for writes and wallet-scoped routes.");
+  console.error(`  shape: ${describeTokenShape(pat).summary}`);
 }
 
 function memoize<T>(fn: () => Promise<T>, ms: number): () => Promise<T> {

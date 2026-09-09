@@ -28,6 +28,7 @@
 import type { ChainIdentifier } from "@opensea/api-types";
 import { decodeJwtPayload, extractWalletAddress } from "@opensea/sdk";
 import { addressMatchesChain } from "./chains.ts";
+import { looksLikeCredential } from "./keyring.ts";
 
 /** Where the wallet list came from. Surfaced on `/health` so a reading can be checked. */
 export type WalletSource = "config" | "token" | "none";
@@ -88,4 +89,87 @@ export function resolveWallets(
   const { address, detail } = walletFromToken(pat, chains);
   if (address === null) return { wallets: [], source: "none", detail };
   return { wallets: [address], source: "token", detail: "" };
+}
+
+/** What a stored token *is*, without saying what it contains. */
+export interface TokenShape {
+  readonly kind: "jwt" | "opaque" | "not-credential-shaped";
+  readonly segments: number;
+  readonly length: number;
+  /** Only meaningful for a JWT. */
+  readonly hasWalletClaim: boolean;
+  /** One line for a terminal. Contains counts and verdicts, never token content. */
+  readonly summary: string;
+}
+
+/**
+ * Describe a stored token's shape for `--check-credentials`.
+ *
+ * "Present" is not "works" — the header of `checkCredentials` makes that point about the API key,
+ * and the same gap swallowed a wallet PAT: `/health` reported the credential present, and it was a
+ * shell command, because an interactive prompt read its own command line off a non-TTY stdin. A
+ * shape line closes that gap for the PAT the way a live probe closes it for the API key.
+ *
+ * **Nothing here reveals the token.** Segment and character counts, whether the payload parsed, and
+ * whether a wallet claim exists are facts *about* the value, not the value. That distinction is the
+ * whole reason this can be printed at all.
+ */
+export function describeTokenShape(token: string): TokenShape {
+  const length = token.length;
+
+  if (!looksLikeCredential(token)) {
+    return {
+      kind: "not-credential-shaped",
+      segments: 0,
+      length,
+      hasWalletClaim: false,
+      summary:
+        `not credential-shaped (${length} chars, contains whitespace or control characters). ` +
+        "That is what a stored shell command looks like — re-run --set-pat and pipe the token in.",
+    };
+  }
+
+  const segments = token.split(".").length;
+  if (segments !== 3) {
+    return {
+      kind: "opaque",
+      segments,
+      length,
+      hasWalletClaim: false,
+      summary:
+        `opaque token (${length} chars, ${segments} segment${segments === 1 ? "" : "s"}; a JWT has 3). ` +
+        "Carries no claims, so no wallet address can be read from it.",
+    };
+  }
+
+  let claims: Record<string, unknown>;
+  try {
+    claims = decodeJwtPayload(token);
+  } catch {
+    return {
+      kind: "opaque",
+      segments,
+      length,
+      hasWalletClaim: false,
+      summary: `three segments (${length} chars) but the payload did not decode as JSON, so it carries no claims.`,
+    };
+  }
+
+  const wallet = extractWalletAddress(claims);
+  const hasWalletClaim = wallet !== undefined && wallet !== "";
+  const expiry = typeof claims.exp === "number" ? new Date(claims.exp * 1000) : null;
+  const expiryNote =
+    expiry === null
+      ? ""
+      : `, ${expiry < new Date() ? "EXPIRED" : "expires"} ${expiry.toISOString().slice(0, 16)}Z`;
+
+  return {
+    kind: "jwt",
+    segments,
+    length,
+    hasWalletClaim,
+    summary: hasWalletClaim
+      ? `JWT (${length} chars), wallet claim present${expiryNote}.`
+      : `JWT (${length} chars), no wallet claim${expiryNote}. The token was not issued with a wallet injected.`,
+  };
 }
