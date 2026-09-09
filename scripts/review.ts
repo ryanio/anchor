@@ -5,11 +5,15 @@
  *   node scripts/review.ts              capture everything available
  *   node scripts/review.ts widget site  capture only those groups
  *   node scripts/review.ts --list       show what would be captured
+ *   node scripts/review.ts --page-only  rebuild the page over the shots already on disk
  *
- * Output lands in `review/` (gitignored): the PNGs, plus `review/index.html`, which lets a human
- * click anywhere on a shot to drop a numbered pin and write what should change. Notes live in
- * `localStorage`, so closing the tab does not lose them, and "Copy all notes" puts the whole review
- * on the clipboard as markdown to paste back to an agent.
+ * Output lands in `review/` (gitignored): the PNGs, plus `review/index.html`, which walks a person
+ * through every state in chapters and lets them click anywhere on a shot to drop a numbered pin and
+ * write what should change. Notes live in `localStorage`, so closing the tab does not lose them, and
+ * "Copy notes" puts the whole review on the clipboard as markdown to paste back to an agent. The
+ * page itself is built by `review-page.ts`, and `--page-only` rebuilds it without photographing
+ * anything — capture wipes `review/` and needs a live session, which is a lot to spend on a change
+ * to a stylesheet.
  *
  * ## Why this exists
  *
@@ -34,23 +38,17 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { capturePanelStates, panelCases } from "./panel-states.ts";
+import { page, type Shot, type SurfaceMeta } from "./review-page.ts";
 
 const run = promisify(execFile);
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const OUT = join(ROOT, "review");
 const SRC = join(ROOT, "widget");
 
-/** A surface worth looking at. `capture` returns the PNG path, or throws with a reason to skip. */
-interface Surface {
-  id: string;
-  group: string;
-  title: string;
+/** A surface worth looking at. `capture` writes the PNG, or throws with a reason to skip it. */
+interface Surface extends SurfaceMeta {
   /** Where the shot lands under `review/`, when it is not `<id>.png`. */
   fileName?: string;
-  /** The folder this appears under on the review page. Defaults to the group. */
-  category?: string;
-  /** What a reviewer should be looking for. Shown beside the shot. */
-  looking: string;
   capture: (file: string) => Promise<void>;
 }
 
@@ -314,6 +312,7 @@ const SURFACES: Surface[] = [
     id: "bar",
     group: "widget",
     category: "The bar, live",
+    strip: true,
     title: "Bar — the mark among its neighbours",
     looking:
       "The mark has to sit in a row of other people's icons. Compare drawn height, width and weight " +
@@ -340,353 +339,11 @@ const SURFACES: Surface[] = [
       looking: state.looking,
       fileName: state.file,
       category: state.category,
+      strip: state.strip,
       capture: ensurePanelStates,
     }),
   ),
 ];
-
-// ── page ────────────────────────────────────────────────────────────────────────────────────────
-
-const esc = (s: string): string =>
-  s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-
-type Shot = { surface: Surface; file: string | null; reason?: string };
-
-function page(shots: Shot[]): string {
-  const captured = shots.filter((s) => s.file !== null);
-
-  const card = ({ surface, file, reason }: Shot): string => {
-    const body =
-      file === null
-        ? `<p class="skipped">Not captured — ${esc(reason ?? "unknown reason")}</p>`
-        : `<div class="shot" data-id="${esc(surface.id)}">
-        <img src="${esc(file)}" alt="${esc(surface.title)}" loading="lazy">
-        <div class="pins"></div>
-      </div>`;
-    // The bar strip is 1040px wide against a panel's 388, so it takes the whole row rather than a
-    // column it would have to shrink into — the one thing you cannot do to a shot of a 26px bar.
-    const wide = surface.group === "widget" ? " wide" : "";
-    return `<section class="card${wide}" id="s-${esc(surface.id)}">
-  <header>
-    <h2>${esc(surface.title)}</h2>
-    <span class="count" data-count-for="${esc(surface.id)}"></span>
-  </header>
-  <p class="looking">${esc(surface.looking)}</p>
-  ${body}
-  <ol class="notes" data-for="${esc(surface.id)}"></ol>
-</section>`;
-  };
-
-  // One folder per category, in declaration order — which is the order they are worth looking at,
-  // not alphabetical. Sixteen surfaces in one column is a scroll nobody finishes; five labelled
-  // folders of three or four, laid out across the page, is something you can hold in your head.
-  const folders = new Map<string, Shot[]>();
-  for (const shot of shots) {
-    const key = shot.surface.category ?? shot.surface.group;
-    folders.set(key, [...(folders.get(key) ?? []), shot]);
-  }
-
-  const cards = [...folders]
-    .map(
-      ([name, group]) => `<details class="folder" open>
-  <summary><span class="folder-name">${esc(name)}</span><span class="folder-count">${group.length}</span></summary>
-  <div class="cards">
-${group.map(card).join("\n")}
-  </div>
-</details>`,
-    )
-    .join("\n");
-
-  return `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Anchor — review</title>
-<style>
-  :root {
-    --bg: #06131a; --surface: #0a1c25; --sunk: #102b37;
-    --text: #e8f2f4; --muted: #93a8ad; --border: #14313d;
-    --accent: #5fd4e4; --accent-rgb: 95 212 228; --ember: #ff8a6b;
-    color-scheme: dark;
-  }
-  * { box-sizing: border-box; }
-  body {
-    margin: 0; background: var(--bg); color: var(--text);
-    font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, sans-serif;
-    padding: 32px clamp(16px, 4vw, 40px) 120px;
-  }
-  /* Wide, because the point is to see states beside each other rather than one at a time. */
-  .wrap { max-width: 1800px; margin: 0 auto; }
-
-  .folder { border-top: 1px solid var(--border); margin-top: 26px; }
-  .folder > summary {
-    display: flex; align-items: center; gap: 10px; cursor: pointer;
-    padding: 14px 2px; list-style: none; user-select: none;
-  }
-  .folder > summary::-webkit-details-marker { display: none; }
-  /* A disclosure triangle drawn rather than borrowed, so it points the same way in every browser. */
-  .folder > summary::before {
-    content: ""; width: 0; height: 0; flex: none;
-    border-left: 6px solid var(--muted); border-top: 5px solid transparent;
-    border-bottom: 5px solid transparent; transform: rotate(0deg);
-    transition: transform .15s ease;
-  }
-  .folder[open] > summary::before { transform: rotate(90deg); }
-  .folder-name { font-size: 17px; font-weight: 620; letter-spacing: -.01em; }
-  .folder-count {
-    color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums;
-    border: 1px solid var(--border); border-radius: 999px; padding: 1px 8px;
-  }
-  .folder-count.has-notes { color: var(--accent); border-color: var(--accent); }
-
-  /* The panel shots are 388px, so three or four fit across a wide window. auto-fill rather than
-     auto-fit: with one card left over in a folder, auto-fit stretches it to the full width and a
-     388px screenshot becomes a blurry banner. */
-  .cards {
-    display: grid; gap: 18px; padding: 4px 0 22px;
-    grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
-    align-items: start;
-  }
-  .card.wide { grid-column: 1 / -1; }
-  @media (max-width: 900px) { .cards { grid-template-columns: 1fr; } }
-  h1 { margin: 0 0 6px; font-size: 26px; letter-spacing: -.02em; }
-  .lede { margin: 0 0 28px; color: var(--muted); max-width: 68ch; }
-  .lede kbd {
-    font: 12px ui-monospace, Menlo, monospace; background: var(--sunk);
-    border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px;
-  }
-  .card {
-    background: var(--surface); border: 1px solid var(--border);
-    border-radius: 14px; padding: 18px; margin-bottom: 22px;
-  }
-  .card header { display: flex; align-items: baseline; gap: 12px; }
-  h2 { margin: 0; font-size: 17px; font-weight: 600; }
-  .count:not(:empty) {
-    color: var(--bg); background: var(--accent); font-size: 11px; font-weight: 700;
-    border-radius: 999px; padding: 1px 7px; font-variant-numeric: tabular-nums;
-  }
-  .group {
-    font: 10.5px ui-monospace, Menlo, monospace; letter-spacing: .1em;
-    text-transform: uppercase; color: var(--accent);
-    border: 1px solid rgb(var(--accent-rgb) / .35); border-radius: 999px; padding: 2px 8px;
-  }
-  .looking { margin: 8px 0 14px; color: var(--muted); font-size: 13.5px; max-width: 78ch; }
-  .skipped { color: var(--ember); font-size: 13.5px; margin: 0; }
-  .shot { position: relative; display: inline-block; max-width: 100%; cursor: crosshair; }
-  .shot img {
-    display: block; max-width: 100%; height: auto;
-    border: 1px solid var(--border); border-radius: 8px; background: #000;
-  }
-  .pins { position: absolute; inset: 0; pointer-events: none; }
-  .pin {
-    position: absolute; width: 22px; height: 22px; margin: -11px 0 0 -11px;
-    border-radius: 999px; background: var(--ember); color: #1a0d08;
-    font: 600 12px/22px ui-sans-serif, system-ui, sans-serif; text-align: center;
-    box-shadow: 0 0 0 2px rgb(0 0 0 / .45); pointer-events: auto; cursor: pointer;
-  }
-  .pin.done { background: var(--accent); color: #04222a; }
-  ol.notes { margin: 14px 0 0; padding-left: 0; list-style: none; display: grid; gap: 8px; }
-  ol.notes:empty { margin: 0; }
-  .note { display: flex; gap: 10px; align-items: flex-start; background: var(--sunk);
-    border: 1px solid var(--border); border-radius: 8px; padding: 9px 11px; }
-  .note .n {
-    flex: none; width: 20px; height: 20px; border-radius: 999px; background: var(--ember);
-    color: #1a0d08; font: 600 11px/20px ui-sans-serif, system-ui, sans-serif; text-align: center;
-  }
-  .note.done .n { background: var(--accent); color: #04222a; }
-  .note textarea {
-    flex: 1; background: transparent; border: 0; color: var(--text); resize: vertical;
-    font: inherit; min-height: 22px; padding: 0; outline: none;
-  }
-  .note button {
-    flex: none; background: transparent; border: 1px solid var(--border); color: var(--muted);
-    border-radius: 6px; font-size: 11px; padding: 2px 7px; cursor: pointer;
-  }
-  .note button:hover { color: var(--text); border-color: var(--accent); }
-  .bar {
-    position: fixed; left: 0; right: 0; bottom: 0; background: rgb(6 19 26 / .93);
-    border-top: 1px solid var(--border); padding: 12px clamp(16px, 4vw, 40px);
-    display: flex; gap: 12px; align-items: center; backdrop-filter: blur(10px);
-  }
-  .bar .count { color: var(--muted); font-size: 13px; margin-right: auto; }
-  .bar button {
-    background: rgb(var(--accent-rgb) / .12); border: 1px solid rgb(var(--accent-rgb) / .4);
-    color: var(--accent); border-radius: 8px; padding: 7px 14px; font: inherit; font-size: 13.5px;
-    cursor: pointer;
-  }
-  .bar button:hover { background: rgb(var(--accent-rgb) / .2); }
-  .bar button.ghost { background: transparent; border-color: var(--border); color: var(--muted); }
-  dialog {
-    background: var(--surface); color: var(--text); border: 1px solid var(--border);
-    border-radius: 12px; max-width: min(860px, 92vw); width: 100%; padding: 18px;
-  }
-  dialog::backdrop { background: rgb(0 0 0 / .6); }
-  dialog textarea {
-    width: 100%; min-height: 46vh; background: var(--bg); color: var(--text);
-    border: 1px solid var(--border); border-radius: 8px; padding: 12px;
-    font: 12.5px/1.5 ui-monospace, Menlo, monospace; resize: vertical;
-  }
-</style>
-</head>
-<body>
-<div class="wrap">
-  <h1>Anchor — review</h1>
-  <p class="lede">
-    Click anywhere on a screenshot to drop a pin and say what should change. Notes save as you type.
-    <kbd>Copy all notes</kbd> puts the whole review on the clipboard as markdown — paste it back to
-    an agent. Click a pin to mark it handled; click its number in the list to delete it.
-  </p>
-  ${cards}
-</div>
-
-<div class="bar">
-  <span class="count" id="count"></span>
-  <button class="ghost" id="clear">Clear all</button>
-  <button id="copy">Copy all notes</button>
-</div>
-
-<dialog id="out"><textarea readonly></textarea>
-  <div style="margin-top:10px;display:flex;gap:10px;justify-content:flex-end">
-    <button class="ghost" onclick="this.closest('dialog').close()">Close</button>
-  </div>
-</dialog>
-
-<script>
-(function () {
-  var KEY = "anchor-review-v1";
-  var state = {};
-  try { state = JSON.parse(localStorage.getItem(KEY) || "{}"); } catch (e) { state = {}; }
-
-  function save() {
-    try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) { /* private window */ }
-    var n = 0;
-    for (var k in state) n += state[k].length;
-    document.getElementById("count").textContent =
-      n === 0 ? "No notes yet" : n + (n === 1 ? " note" : " notes");
-  }
-
-  function render(id) {
-    var shot = document.querySelector('.shot[data-id="' + id + '"]');
-    var list = document.querySelector('ol.notes[data-for="' + id + '"]');
-    var items = state[id] || [];
-    if (shot) shot.querySelector(".pins").innerHTML = "";
-    list.innerHTML = "";
-
-    items.forEach(function (item, i) {
-      if (shot) {
-        var pin = document.createElement("button");
-        pin.className = "pin" + (item.done ? " done" : "");
-        pin.style.left = item.x + "%";
-        pin.style.top = item.y + "%";
-        pin.textContent = String(i + 1);
-        pin.title = item.done ? "Marked handled" : "Click to mark handled";
-        pin.addEventListener("click", function (ev) {
-          ev.stopPropagation();
-          item.done = !item.done;
-          save(); render(id);
-        });
-        shot.querySelector(".pins").appendChild(pin);
-      }
-
-      var li = document.createElement("li");
-      li.className = "note" + (item.done ? " done" : "");
-      var num = document.createElement("span");
-      num.className = "n";
-      num.textContent = String(i + 1);
-      var ta = document.createElement("textarea");
-      ta.value = item.text || "";
-      ta.placeholder = "What should change here?";
-      ta.rows = 1;
-      ta.addEventListener("input", function () {
-        item.text = ta.value;
-        ta.style.height = "auto";
-        ta.style.height = ta.scrollHeight + "px";
-        save();
-      });
-      var del = document.createElement("button");
-      del.textContent = "Remove";
-      del.addEventListener("click", function () {
-        items.splice(i, 1);
-        save(); render(id);
-      });
-      li.appendChild(num); li.appendChild(ta); li.appendChild(del);
-      list.appendChild(li);
-      ta.style.height = "auto";
-      ta.style.height = ta.scrollHeight + "px";
-    });
-
-    // Open notes only. A folder can be collapsed, and a badge that counted handled ones would say
-    // "there is something here" long after there was not.
-    var open = items.filter(function (n) { return !n.done; }).length;
-    var badge = document.querySelector('[data-count-for="' + id + '"]');
-    if (badge) badge.textContent = open > 0 ? String(open) : "";
-
-    document.querySelectorAll(".folder").forEach(function (folder) {
-      var pending = folder.querySelectorAll(".count:not(:empty)").length;
-      var label = folder.querySelector(".folder-count");
-      if (!label) return;
-      var total = folder.querySelectorAll(".card").length;
-      label.textContent = pending > 0 ? pending + " of " + total : String(total);
-      label.classList.toggle("has-notes", pending > 0);
-    });
-  }
-
-  document.querySelectorAll(".shot").forEach(function (shot) {
-    var id = shot.getAttribute("data-id");
-    shot.addEventListener("click", function (ev) {
-      if (ev.target.classList.contains("pin")) return;
-      var r = shot.getBoundingClientRect();
-      state[id] = state[id] || [];
-      state[id].push({
-        x: ((ev.clientX - r.left) / r.width) * 100,
-        y: ((ev.clientY - r.top) / r.height) * 100,
-        text: "",
-        done: false,
-      });
-      save(); render(id);
-      var boxes = document.querySelectorAll('ol.notes[data-for="' + id + '"] textarea');
-      if (boxes.length) boxes[boxes.length - 1].focus();
-    });
-  });
-
-  document.getElementById("copy").addEventListener("click", function () {
-    var out = ["# Anchor review", ""];
-    document.querySelectorAll(".card").forEach(function (card) {
-      var id = card.id.replace(/^s-/, "");
-      var items = (state[id] || []).filter(function (i) { return (i.text || "").trim() !== ""; });
-      if (!items.length) return;
-      out.push("## " + card.querySelector("h2").textContent.trim(), "");
-      items.forEach(function (item, i) {
-        out.push(
-          (i + 1) + ". " + (item.done ? "[handled] " : "") + item.text.trim() +
-          "  _(at " + item.x.toFixed(0) + "%, " + item.y.toFixed(0) + "% of the shot)_"
-        );
-      });
-      out.push("");
-    });
-    var text = out.length > 2 ? out.join("\\n") : "# Anchor review\\n\\nNo notes.";
-    if (navigator.clipboard) navigator.clipboard.writeText(text).catch(function () {});
-    var dlg = document.getElementById("out");
-    dlg.querySelector("textarea").value = text;
-    dlg.showModal();
-    dlg.querySelector("textarea").select();
-  });
-
-  document.getElementById("clear").addEventListener("click", function () {
-    if (!confirm("Delete every note in this review?")) return;
-    state = {}; save();
-    document.querySelectorAll(".shot").forEach(function (s) { render(s.getAttribute("data-id")); });
-  });
-
-  document.querySelectorAll(".card").forEach(function (c) { render(c.id.replace(/^s-/, "")); });
-  save();
-})();
-</script>
-</body>
-</html>
-`;
-}
 
 /**
  * Warn when the bar is running a different widget than the one in this checkout.
@@ -739,26 +396,53 @@ if (wanted.length === 0) {
   process.exit(1);
 }
 
-if (wanted.some((s) => s.group === "widget")) warnIfWidgetIsStale();
+/**
+ * Rebuild the page over whatever is already in `review/`.
+ *
+ * The page is the half of this script that changes often, and it is the half that costs nothing to
+ * produce — capture is a minute of Wayland, Quickshell and a screen that must be unlocked, and it
+ * starts by deleting every PNG it is about to replace. Rebuilding from disk keeps a stylesheet
+ * change from costing a photograph session, and it is safe to run over SSH.
+ */
+function rebuildFromDisk(): Shot[] {
+  return SURFACES.map((surface): Shot => {
+    const name = surface.fileName ?? `${surface.id}.png`;
+    return existsSync(join(OUT, name))
+      ? { surface, file: name }
+      : { surface, file: null, reason: "not on disk — run a capture without --page-only" };
+  });
+}
 
-if (existsSync(OUT)) for (const f of readdirSync(OUT)) rmSync(join(OUT, f), { recursive: true });
-mkdirSync(OUT, { recursive: true });
+let results: Shot[];
+if (args.includes("--page-only")) {
+  if (!existsSync(OUT)) {
+    console.error("Nothing in review/ to build a page over. Run a capture first.");
+    process.exit(1);
+  }
+  results = rebuildFromDisk();
+} else {
+  if (wanted.some((s) => s.group === "widget")) warnIfWidgetIsStale();
 
-const results: Shot[] = [];
-for (const surface of wanted) {
-  const name = surface.fileName ?? `${surface.id}.png`;
-  try {
-    await surface.capture(join(OUT, name));
-    if (!existsSync(join(OUT, name))) throw new Error("the tool reported success but wrote no file");
-    results.push({ surface, file: name });
-    console.log(`  captured  ${surface.id}`);
-  } catch (err) {
-    const reason = err instanceof Error ? err.message.split("\n")[0]! : String(err);
-    results.push({ surface, file: null, reason });
-    console.log(`  skipped   ${surface.id} — ${reason}`);
+  if (existsSync(OUT)) for (const f of readdirSync(OUT)) rmSync(join(OUT, f), { recursive: true });
+  mkdirSync(OUT, { recursive: true });
+
+  results = [];
+  for (const surface of wanted) {
+    const name = surface.fileName ?? `${surface.id}.png`;
+    try {
+      await surface.capture(join(OUT, name));
+      if (!existsSync(join(OUT, name))) throw new Error("the tool reported success but wrote no file");
+      results.push({ surface, file: name });
+      console.log(`  captured  ${surface.id}`);
+    } catch (err) {
+      const reason = err instanceof Error ? err.message.split("\n")[0]! : String(err);
+      results.push({ surface, file: null, reason });
+      console.log(`  skipped   ${surface.id} — ${reason}`);
+    }
   }
 }
 
 writeFileSync(join(OUT, "index.html"), page(results));
 const ok = results.filter((r) => r.file !== null).length;
-console.log(`\n${ok}/${results.length} captured. Open: file://${join(OUT, "index.html")}`);
+const verb = args.includes("--page-only") ? "on disk" : "captured";
+console.log(`\n${ok}/${results.length} ${verb}. Open: file://${join(OUT, "index.html")}`);

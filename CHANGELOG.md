@@ -198,6 +198,16 @@ deadlines and an activity count, in the Omarchy top bar, read from the local ser
   a live machine is in exactly one of them, so its error screens had never been reviewed by anyone.
   `PanelContent.qml` renders from a single reading and takes no action itself, so `widget/gallery/`
   mounts it against a fixture per state and photographs all fifteen with no service, bar or desktop.
+- **And the review page walks you through them.** Photographing every state solved half the problem;
+  the other half is that twenty-three cards in one column get read attentively for four and scrolled
+  past for the rest. They are chapters now, in the order a person meets them — a fresh install, the
+  state it is in almost always, everything at once, the failures, the bar — each closed but showing a
+  contact strip of its own thumbnails, so the whole review is one screen rather than a scroll nobody
+  finishes. **Walk through** moves across all of them on the arrow keys, and a bar strip is finally
+  shown at a size anyone can judge: 300×26 at 4×, nearest-neighbour, because smoothing invents detail
+  that is not in the capture. A surface counts as looked at once it is marked right or carries a note,
+  and the tally says which. `--page-only` rebuilds the page over the shots already on disk, so
+  changing it no longer costs a photograph session.
 - **One mark, at every size.** A ring, two branches off it, a crossbar — square bounds of 36×36, and
   three files that are the same drawing at three weights. It briefly was two marks, a whole anchor
   plus a cropped variant for the bar, and two marks for one product is a cost with no payer: the bar
