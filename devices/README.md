@@ -9,13 +9,19 @@ pull a USB HID binding onto a machine with nothing plugged in.
 
 ## What it needs
 
-**ImageMagick**, as a system package — `magick` (7) or `convert` (6). Key faces are drawn as SVG and
-rasterised, so without it a device paints nothing. It is not an npm dependency and cannot be: it is
-a binary, and the whole point of this workspace is that its npm side stays a single USB HID binding.
+**ImageMagick and librsvg**, as system packages. Key faces are drawn as SVG and rasterised, so
+without them a device paints nothing. Not npm dependencies and they cannot be — they are binaries,
+and the point of this workspace is that its npm side stays a single USB HID binding.
 
 ```bash
-omarchy pkg add imagemagick     # or: sudo pacman -S imagemagick
+omarchy pkg add imagemagick librsvg     # or: sudo pacman -S imagemagick librsvg
 ```
+
+Both, not either. `resolveBinary` looks for `magick` (ImageMagick 7) or `convert` (6), but
+ImageMagick 6 does not rasterise SVG itself — it shells out to `rsvg-convert`. On a machine with
+ImageMagick and no librsvg the check passes and every render fails, with `delegate failed` rather
+than anything about a missing package. Worth tightening: the check proves a binary exists, not that
+it can rasterise an SVG.
 
 ## Try it
 

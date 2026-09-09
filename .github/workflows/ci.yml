@@ -49,14 +49,18 @@ jobs:
           npx --prefix executor tsc --noEmit --project executor
           npm test --prefix executor
 
-      # A system dependency, not an npm one: devices paint key faces by rasterising SVG, so the
-      # tests that check a frame is the right size need a real rasteriser. The runner ships
-      # neither `magick` (ImageMagick 7) nor `convert` (6), which is what turned these tests red
-      # the first time CI ran them at all.
-      - name: Devices — install ImageMagick
+      # System dependencies, not npm ones: devices paint key faces by rasterising SVG, so the tests
+      # that check a frame is the right size need a real rasteriser. The runner ships neither
+      # `magick` (ImageMagick 7) nor `convert` (6), which is what turned these tests red the first
+      # time CI ran them at all.
+      #
+      # librsvg is not optional either. ImageMagick 6 does not rasterise SVG itself — it delegates
+      # to `rsvg-convert` — so with imagemagick alone the tests still fail, one layer further in:
+      # "delegate failed `'rsvg-convert' -o '%o' '%i''".
+      - name: Devices — install a rasteriser
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends imagemagick
+          sudo apt-get install -y --no-install-recommends imagemagick librsvg2-bin
 
       - name: Devices — typecheck and test
         run: |
