@@ -81,17 +81,29 @@ node src/index.ts --set-pat      # store the OpenSea PAT       (reads stdin, not
 
 ### Installing the unit
 
-Packaged, `packaging/anchor-service.service` lands at `/usr/lib/systemd/user/` and names
-`/usr/bin/anchor-service`. **That wrapper does not exist yet** — see the TODO in `packaging/PKGBUILD`
-— so until Anchor is packaged the unit has to be written against a checkout:
-
 ```bash
-mkdir -p ~/.config/systemd/user
-sed "s|ExecStart=.*|ExecStart=$(command -v node) $PWD/service/src/index.ts|" \
-  packaging/anchor-service.service > ~/.config/systemd/user/anchor-service.service
-systemctl --user daemon-reload
-systemctl --user start anchor-service
+anchor-service --install-service      # or: node service/src/index.ts --install-service
 ```
+
+That is the whole thing, and it is idempotent — running it twice is how you check whether you ran it
+once. `--uninstall-service` reverses it.
+
+It does one of two things:
+
+- **Packaged**, `/usr/lib/systemd/user/anchor-service.service` is already there, so nothing is
+  written and the unit is enabled where it lies. A hand-written copy in `~/.config` would shadow it
+  and keep running last month's service after an upgrade, so one is removed if found.
+- **From a checkout**, a unit is written to `~/.config/systemd/user/` with `ExecStart` repointed at
+  this file, through the `node` that is running it. Both paths absolute: a unit is not started from a
+  shell and inherits no PATH worth relying on. Re-run it after moving the checkout.
+
+Either way it ends in `systemctl --user enable --now`, and **`enable` is the word that matters** —
+the instructions this replaced ended in `start`, which is this session only. That is why setups
+worked until the first reboot and then quietly did not.
+
+`--experimental-strip-types` appears in the ExecStart written from a checkout because the service
+runs its TypeScript directly from source. A packaged build compiles it and the packaged unit carries
+no such flag.
 
 The widget probes `systemctl --user show anchor-service.service` and only offers the button when
 `LoadState=loaded`; without the unit it falls back to showing the command. So a machine with no unit
