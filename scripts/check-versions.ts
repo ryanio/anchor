@@ -10,16 +10,32 @@
  * red-in-CI failures in a single day.
  */
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const read = (p: string) => readFileSync(join(root, p), "utf8");
+const problems: string[] = [];
+
+/**
+ * Every workspace, found rather than listed.
+ *
+ * Both checks below used to hardcode `["service", "executor", "widget"]`, directly under a comment
+ * saying "adding a workspace must not create a new drift hole". Adding `devices` created exactly
+ * that hole: its engines and its version went unchecked, and its 188 tests were not run by CI
+ * either. A list you have to remember to update is not a check.
+ */
+const WORKSPACES = readdirSync(root, { withFileTypes: true })
+  .filter((e) => e.isDirectory() && !e.name.startsWith(".") && e.name !== "node_modules")
+  .map((e) => e.name)
+  .filter((name) => existsSync(join(root, name, "package.json")))
+  .sort();
+
+if (WORKSPACES.length === 0) problems.push("no workspaces found; this check is not checking anything");
 
 const pinned = read(".node-version").trim();
 const major = pinned.split(".")[0]!;
-const problems: string[] = [];
 
 // The running interpreter must satisfy the pin.
 const runningMajor = process.versions.node.split(".")[0]!;
@@ -32,7 +48,7 @@ if (runningMajor !== major) {
 
 // Every workspace's package.json engines. Adding a workspace must not create a new drift hole.
 const expectedEngines = `>=${major}.0.0`;
-for (const ws of ["service", "executor", "widget"]) {
+for (const ws of WORKSPACES) {
   let pkg: { engines?: { node?: string } };
   try {
     pkg = JSON.parse(read(`${ws}/package.json`)) as { engines?: { node?: string } };
@@ -119,7 +135,7 @@ const projectVersion = JSON.parse(read("package.json")).version;
 if (typeof projectVersion !== "string") {
   problems.push("package.json has no version; it is the source of truth for the project version");
 } else {
-  for (const workspace of ["service", "executor", "widget"]) {
+  for (const workspace of WORKSPACES) {
     const found = JSON.parse(read(`${workspace}/package.json`)).version;
     if (found !== projectVersion) {
       problems.push(

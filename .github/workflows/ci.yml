@@ -28,6 +28,7 @@ jobs:
           npm ci
           npm ci --prefix service
           npm ci --prefix executor
+          npm ci --prefix devices
 
       - name: Versions are consistent
         run: node scripts/check-versions.ts
@@ -47,6 +48,11 @@ jobs:
         run: |
           npx --prefix executor tsc --noEmit --project executor
           npm test --prefix executor
+
+      - name: Devices — typecheck and test
+        run: |
+          npx --prefix devices tsc --noEmit --project devices
+          npm test --prefix devices
 
       # No install step: the widget has no dependencies at all. Its logic lives in a plain script
       # that QML's engine loads, and the tests drive it through `require` under node --test.
