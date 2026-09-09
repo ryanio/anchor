@@ -1,31 +1,12 @@
-- **One mark, at every size.** A ring, two branches off it, a crossbar — square bounds of 36×36,
-  and three files that are the same drawing at three weights. It briefly was two marks, a whole
-  anchor plus a cropped variant for the bar, and two marks for one product is a cost with no payer:
-  the bar showed one thing and the site showed another. A status bar broke the whole anchor two ways
-  — 10×12 in a row of glyphs drawing 9–11 square, and a stroke computing to 0.93 device pixels,
-  under one, so it antialiased to grey. Neither is a size problem: scaling preserves aspect ratio,
-  and a smaller slot makes the stroke smaller with it. Only fewer elements buy the weight, so six
-  became four and the stroke became 1.57 pixels. What it costs is the anchor read at large sizes,
-  which was the trade — a mark that only works when it is large is not a mark.
-# Changelog
-
-All notable changes to Anchor are recorded here, following
-[Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
-[Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-
-The build diary at [anchor.ryanio.com](https://anchor.ryanio.com) has the story behind these; this
-file has the facts.
-
-## [Unreleased]
-
-Everything below is the first release, still being assembled. Nothing is tagged yet — this heading
-becomes `## [0.1.0] - YYYY-MM-DD` at the moment the tag is pushed, and not before.
-
-### Added
-
-**Devices** — Anchor on physical hardware, starting with the Elgato Stream Deck. Opt-in: the
-workspace keeps its own dependency, so a machine with no device attached installs nothing.
-
+- **One mark, at every size:** a ring, two arms, a crossbar, and a fluke curling up at the end of
+  each arm — an anchor that reads as an A, on square bounds of 38×38, in three files that are the
+  same drawing at three weights. A bar had broken the old six-stroke mark two ways: 10×12 in a row
+  of glyphs drawing 9–11 square, and a stroke computing to 0.93 device pixels, under one, so it
+  antialiased to grey. Neither is a size problem — scaling preserves aspect ratio, and a smaller
+  slot makes the stroke smaller with it. Only fewer elements buy the weight, so the element count
+  became the constraint and the drawing was made to fit inside it: each fluke folds into the end of
+  its own arm as a curve rather than a separate stroke. Four elements, stroke 6, 1.5 device pixels
+  at bar size — and the flukes cost nothing.
 - A device contract (`AnchorDevice`) that panels are written against rather than a Stream Deck
   program: devices declare named slots, Anchor paints medium-neutral surfaces into them and receives
   input back. A `VirtualDevice` is the second implementation, so panels render and are reviewable

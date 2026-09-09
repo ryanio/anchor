@@ -9,9 +9,9 @@ import QtQuick.Shapes
 // foreground by the caller, so it follows whichever Omarchy theme is applied, live, with no
 // per-theme asset and no recolouring step.
 //
-// There is one drawing at every size — the ring, the two branches off it, the crossbar. It used to
-// be two, a full anchor with flukes plus a cropped variant for the bar, and two marks for one
-// product is a cost with no payer: the bar showed one thing and the site showed another.
+// One drawing at every size: a ring, two arms, a crossbar. Each arm carries its own fluke as a
+// curve at the end of the same path, which is why the mark reads as an anchor and still survives an
+// 11px slot — four elements set the stroke weight, and folding the flukes in costs none.
 //
 // The one thing that is *not* taken from the SVG is the framing. The artwork does not fill its
 // viewBox, so scaling the viewBox to a bar slot renders a small mark surrounded by padding. Fitting
@@ -39,10 +39,10 @@ Item {
   height: iconSize
 
   // Path centreline bounds of whichever variant is drawn, straight off the SVG.
-  readonly property real _x0: 14
-  readonly property real _x1: 50
+  readonly property real _x0: 13
+  readonly property real _x1: 51
   readonly property real _y0: 7
-  readonly property real _y1: 43
+  readonly property real _y1: 45
 
   // Inflated by half a stroke so the outer edge of the stroke is what gets fitted rather than the
   // centreline — otherwise the mark is clipped by exactly half a stroke.
@@ -54,11 +54,13 @@ Item {
 
   readonly property real _scale: Math.min(iconSize / _w, iconSize / _h)
 
-  // ring · branch left · branch right · crossbar
-  readonly property string _path: "M 25.5 13.5 a 6.5 6.5 0 1 0 13 0 a 6.5 6.5 0 1 0 -13 0 " +
-    "M 32 20 L 14 43 " +
-    "M 32 20 l 18 23 " +
-    "M 21.5 36 h 21"
+  // ring · arm left · arm right · crossbar. Each arm is one path: the shank down and out, then the
+  // fluke curling back up as a continuation of it rather than as a stroke of its own. That is the
+  // whole trick — the flukes are free, because the element count is what sets the stroke weight.
+  readonly property string _path: "M 26 13 a 6 6 0 1 0 12 0 a 6 6 0 1 0 -12 0 " +
+    "M 32 19 L 19 45 c -3.5 -1 -6 -4 -6 -8.5 " +
+    "M 32 19 l 13 26 c 3.5 -1 6 -4 6 -8.5 " +
+    "M 22.5 36 h 19"
 
   Shape {
     id: shape
