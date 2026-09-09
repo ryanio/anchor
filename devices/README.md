@@ -85,6 +85,31 @@ Verb first. An unknown verb is refused rather than guessed at.
 trustworthy requester in the system, and per invariant 1 in `AGENTS.md` the executor decides. A test
 asserts those verbs do not exist.
 
+### Key readings
+
+`source` puts a live number on a key, shown large with the label demoted to a caption. This is what
+turns a key from a button into a display — which matters when the deck sits on a machine you are
+often not in front of.
+
+| Source | Shows |
+|---|---|
+| `portfolio.total` / `portfolio.nft` / `portfolio.token` | Portfolio value, in USD |
+| `portfolio.pnl` / `portfolio.pnlAbsolute` | P&L over the current timeframe, green up, red down |
+| `portfolio.nftCount` | NFTs held |
+| `token:N` | The Nth largest token holding, captioned with its symbol |
+| `collection:N` | The Nth collection by holdings, captioned with its slug |
+
+Only holdings OpenSea classifies `OK` are shown. Its `status` field also marks `SPAM`, `WARNING`,
+`LOW_LIQUIDITY` and `LOW_VALUE`, and an unfiltered "top tokens" list on a wallet that has been
+airdropped at is a list of scams wearing Anchor's authority.
+
+An absent reading renders as `—`, never `0`. A zero is a reading; "no wallet configured" is not.
+
+**`collection:N` ranks by count, not value.** `Nft` in the OpenAPI spec carries no price, so ranking
+holdings by worth needs a floor-price request per collection. That is a real feature with a real
+request budget, not something to approximate — and an approximation here would be indistinguishable
+from a measurement.
+
 ### Key state
 
 `state` decides when a key renders as active: `nightlight`, `awake`, `muted`, `workspace:N`,
@@ -92,16 +117,37 @@ asserts those verbs do not exist.
 
 ### Dial controls
 
-`control` is one of `volume`, `brightness`, `workspace`, `theme`, or `none`. `press` takes any
-action. `step` scales each detent.
+`control` is one of `volume`, `brightness`, `workspace`, `theme`, `timeframe`, or `none`. `press`
+takes any action. `step` scales each detent.
+
+`timeframe` is the odd one out, and the most interesting: it changes what is *shown* rather than what
+the machine is doing, scrubbing the portfolio window through `HOUR → DAY → WEEK → MONTH`. Those four
+are what `/portfolio/value` accepts. A physical control over a data dimension is the thing a dial is
+genuinely better at than a keyboard shortcut.
 
 ### Strip segments
 
 `workspace`, `window`, `volume`, `brightness`, `cpu`, `memory`, `theme`, `clock`, `page`,
-`anchor.service`, `anchor.chain`.
+`anchor.service`, `anchor.chain`, `anchor.total`, `anchor.timeframe`, `anchor.age`.
+
+`anchor.age` is provenance rather than decoration: it says how old the figures are and whether the
+service served them stale after a failure. A number attached to its age can be checked; one that
+simply appears cannot.
 
 A reading that is absent renders as `—`, never as `0`. A zero is a reading; on a machine with no
 backlight, "0%" would be a false one.
+
+## Pages
+
+Three ship, and each fills all eight keys:
+
+- **desktop** — workspaces, theme, night light, screenshot; volume, workspace, brightness and theme
+  on the dials.
+- **portfolio** — total, NFT and token value, P&L, and the three largest holdings. Dial 1 scrubs the
+  timeframe.
+- **anchor** — holdings: NFTs held, top collections, absolute P&L, and links out.
+
+Swipe the touch strip to page.
 
 ## Colour and type
 

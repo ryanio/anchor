@@ -10,15 +10,107 @@
 import * as actions from "./actions.ts";
 import type { PageConfig, PanelConfig } from "./config.ts";
 import type { ServiceStatus } from "./state/anchor.ts";
+import {
+  describeAge,
+  EMPTY_PORTFOLIO,
+  type PortfolioSnapshot,
+  TIMEFRAMES,
+  type Timeframe,
+} from "./state/anchor.ts";
 import type { DesktopSnapshot } from "./state/desktop.ts";
 import type { Tokens } from "./tokens.ts";
-import type { AnchorDevice, BarSegment, DeviceInput, Frame, Surface } from "./types.ts";
+import type { AnchorDevice, BarSegment, DeviceInput, Frame, Surface, TokenName } from "./types.ts";
 
 export interface PanelState {
   readonly desktop: DesktopSnapshot;
   readonly service: ServiceStatus;
   /** The palette being painted. Defaults to the desktop's theme; pinned by `--theme`. */
   readonly themeName?: string;
+  readonly portfolio?: PortfolioSnapshot;
+  readonly timeframe?: Timeframe;
+}
+
+/** What a data-backed key shows: a reading, an optional caption, and a tone. */
+export interface KeyReading {
+  readonly value: string;
+  readonly label?: string;
+  readonly tone?: TokenName;
+}
+
+/**
+ * Format a USD string from the API for a 120px key.
+ *
+ * The API sends money as a string and `anchor.ts` keeps it as one, because parsing to re-format is
+ * how precision goes missing. Here it is parsed *for display only*: a key is a glance, and
+ * "125430.5" is not one. Anything unparseable becomes an em dash rather than `$NaN`.
+ */
+export function usd(value: string | null): string {
+  if (value === null) return "—";
+  const amount = Number.parseFloat(value);
+  if (!Number.isFinite(amount)) return "—";
+  const digits = Math.abs(amount) >= 1000 ? 0 : 2;
+  return `$${amount.toLocaleString("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits })}`;
+}
+
+/** Signed percentage, e.g. "+1.01%". Tone is decided by the caller from the sign. */
+function percent(value: string | null): string {
+  if (value === null) return "—";
+  const amount = Number.parseFloat(value);
+  if (!Number.isFinite(amount)) return "—";
+  return `${amount >= 0 ? "+" : ""}${amount.toFixed(2)}%`;
+}
+
+function signTone(value: string | null): TokenName | undefined {
+  if (value === null) return undefined;
+  const amount = Number.parseFloat(value);
+  if (!Number.isFinite(amount) || amount === 0) return undefined;
+  return amount > 0 ? "positive" : "negative";
+}
+
+const NOT_LOADED: KeyReading = { value: "—" };
+
+/**
+ * Readings a key can show. The argument after `:` selects a rank, so `token:1` is the largest
+ * holding — which keeps three top-token keys from needing three near-identical sources.
+ */
+export const KEY_SOURCES: Readonly<Record<string, (state: PanelState, argument: string) => KeyReading>> = {
+  "portfolio.total": ({ portfolio }) => ({ value: usd(portfolio?.stats?.totalUsd ?? null), label: "Total" }),
+  "portfolio.nft": ({ portfolio }) => ({ value: usd(portfolio?.stats?.nftUsd ?? null), label: "NFTs" }),
+  "portfolio.token": ({ portfolio }) => ({ value: usd(portfolio?.stats?.tokenUsd ?? null), label: "Tokens" }),
+  "portfolio.pnl": ({ portfolio, timeframe }) => {
+    const pnl = portfolio?.stats?.pnlPercentage ?? null;
+    return { value: percent(pnl), label: `P&L ${(timeframe ?? "DAY").toLowerCase()}`, tone: signTone(pnl) };
+  },
+  "portfolio.pnlAbsolute": ({ portfolio }) => {
+    const pnl = portfolio?.stats?.pnlAbsolute ?? null;
+    return { value: usd(pnl), label: "P&L", tone: signTone(pnl) };
+  },
+  "portfolio.nftCount": ({ portfolio }) => ({
+    value:
+      portfolio?.nftCount === null || portfolio?.nftCount === undefined ? "—" : String(portfolio.nftCount),
+    label: "Held",
+  }),
+  token: ({ portfolio }, argument) => {
+    const rank = Math.max(1, Number.parseInt(argument || "1", 10));
+    const holding = portfolio?.tokens[rank - 1];
+    // Keep the caption when there is no holding, so an empty page still says what each key is for.
+    if (holding === undefined) return { ...NOT_LOADED, label: `Top ${rank}` };
+    return { value: usd(String(holding.usdValue)), label: holding.symbol };
+  },
+  collection: ({ portfolio }, argument) => {
+    const rank = Math.max(1, Number.parseInt(argument || "1", 10));
+    const entry = portfolio?.topCollections[rank - 1];
+    if (entry === undefined) return { ...NOT_LOADED, label: `Coll ${rank}` };
+    return { value: String(entry.count), label: entry.slug };
+  },
+};
+
+export function readKeySource(name: string, state: PanelState): KeyReading | null {
+  const marker = name.indexOf(":");
+  const key = marker === -1 ? name : name.slice(0, marker);
+  const argument = marker === -1 ? "" : name.slice(marker + 1);
+  const source = KEY_SOURCES[key];
+  return source === undefined ? null : source(state, argument);
 }
 
 /** Slot ids the adapters agree on. Kept here so panel and adapter cannot drift apart. */
@@ -53,6 +145,15 @@ export const SEGMENT_SOURCES: Readonly<Record<string, (state: PanelState, page: 
         : "anchor · no wallet"
       : `anchor · ${service.detail}`,
   "anchor.chain": ({ service }) => service.primaryChain || "—",
+  "anchor.timeframe": ({ timeframe }) => (timeframe ?? "DAY").toLowerCase(),
+  "anchor.total": ({ portfolio }) => usd(portfolio?.stats?.totalUsd ?? null),
+  // Provenance, per theme/README.md principle 6: a number attached to how old it is can be checked;
+  // one that simply appears cannot. `stale` means the service served a cached value after a failure.
+  "anchor.age": ({ portfolio }) => {
+    if (portfolio === undefined || portfolio.detail !== "") return portfolio?.detail ?? "—";
+    if (portfolio.ageSeconds === null) return "—";
+    return `${describeAge(portfolio.ageSeconds)}${portfolio.stale ? " (stale)" : ""}`;
+  },
 };
 
 export class Panel {
@@ -60,6 +161,7 @@ export class Panel {
   #pageName: string;
   #tokens: Tokens;
   #pressed = new Set<string>();
+  #timeframe: Timeframe = "DAY";
 
   constructor(config: PanelConfig, tokens: Tokens) {
     const first = config.pages[0];
@@ -81,6 +183,11 @@ export class Panel {
 
   get pageName(): string {
     return this.#pageName;
+  }
+
+  /** The window the portfolio page is reporting over. Scrubbed by a dial, read by the poller. */
+  get timeframe(): Timeframe {
+    return this.#timeframe;
   }
 
   get page(): PageConfig {
@@ -115,12 +222,16 @@ export class Panel {
       const id = keySlot(key.index);
       if (!slots.has(id)) continue;
       const active = actions.resolveActive(key.state, state.desktop, this.#pageName);
+      const reading = key.source === "" ? null : readKeySource(key.source, state);
       frame.set(id, {
         kind: "tile",
         icon: key.icon || undefined,
-        label: key.label || undefined,
+        // A configured label wins, so a key can be captioned by hand; otherwise the source names
+        // itself, which is what lets `token:1` render as the symbol it happens to be today.
+        label: key.label || reading?.label || undefined,
+        value: reading?.value,
         emphasis: this.#pressed.has(id) ? "raised" : active ? "active" : "ground",
-        tone: key.tone,
+        tone: reading?.tone ?? key.tone,
       });
     }
 
@@ -176,6 +287,15 @@ export class Panel {
       case "rotate": {
         const dial = page.dials.find((d) => dialSlot(d.index) === input.slot);
         if (!dial) return false;
+        if (dial.control === "timeframe") {
+          // The one dial that changes what is *shown* rather than what the machine is doing. A
+          // physical control over a data dimension is the thing a dial is genuinely better at than
+          // a keyboard shortcut.
+          const at = TIMEFRAMES.indexOf(this.#timeframe);
+          const next = (at + (input.delta > 0 ? 1 : -1) + TIMEFRAMES.length) % TIMEFRAMES.length;
+          this.#timeframe = TIMEFRAMES[next] ?? this.#timeframe;
+          return true;
+        }
         const control = actions.DIAL_CONTROLS[dial.control];
         if (control === undefined) return false;
         control(input.delta * dial.step);

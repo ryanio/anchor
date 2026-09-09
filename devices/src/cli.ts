@@ -30,6 +30,7 @@ import { loadGlyphMetrics } from "./glyphs.ts";
 import { Panel } from "./panel.ts";
 import { clearRasterCache } from "./raster.ts";
 import * as anchor from "./state/anchor.ts";
+import { EMPTY_PORTFOLIO, type PortfolioSnapshot, type Timeframe } from "./state/anchor.ts";
 import { DesktopState } from "./state/desktop.ts";
 import * as hypr from "./state/hypr.ts";
 import { loadTokens } from "./tokens.ts";
@@ -127,8 +128,30 @@ async function main(): Promise<void> {
   await device.setBrightness(options.brightness ?? panel.brightness);
 
   let service = await anchor.status();
+  let portfolio: PortfolioSnapshot = EMPTY_PORTFOLIO;
+  let portfolioTimeframe: Timeframe | null = null;
   let painting = false;
   let repaintQueued = false;
+
+  /**
+   * Refresh portfolio data, but only when the panel is actually showing it.
+   *
+   * Three HTTP requests every 30 seconds for a page nobody is looking at is rude to a rate-limited
+   * upstream. The service caches, so the cost of asking while the page *is* open is small.
+   */
+  const refreshPortfolio = async (force = false): Promise<void> => {
+    const usesPortfolio =
+      panel.page.keys.some(
+        (key) =>
+          key.source.startsWith("portfolio") ||
+          key.source.startsWith("token") ||
+          key.source.startsWith("collection"),
+      ) || panel.page.segments.some((segment) => segment.source.startsWith("anchor."));
+    if (!usesPortfolio) return;
+    if (!force && portfolioTimeframe === panel.timeframe && portfolio.detail === "") return;
+    portfolioTimeframe = panel.timeframe;
+    portfolio = await anchor.portfolio(panel.timeframe);
+  };
 
   const repaint = async (): Promise<void> => {
     if (painting) {
@@ -146,7 +169,15 @@ async function main(): Promise<void> {
         if ("tokens" in device) (device as { tokens: typeof tokens }).tokens = tokens;
         clearRasterCache();
       }
-      await device.paint(panel.build(device, { desktop: snapshot, service, themeName: tokens.themeName }));
+      await device.paint(
+        panel.build(device, {
+          desktop: snapshot,
+          service,
+          themeName: tokens.themeName,
+          portfolio,
+          timeframe: panel.timeframe,
+        }),
+      );
     } catch (error) {
       process.stderr.write(`paint failed: ${error instanceof Error ? error.message : String(error)}\n`);
     } finally {
@@ -158,12 +189,20 @@ async function main(): Promise<void> {
     }
   };
 
+  await refreshPortfolio();
+
   if (options.once) {
     await repaint();
     if (options.preview !== undefined) {
       const { composeSvg, writePreview } = await import("./preview.ts");
       const snapshot = await desktop.get();
-      const frame = panel.build(device, { desktop: snapshot, service, themeName: tokens.themeName });
+      const frame = panel.build(device, {
+        desktop: snapshot,
+        service,
+        themeName: tokens.themeName,
+        portfolio,
+        timeframe: panel.timeframe,
+      });
       await writePreview(composeSvg(frame, tokens, device.capabilities.slots), options.preview);
       process.stderr.write(`preview written to ${options.preview}\n`);
     }
@@ -173,7 +212,9 @@ async function main(): Promise<void> {
   }
 
   device.onInput((input) => {
-    if (panel.handle(input)) void repaint();
+    if (!panel.handle(input)) return;
+    // A page switch or a timeframe scrub changes what data is wanted, so ask before repainting.
+    void refreshPortfolio().then(() => repaint());
   });
 
   const unsubscribe = hypr.subscribe((name) => {
@@ -191,6 +232,7 @@ async function main(): Promise<void> {
   const tick = setInterval(() => void repaint(), TICK_MS);
   const servicePoll = setInterval(async () => {
     service = await anchor.status();
+    await refreshPortfolio(true);
   }, SERVICE_POLL_MS);
 
   const shutdown = async (): Promise<void> => {
