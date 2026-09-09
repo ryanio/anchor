@@ -9,7 +9,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import type { ChainIdentifier } from "@opensea/api-types";
-import { describeTokenShape, resolveWallets, walletFromToken } from "./wallet-token.ts";
+import { describeTokenShape, resolveWallets, walletFromToken, walletsFromClaims } from "./wallet-token.ts";
 
 /** Public identifiers, not credentials: OpenSea's Seaport conduit and Wrapped SOL. */
 const EVM = "0x1E0049783F008A0085193E00003D00cd54003c71";
@@ -157,5 +157,40 @@ describe("describeTokenShape", () => {
       assert.equal(summary.includes(token), false, "summary must not embed the token");
       assert.equal(summary.includes("do-not-leak"), false, "summary must not embed token content");
     }
+  });
+});
+
+describe("walletsFromClaims", () => {
+  /** The claim shape an exchanged access token actually carries, measured 2026-09-08. */
+  const claims = {
+    wallet: EVM,
+    linked_wallets: ["0x0000000000000000000000000000000000000009", SOL, EVM],
+  };
+
+  test("puts the authenticated wallet first, then the linked ones", () => {
+    const wallets = walletsFromClaims(claims, ETHEREUM);
+    assert.equal(wallets[0], EVM, "the `wallet` claim is the primary");
+    assert.equal(wallets.length, 2);
+  });
+
+  test("drops wallets for chains that are not configured", () => {
+    // A Solana address on an EVM-only config would fail `assertAddressForChains` at startup.
+    assert.equal(walletsFromClaims(claims, ETHEREUM).includes(SOL), false);
+    assert.deepEqual(walletsFromClaims(claims, SOLANA), [SOL]);
+  });
+
+  test("de-duplicates, case-insensitively", () => {
+    const dup = { wallet: EVM, linked_wallets: [EVM.toLowerCase(), EVM.toUpperCase().replace("0X", "0x")] };
+    assert.equal(walletsFromClaims(dup, ETHEREUM).length, 1);
+  });
+
+  test("returns nothing rather than throwing on claims that carry no wallets", () => {
+    assert.deepEqual(walletsFromClaims({}, ETHEREUM), []);
+    assert.deepEqual(walletsFromClaims({ linked_wallets: "not-an-array" }, ETHEREUM), []);
+    assert.deepEqual(walletsFromClaims({ linked_wallets: [1, null, {}] }, ETHEREUM), []);
+  });
+
+  test("never reads `sub` as a wallet, even here", () => {
+    assert.deepEqual(walletsFromClaims({ sub: EVM }, ETHEREUM), []);
   });
 });

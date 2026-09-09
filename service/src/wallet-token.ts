@@ -173,3 +173,43 @@ export function describeTokenShape(token: string): TokenShape {
       : `JWT (${length} chars), no wallet claim${expiryNote}. The token was not issued with a wallet injected.`,
   };
 }
+
+/**
+ * Wallets carried by an *exchanged* access token.
+ *
+ * The stored PAT is opaque — 95 characters, one segment — so it carries no claims at all. But
+ * exchanging it at `/api/v2/auth/tokens/exchange` yields a JWT that does, and that JWT carries both
+ * a `wallet` claim (the authenticated wallet) and a `linked_wallets` array (every wallet linked to
+ * the account). Measured on 2026-09-08: nine linked wallets, six EVM and three Solana, with
+ * `read:wallets` among the granted scopes.
+ *
+ * That is what makes "derive the wallet list from the token" possible for an opaque PAT, and it is
+ * the step this originally missed: the raw token was inspected, found to carry nothing, and
+ * declared a dead end without following the exchange the service already performs for every
+ * wallet-scoped read.
+ *
+ * The primary wallet comes first, then linked ones, filtered to the configured chains — a Solana
+ * address on an EVM-only config is dropped rather than failing validation at startup.
+ */
+export function walletsFromClaims(
+  claims: Record<string, unknown>,
+  chains: readonly ChainIdentifier[],
+): string[] {
+  const primary = extractWalletAddress(claims);
+  const linked = claims.linked_wallets;
+  const candidates = [
+    ...(typeof primary === "string" ? [primary] : []),
+    ...(Array.isArray(linked) ? linked.filter((w): w is string => typeof w === "string") : []),
+  ];
+
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const wallet of candidates) {
+    const key = wallet.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    if (!chains.some((chain) => addressMatchesChain(wallet, chain))) continue;
+    out.push(wallet);
+  }
+  return out;
+}
