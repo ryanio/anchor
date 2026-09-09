@@ -39,6 +39,8 @@ packaging/pkg/
 
 # firmware build output — PlatformIO; arduino-cli builds into ~/.cache/arduino
 .pio/
+# the simulator's NVS, written beside the project it was run from
+sim-nvs-*.txt
 
 # site build output
 site/dist/

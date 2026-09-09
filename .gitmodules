@@ -1,0 +1,4 @@
+[submodule "devices/firmware/cardputer/flint"]
+	path = devices/firmware/cardputer/flint
+	url = https://github.com/ryanio/cardputer.git
+	branch = feat/app-packs

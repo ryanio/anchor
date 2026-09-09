@@ -74,14 +74,25 @@
   readings. Text narrows what is on screen and is never dispatched. A display blanks on logind's
   `LockedHint`, clearing the keys as well as the backlight.
 - No device action can sign, spend or approve. The vocabulary has no such verb and a test asserts it.
-- **The Cardputer has a device end.** Anchor now paints an M5Stack Cardputer over USB CDC, and the
-  firmware is an app in flint (`ryanio/cardputer`) rather than a second firmware in this repo: a
-  view drawing the surfaces the adapter sends, in the palette of the live Omarchy theme. Nothing on
-  the unit fetches anything, holds a credential or can ask for an action; the desktop composes every
-  frame, because the data service binds loopback and no device should hold a key to it. Typing on
-  the keyboard opens a filter that narrows rows the host already has, and no keystroke while it is
+- **The Cardputer has a device end.** Anchor now paints an M5Stack Cardputer over USB CDC. The app
+  is `devices/firmware/cardputer/app/` — a view drawing the surfaces the adapter sends, in the
+  palette of the live Omarchy theme — built against flint (`ryanio/cardputer`), Ryan's Cardputer ADV
+  firmware, which is vendored as a pinned git submodule rather than forked or reimplemented. Nothing
+  on the unit fetches anything, holds a credential or can ask for an action; the desktop composes
+  every frame, because the data service binds loopback and no device should hold a key to it. Typing
+  on the keyboard opens a filter that narrows rows the host already has, and no keystroke while it is
   open reaches the panel at all. Verified in flint's simulator, which renders the real view code at
   the real 240x135; **no Cardputer has run it yet.**
+- **An Anchor unit is one app, as a build fact rather than a setting.** The app used to live in
+  flint's tree, where a build profile arranged for the menu to show one card out of eleven. It now
+  lives here and flint is the platform: `devices/firmware/cardputer/platformio.ini` leaves
+  `flint/src/views/` out of the source filter entirely, so flint's ten other apps are not compiled,
+  not linked and not reachable by any keystroke. Measured on the ADV target: 18.0% RAM and 33.5% of
+  the app slot, against the full flint firmware's 20.5% and 37.7%. The reason for the move is in
+  [docs/devices-cardputer.md](docs/devices-cardputer.md): someone installing Anchor should not find
+  ten unrelated apps on the unit, and someone reading flint should not find Anchor's wire protocol
+  in it. `git submodule update --init` is the one command a contributor has to run, and a build
+  without it stops in a fifth of a second saying so.
 - `anchor-devices --cardputer` drives one, and waits for the device's `hello` before painting when
   the port was guessed: every ESP32-S3 with native USB enumerates through the same Espressif
   descriptor, so a matching port name identifies a chip family and not a device.

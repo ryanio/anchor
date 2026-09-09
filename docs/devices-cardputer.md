@@ -10,12 +10,13 @@ proposal queue's approval boundary sits, and what runs on the device.
 
 > **Status: both ends written, neither run on a Cardputer.** `devices/src/adapters/cardputer.ts`
 > implements `AnchorDevice` and its tests run with nothing plugged in. The device end now exists too,
-> as an app in **flint** (`ryanio/cardputer`), Ryan's Cardputer ADV firmware: `src/views/anchor.cpp`
-> against a `cable::` transport, built and photographed in flint's simulator, which runs the real
-> view, ui and store code against M5GFX's own panel driver at the real 240x135. **No Cardputer has
-> run it** — none has been attached — so everything below about the hardware itself is still vendor
-> documentation rather than measurement, and is marked where it is used. AGENTS.md is emphatic that a
-> plausible reading is not a measured one, and this file keeps that distinction.
+> and it is in this repository: `devices/firmware/cardputer/app/`, built against **flint**
+> (`ryanio/cardputer`), Ryan's Cardputer ADV firmware, which is a git submodule beside it. It is
+> built and photographed in flint's simulator, which runs the real view, ui and store code against
+> M5GFX's own panel driver at the real 240x135. **No Cardputer has run it** — none has been
+> attached — so everything below about the hardware itself is still vendor documentation rather than
+> measurement, and is marked where it is used. AGENTS.md is emphatic that a plausible reading is not
+> a measured one, and this file keeps that distinction.
 
 ## What the device is
 
@@ -406,11 +407,11 @@ host`. Not an empty panel, and certainly not a plausible-looking one.
 
 ### What runs on the device
 
-**Built, and running in flint's simulator.** `src/views/anchor.cpp` is a view like any other in that
-firmware: it draws the body and answers keys, and the spine owns the menu, the exit convention and
-the status bar. One difference from the sketch below is worth carrying back into this document: flint
-draws its own status bar across the bottom 12 rows, so the host's geometry stops at 123 rows rather
-than 135. `CARDPUTER_FLINT` in the adapter is that area, an 18px strip over nine 80x35 tiles, and a
+**Built, and running in flint's simulator.** `devices/firmware/cardputer/app/src/anchor.cpp` is a
+view like any other flint app: it draws the body and answers keys, and the spine owns the menu, the
+exit convention and the status bar. It simply is not in flint's tree. One difference from the sketch
+below is worth carrying back into this document: flint draws its own status bar across the bottom 12
+rows, so the host's geometry stops at 123 rows rather than 135. `CARDPUTER_FLINT` in the adapter is that area, an 18px strip over nine 80x35 tiles, and a
 test asserts it tiles exactly.
 
 A thin renderer, and deliberately nothing else. It holds:
@@ -452,12 +453,10 @@ legitimate alternative worth an hour's thought.
 Over USB-C. The ESP32-S3 has native USB, so no bridge chip and no driver.
 
 ```bash
-# In a flint checkout. The anchor profile ships that one app and brings no radio up.
+# In devices/firmware/cardputer, once the flint submodule is checked out.
+# This build ships that one app and brings no radio up.
 pio run -e cardputer-adv-anchor -t upload
 pio device monitor
-
-# The whole firmware, Anchor among its eleven apps
-pio run -t upload
 ```
 
 The FQBN this section used to name, `esp32:esp32:m5stack_stamps3`, does not exist: the Espressif
@@ -477,27 +476,50 @@ from memory, which is the mistake AGENTS.md names about endpoint paths, in anoth
 M5Burner is fine for one-off flashing by hand; it should not be the documented path, because a
 reproducible build is the point.
 
-### Where firmware should live
+### Where firmware lives
 
-**Decided: in flint**, `ryanio/cardputer`, as `src/views/anchor.cpp`. Anchor keeps the protocol, the
-adapter and a capture tool; `devices/firmware/cardputer/README.md` is the pointer between them.
+**Decided: the app is here, the platform is a submodule.** `devices/firmware/cardputer/app/` holds
+the view, the host link, the simulator's half of that link and the menu art; `flint/` beside it is
+`ryanio/cardputer` pinned to a commit; `platformio.ini` in that directory is the whole of the glue.
 
-The question stopped being "where should a new firmware live" the moment there was already a working
-one for this exact board. flint has a view contract, an exit convention every screen obeys, a
-keyboard layer that has met the ADV's TCA8418 controller, a status bar, and a simulator that renders
-the real view code at the real geometry. A standalone sketch here was written first, and it compiled
-— and it had none of that. Two firmwares for one device is a cost with no payer, and the second one
-starts by rebuilding what the first already does.
+**This reverses an earlier decision in this document, and the reason is worth stating plainly,
+because the first answer was not wrong about the thing it was looking at.** The question was read as
+"where should a firmware live", and against that question flint wins outright: it already had a view
+contract, an exit convention, a keyboard layer that has met the ADV's TCA8418 controller, a status
+bar and a simulator, and a second firmware for one device is a cost with no payer. All of that still
+holds. None of it was ever the argument for putting *Anchor's* files in flint's tree.
 
-What Anchor gives up by that choice is a wire format whose two ends move in one commit; a protocol
-version is now the thing that keeps them honest, and `hello` carries it in both directions. What it
-gains is every app on that unit, and a way to look at this one without hardware.
+The argument that decided it is about the person at the other end. Someone who installs Anchor and
+flashes a Cardputer with it should find one screen on the unit: theirs. In flint's tree that took a
+build profile to arrange, and the profile still shipped a firmware carrying ten unrelated apps —
+a drum machine, a marble maze, four token feeds — that a wrong keystroke could surface, and that a
+reader of the source had to scroll past to find the panel. Symmetrically, someone reading flint had
+Anchor's wire protocol in the middle of it, for a program flint does not speak to. Two projects, two
+audiences, one tree: the ownership was wrong even where the reuse was right.
 
-Three things flint grew to take the app, and each was friction worth fixing in the platform rather
-than working around in the view: `cable.*`, a host link beside `net` with a simulator half; build
-profiles, so a unit can ship one app without deleting the other ten; and `ui::clip`, plus an
-`asciify` that folds an em dash to a hyphen rather than dropping it, since Anchor writes one wherever
-it has no reading.
+So the reuse stays and the ownership moves. Anchor builds *against* flint rather than living in it.
+An Anchor build compiles no flint view at all — measured at 33.5% of the app slot against the full
+firmware's 37.7% — so "only the Anchor app is on this unit" is a fact about what was linked rather
+than a setting somebody could get wrong.
+
+What made it possible is that flint grew a way to host an app it does not contain, which is
+[`docs/APPS.md`](https://github.com/ryanio/cardputer/blob/main/docs/APPS.md) in that repository:
+`flint.ini` for the board and flags, a profile declarable in build flags, `view::appBegin` for
+whatever an app owns beyond drawing, and `view::View::art` for a menu icon that is not in flint's
+atlas. None of the four mentions Anchor. That is the test of whether this was a platform change or
+an Anchor-shaped hole, and it is the reason this belongs upstream rather than in a fork.
+
+What Anchor gives up is a wire format whose two ends move in one commit — a protocol version keeps
+them honest instead, and `hello` carries it in both directions — plus the cost of a submodule, which
+is one command a contributor has to run and a build that says so when they have not. What it gains
+is the platform, the simulator, and a unit that is one app.
+
+Three things flint grew earlier, when the app was still inside it, were friction worth fixing in the
+platform rather than working around in the view, and they stayed behind when the view left:
+`ui::clip`; an `asciify` that folds an em dash to a hyphen rather than dropping it, since Anchor
+writes one wherever it has no reading; and profiles. The host link went the other way. It was
+flint's `cable.*` while Anchor lived there and it is Anchor's now, because only Anchor speaks it,
+and a transport with one speaker belongs with the speaker.
 
 ## What the scaffold does today
 
@@ -529,8 +551,13 @@ add a dependency, or touch shared code.
 3. **Wi-Fi or a broker**, if tethered Cardputers turn out to be unacceptable. That is a change to
    invariant 6's blast radius and needs `docs/security.md` updated in the same change, plus — for
    MQTT — the first new runtime dependency this workspace would take.
-4. ~~**Where firmware lives**~~ — settled: flint, `ryanio/cardputer`. Still open is whether a
-   protocol change should be gated by building both ends, and where that gate would run.
+4. ~~**Where firmware lives**~~ — settled twice. First as "in flint", then, once it was clear that an
+   Anchor unit should carry no flint app and flint should carry no Anchor protocol, as "the app
+   here, flint as a pinned submodule". See [Where firmware lives](#where-firmware-lives). Still open
+   is whether a protocol change should be gated by building both ends, and where that gate would
+   run: the simulator build is about fifteen seconds plus a PlatformIO install, so a CI job is
+   affordable, and the argument against is that it needs the submodule checked out in a workflow
+   that currently checks out nothing else.
 5. **`O_NOCTTY`.** If it turns out to matter for opening the serial port from a daemon with no
    controlling terminal, `fs.createReadStream` cannot pass the flag and the fix is either a tiny
    native helper or a serial-port dependency. Worth knowing before it is a surprise.
