@@ -152,6 +152,20 @@ test("renders an amount in the denomination it arrived in and no other", () => {
   assert.equal(Model.formatMoney("1.5", { symbol: "🤑" }), "1.5");
 });
 
+test("a deadline says which wallet it is on", () => {
+  // The service tags every merged row with the wallet it came from. With nine wallets a countdown
+  // on something you cannot identify is a decision you cannot act on.
+  const state = stateWith({
+    health: health(),
+    activity: {
+      data: { assetEvents: [offerEvent({ anchorWallet: `0x${"d".repeat(40)}` })] },
+      receivedAt: NOW,
+    },
+  });
+  const [first] = Model.deadlines(state, NOW);
+  assert.equal(first.wallet, `0x${"d".repeat(40)}`);
+});
+
 test("a total is the sum of every wallet, and each wallet is still readable", () => {
   // The service fans out and reports each wallet beside the sum, so this reads rather than derives:
   // every row is a figure that wallet's own portfolio page would show. Nothing divides a total.

@@ -40,7 +40,14 @@ const ROUTES = [
 ];
 
 /** Routes that read the configured wallet, and so need one configured. */
-const WALLET_ROUTES = new Set([
+/**
+ * Routes whose answer is about the configured wallets.
+ *
+ * Exported so a test can walk it. Every one of these read `wallets[0]` and presented the result as
+ * the whole picture, and the widget labelled it "9 wallets"; the guard in `wallets.test.ts` exists
+ * so a route added later cannot quietly do the same.
+ */
+export const WALLET_ROUTES = new Set([
   "/portfolio",
   "/portfolio/value",
   "/portfolio/history",

@@ -1587,6 +1587,14 @@ function deadlines(state, nowMs, settings) {
       collection: displayName(slug, names, maxName),
       url: collectionUrl(slug),
       amount: paymentAmount(event.payment),
+      /**
+       * Which of your wallets the offer is on, when there is more than one.
+       *
+       * The service tags every merged row with the wallet it came from, and until now nothing read
+       * the tag. With nine wallets, "SAMPLE Cat #1111 · 6h" is a countdown on something you cannot
+       * identify — the row tells you a decision is due and not whose it is.
+       */
+      wallet: sanitize(event.anchorWallet, 64),
       expiresAt: expiry,
       remaining,
       label: countdown(remaining),

@@ -261,7 +261,14 @@ Column {
         required property var modelData
         width: parent.width
         label: modelData.name
-        sublabel: [modelData.collection, modelData.amount].filter((p) => p !== "").join("  ·  ")
+        // The wallet joins the sub-line only when there is more than one to tell apart. On a
+        // single-wallet setup naming it says nothing and costs a row's width; on nine, a countdown
+        // on something you cannot identify is a decision you cannot act on.
+        sublabel: [
+          modelData.collection,
+          modelData.amount,
+          root.wallets.length > 1 && modelData.wallet !== "" ? Model.shortAddress(modelData.wallet) : "",
+        ].filter((p) => p !== "").join("  ·  ")
         value: modelData.label
         url: modelData.url === null ? "" : modelData.url
         foreground: root.panelForeground
