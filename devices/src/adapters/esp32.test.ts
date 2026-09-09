@@ -88,6 +88,29 @@ const tile = (label: string): Surface => {
 };
 const frameFor = (surface: Surface): Frame => new Map([[SCREEN_SLOT, surface]]);
 
+/**
+ * A list with the selection on a given row.
+ *
+ * The dirty-rectangle tests need two frames that differ in *part* of the panel, and the difference
+ * has to survive an environment this machine cannot reproduce: CI has different fonts, a different
+ * ImageMagick, and no Omarchy themes. Two attempts failed there while passing here — first a label
+ * change, then a meter — so this stops relying on how anything renders and moves a filled
+ * rectangle instead. A selection highlight is a solid band: no renderer collapses it, no font
+ * changes its size, and it covers a fraction of the panel rather than all of it, which is the
+ * property being asserted.
+ */
+const listWithSelection = (selected: number | undefined): Surface => ({
+  kind: "list",
+  // Dirty regions are quantised to 32px tiles, and the test panel is 128px tall — four tile rows.
+  // A selection *moving* between two 18px rows always straddles two of them, which is exactly half
+  // the panel and fails the bound below no matter which rows are chosen. Adding a highlight where
+  // there was none keeps the change inside the first row, and so inside one tile row: a quarter.
+  rows: ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel"].map((label) => ({
+    label,
+  })),
+  selected,
+});
+
 /** Every message type, for reading back what the *host* wrote. */
 const ALL_TYPES: ReadonlySet<number> = new Set(Object.values(MessageType));
 
@@ -231,9 +254,9 @@ describe("paint", { skip: noRasteriser }, () => {
     // This is the whole case for shipping pixels. Without it the link carries a quarter of a
     // megabyte every time a portfolio ticks; with it, it carries the digits.
     const { link, device } = await connect();
-    await device.paint(frameFor(tile("ready")));
+    await device.paint(frameFor(listWithSelection(undefined)));
     link.sent.length = 0;
-    await device.paint(frameFor(tile("busy")));
+    await device.paint(frameFor(listWithSelection(0)));
     const { tiles } = sent(link);
     assert.ok(tiles.length > 0, "a changed surface must repaint something");
     assert.ok(

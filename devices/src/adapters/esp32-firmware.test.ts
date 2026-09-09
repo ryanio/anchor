@@ -220,8 +220,15 @@ describe("firmware conformance", { skip: !compilerAvailable() || !rasteriserAvai
 
   test("a second paint sends only dirty rectangles, and the firmware still holds the whole frame", async () => {
     const { link, device } = await connect();
-    const first: Surface = { kind: "tile", emphasis: "ground", label: "anchor", value: "1.42" };
-    const second: Surface = { kind: "tile", emphasis: "ground", label: "anchor", value: "9.87" };
+    // Two frames that differ in part of the panel, without depending on how anything renders text.
+    // A label change and then a meter both passed here and failed on CI, which has different fonts
+    // and a different ImageMagick; a selection highlight is a solid band that moves, and no
+    // renderer or font can collapse it to nothing.
+    const rows = ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel"].map((label) => ({
+      label,
+    }));
+    const first: Surface = { kind: "list", rows, selected: 0 };
+    const second: Surface = { kind: "list", rows, selected: 1 };
     await device.paint(frameFor(first));
     await device.paint(frameFor(second));
 
