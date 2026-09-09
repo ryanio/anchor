@@ -233,14 +233,22 @@ function compactDecimal(value) {
   const int = m[2].replace(/^0+(?=\d)/, "");
   const frac = m[3] ?? "";
 
-  const tier = Math.min(UNITS.length - 1, Math.floor((int.length - 1) / 3));
-  const shift = tier * 3;
-  const newInt = int.slice(0, int.length - shift) || "0";
-  const newFrac = int.slice(int.length - shift) + frac;
+  // The tier is chosen from the digits, then checked against the rounding, because rounding can
+  // move the number into the next one. $999.99 picked "no unit", rounded to 1000, and rendered as
+  // "$1000.00" in a column of "$4.44K" — a magnitude format that had stopped being one.
+  for (let tier = Math.min(UNITS.length - 1, Math.floor((int.length - 1) / 3)); ; tier++) {
+    const shift = tier * 3;
+    const newInt = int.slice(0, int.length - shift) || "0";
+    const newFrac = int.slice(int.length - shift) + frac;
 
-  const places = newInt.length >= 3 ? 0 : newInt.length === 2 ? 1 : 2;
-  const rounded = roundDecimal(`${newInt}.${newFrac || "0"}`, places);
-  return `${sign}${trimZeros(rounded ?? newInt)}${UNITS[tier]}`;
+    const places = newInt.length >= 3 ? 0 : newInt.length === 2 ? 1 : 2;
+    const rounded = roundDecimal(`${newInt}.${newFrac || "0"}`, places);
+    const body = trimZeros(rounded ?? newInt);
+
+    const grew = (DECIMAL_RE.exec(body)?.[2] ?? "").length > newInt.length;
+    if (grew && tier < UNITS.length - 1) continue;
+    return `${sign}${body}${UNITS[tier]}`;
+  }
 }
 
 /** Group an integer part with thin separators, for the exact figure in a tooltip. */
@@ -1165,6 +1173,7 @@ function statusSummary(state, nowMs, settings) {
 
 const BREAKDOWNS = [
   { key: "type", label: "type" },
+  { key: "wallet", label: "wallets" },
   { key: "asset", label: "assets" },
   { key: "chain", label: "chains" },
 ];
@@ -1277,6 +1286,39 @@ function portfolioBreakdown(state, settings, mode) {
     };
   }
 
+  if (mode === "wallet") {
+    // Straight from the service, which is the only place it can come from: it fans out per wallet
+    // and reports each one beside the sum. Nothing here divides a total by anything — every row is
+    // a figure some wallet's own portfolio page would show.
+    const rows = walletValues(state);
+    if (rows.length === 0) return { rows: [], total: null, scope: "", symbol: "USD" };
+    const total = sumDecimals(rows.map((r) => r.usd));
+    const head = rows.slice(0, BREAKDOWN_LIMIT);
+    const tail = rows.slice(BREAKDOWN_LIMIT);
+    const out = head.map((row) => ({
+      label: shortAddress(row.address),
+      value: row.usd,
+      text: formatMoney(row.usd, usd),
+      share: share(row.usd, total),
+    }));
+    if (tail.length > 0) {
+      const rest = sumDecimals(tail.map((row) => row.usd));
+      out.push({
+        label: `${tail.length} more`,
+        value: rest,
+        text: formatMoney(rest, usd),
+        share: share(rest, total),
+      });
+    }
+    return {
+      rows: out,
+      total,
+      totalText: formatMoney(total, { symbol: "USD", exact: true }),
+      scope: "everything Anchor can see, by wallet",
+      symbol: "USD",
+    };
+  }
+
   const balances = balanceRows(state, settings);
   if (balances.length === 0) return { rows: [], total: null, scope: "", symbol: "USD" };
 
@@ -1336,9 +1378,17 @@ function portfolioBreakdown(state, settings, mode) {
  */
 function provenance(state, nowMs, settings) {
   const wallets = walletList(state?.health);
+  const missing = missingWallets(state).length;
   const parts = [];
   if (wallets.length === 1) parts.push(shortAddress(wallets[0]));
-  else if (wallets.length > 1) parts.push(`${wallets.length} wallets`);
+  // "8 of 9 wallets", not "9 wallets", when one did not answer. The service reports which ones it
+  // could not read rather than trimming them, and this is the half that makes reporting it worth
+  // anything: a total silently missing a wallet is exactly the bug the fan-out exists to fix.
+  else if (wallets.length > 1) {
+    parts.push(
+      missing > 0 ? `${wallets.length - missing} of ${wallets.length} wallets` : `${wallets.length} wallets`,
+    );
+  }
 
   const age = ageSeconds(state?.portfolio, nowMs);
   if (age !== null) parts.push(`as of ${relativeAge(age)}`);
@@ -1357,6 +1407,35 @@ function provenance(state, nowMs, settings) {
  * already turned a JSON number into a float, so the string form is preferred wherever the API
  * offers one, and a number is only stringified as a last resort.
  */
+/**
+ * Each wallet's own total, biggest first.
+ *
+ * The service fans out per wallet and reports them beside the sum, so this reads rather than
+ * derives. Sorted by value because a nine-row list ordered by however the JWT happened to list them
+ * is a list nobody reads past the third row.
+ */
+function walletValues(state) {
+  const data = state?.portfolio?.data ?? null;
+  const rows = Array.isArray(data?.wallets) ? data.wallets : [];
+  return rows
+    .map((row) => ({ address: sanitize(row?.address, 64), usd: pickDecimal(row, TOTAL_KEYS) }))
+    .filter((row) => row.address !== "" && row.usd !== null)
+    .sort((a, b) => Number(b.usd) - Number(a.usd));
+}
+
+/**
+ * Wallets the total on screen does not include.
+ *
+ * The service says so rather than trimming them; this is the half that makes saying so worth
+ * anything. A total quietly missing a wallet is the bug the fan-out exists to fix, and a total
+ * visibly missing one is a different, honest thing.
+ */
+function missingWallets(state) {
+  const data = state?.portfolio?.data ?? null;
+  const rows = Array.isArray(data?.incomplete) ? data.incomplete : [];
+  return rows.map((w) => sanitize(w, 64)).filter((w) => w !== "");
+}
+
 const TOTAL_KEYS = ["totalValueUsd", "total_value_usd", "netWorthUsd", "net_worth_usd", "value"];
 const NFT_VALUE_KEYS = ["nftValueUsd", "nft_value_usd"];
 const TOKEN_VALUE_KEYS = ["tokenValueUsd", "token_value_usd"];
@@ -1933,6 +2012,8 @@ if (typeof module !== "undefined") {
     sumDecimals,
     balanceRows,
     portfolioBreakdown,
+    walletValues,
+    missingWallets,
     provenance,
     BREAKDOWNS,
     paymentAmount,
