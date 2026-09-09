@@ -181,13 +181,16 @@ async function main(): Promise<void> {
 
   const { config, source } = loadConfig(options.configPath);
   let tokens = loadTokens(options.theme);
-  const device = options.dryRun
-    ? await openVirtual(options.model)
-    : options.esp32
-      ? await openEsp32(tokens, options.esp32Path)
-      : options.cardputer
-        ? await openCardputer(tokens, options.cardputerPath)
-        : await openStreamDeck(tokens);
+  const openDevice = async () =>
+    options.dryRun
+      ? await openVirtual(options.model)
+      : options.esp32
+        ? await openEsp32(tokens, options.esp32Path)
+        : options.cardputer
+          ? await openCardputer(tokens, options.cardputerPath)
+          : await openStreamDeck(tokens);
+
+  let device = await openDevice();
   const panel = new Panel(config, tokens);
   const desktop = new DesktopState();
 
@@ -220,6 +223,46 @@ async function main(): Promise<void> {
   let portfolioTimeframe: Timeframe | null = null;
   let painting = false;
   let repaintQueued = false;
+  let reconnecting = false;
+
+  /**
+   * Reopen the device after it stops answering.
+   *
+   * A USB device can go away and come back under the same path: an ESP32 resets and re-enumerates,
+   * a Stream Deck wedges. The old handle stays open and writable and goes nowhere, so a panel that
+   * opened once at startup paints into a dead file descriptor for as long as it runs — which looks
+   * exactly like the hardware died. Reopening is the whole fix; the backoff is so a device that is
+   * genuinely unplugged does not spin.
+   *
+   * Not used by `--once` or `--dry-run`: a single frame has nothing to recover into.
+   */
+  const reconnect = async (): Promise<void> => {
+    if (reconnecting || options.once || options.dryRun) return;
+    reconnecting = true;
+    for (let attempt = 0; ; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, Math.min(1000 * 2 ** attempt, 15_000)));
+      try {
+        try {
+          await device.close();
+        } catch {
+          // The old handle is why we are here; failing to close it changes nothing.
+        }
+        device = await openDevice();
+        listen();
+        await device.setBrightness(deckBrightness);
+        process.stderr.write(`reconnected to ${device.id}\n`);
+        reconnecting = false;
+        void repaint();
+        return;
+      } catch (error) {
+        if (attempt === 0) {
+          process.stderr.write(
+            `device went away (${error instanceof Error ? error.message : String(error)}); retrying\n`,
+          );
+        }
+      }
+    }
+  };
 
   /**
    * Refresh portfolio data, but only when the panel is actually showing it.
@@ -281,6 +324,7 @@ async function main(): Promise<void> {
       );
     } catch (error) {
       process.stderr.write(`paint failed: ${error instanceof Error ? error.message : String(error)}\n`);
+      void reconnect();
     } finally {
       painting = false;
       if (repaintQueued) {
@@ -314,15 +358,25 @@ async function main(): Promise<void> {
   }
 
   let deckBrightness = panel.deckBrightness;
-  device.onInput((input) => {
-    if (!panel.handle(input)) return;
-    if (panel.deckBrightness !== deckBrightness) {
-      deckBrightness = panel.deckBrightness;
-      void device.setBrightness(deckBrightness);
-    }
-    // A page switch or a timeframe scrub changes what data is wanted, so ask before repainting.
-    void refreshPortfolio().then(() => repaint());
-  });
+  /**
+   * Attach input handling to whichever device is current.
+   *
+   * Called again after a reconnect: the handlers live on the device object, so a replacement opened
+   * after a reset would take input from nobody. Keys going dead after a recovery is a worse bug
+   * than the disconnect it recovered from, because it looks like the software is simply broken.
+   */
+  const listen = (): void => {
+    device.onInput((input) => {
+      if (!panel.handle(input)) return;
+      if (panel.deckBrightness !== deckBrightness) {
+        deckBrightness = panel.deckBrightness;
+        void device.setBrightness(deckBrightness);
+      }
+      // A page switch or a timeframe scrub changes what data is wanted, so ask before repainting.
+      void refreshPortfolio().then(() => repaint());
+    });
+  };
+  listen();
 
   /**
    * A committed filter string from a device with a keyboard.
