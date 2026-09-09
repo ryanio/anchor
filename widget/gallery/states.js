@@ -135,6 +135,7 @@ const CASES = [
   // ------------------------------------------------------------------------------ getting started
   {
     id: "starting",
+    category: "Getting started",
     title: "Starting — the first read has not landed",
     looking:
       "The first frame after login, before anything has answered. It must not look like an error, " +
@@ -143,6 +144,7 @@ const CASES = [
   },
   {
     id: "setup-fresh",
+    category: "Getting started",
     title: "Setup — nothing configured yet",
     looking:
       "What every new user sees first. One obvious next action, and the two steps behind it out of " +
@@ -155,6 +157,7 @@ const CASES = [
   },
   {
     id: "setup-key-stored",
+    category: "Getting started",
     title: "Setup — API key stored, no wallet yet",
     looking: "One step done, one to go. Does the completed step leave the queue, or linger?",
     reading: base({
@@ -164,6 +167,7 @@ const CASES = [
   },
   {
     id: "setup-optional-only",
+    category: "Getting started",
     title: "Setup — required path done, optional left",
     looking:
       "The optional steps expand on their own here, because now they are the only thing left. " +
@@ -180,6 +184,7 @@ const CASES = [
   // ------------------------------------------------------------------------------- things wrong
   {
     id: "offline-cold",
+    category: "Something is wrong",
     title: "Offline — the service has never answered",
     looking:
       "Nothing cached, nothing to show. This is the state a stopped service produces on a fresh " +
@@ -191,6 +196,7 @@ const CASES = [
   },
   {
     id: "offline-warm",
+    category: "Something is wrong",
     title: "Offline — last known values, marked as such",
     looking:
       "The numbers are real but old, and the panel has to say so without shouting. Is it obvious " +
@@ -199,6 +205,7 @@ const CASES = [
   },
   {
     id: "stale",
+    category: "Something is wrong",
     title: "Stale — configured, but everything has outlived its TTL",
     looking:
       "Distinct from offline: the service is up, the readings are just old. Check that the two " +
@@ -212,6 +219,7 @@ const CASES = [
   },
   {
     id: "key-rejected",
+    category: "Something is wrong",
     title: "Warning — the stored key is being rejected",
     looking:
       "A credential exists and does not work, which is not the same as missing. The 401 has to " +
@@ -225,6 +233,7 @@ const CASES = [
   },
   {
     id: "collection-error",
+    category: "Something is wrong",
     title: "Warning — one collection failed, the rest are fine",
     looking:
       "A row that could not be fetched must stay visible and say why. Check that one bad row does " +
@@ -241,6 +250,7 @@ const CASES = [
   // ----------------------------------------------------------------------------------- working
   {
     id: "ready-quiet",
+    category: "Working",
     title: "Ready — nothing waiting",
     looking:
       "The common case, and the one most worth getting right. A total, where it came from, and " +
@@ -249,6 +259,7 @@ const CASES = [
   },
   {
     id: "ready-offers",
+    category: "Working",
     title: "Ready — offers waiting, one closing today",
     looking:
       "Two numbers competing for the same attention. Does the thing with a clock on it read as " +
@@ -263,6 +274,7 @@ const CASES = [
   },
   {
     id: "ready-urgent",
+    category: "Working",
     title: "Ready — a deadline inside the hour",
     looking:
       "The one place the theme's urgent colour is used. Check the contrast of that colour against " +
@@ -279,6 +291,7 @@ const CASES = [
   },
   {
     id: "ready-multi-wallet",
+    category: "Working",
     title: "Ready — several wallets",
     looking:
       "The hero pill becomes a count rather than an address. Check the provenance line: it is a " +
@@ -292,6 +305,7 @@ const CASES = [
   },
   {
     id: "value-hidden",
+    category: "Working",
     title: "Ready — the value is hidden",
     looking:
       "Someone screen-sharing presses V. Everything else must stay useful with the number gone, " +
@@ -303,6 +317,7 @@ const CASES = [
   // ------------------------------------------------------------------------------ the second view
   {
     id: "details-open",
+    category: "The second view",
     title: "Details — the whole disclosure",
     looking:
       "The longest the panel ever gets. This is where crowding shows up first: check the vertical " +

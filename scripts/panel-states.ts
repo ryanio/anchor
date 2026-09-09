@@ -32,14 +32,26 @@ const OMARCHY = "/usr/share/omarchy/shell";
 
 const require = createRequire(import.meta.url);
 const { CASES } = require(join(WIDGET, "gallery/states.js")) as {
-  CASES: Array<{ id: string; title: string; looking: string }>;
+  CASES: Array<{ id: string; title: string; looking: string; category: string }>;
 };
 
-export type PanelCase = { id: string; title: string; looking: string; file: string };
+export type PanelCase = {
+  id: string;
+  title: string;
+  looking: string;
+  category: string;
+  file: string;
+};
 
 /** Every state, whether or not it has been captured. The review page reads this. */
 export function panelCases(): PanelCase[] {
-  return CASES.map((c) => ({ id: c.id, title: c.title, looking: c.looking, file: `panel/${c.id}.png` }));
+  return CASES.map((c) => ({
+    id: c.id,
+    title: c.title,
+    looking: c.looking,
+    category: c.category,
+    file: `panel/${c.id}.png`,
+  }));
 }
 
 /**

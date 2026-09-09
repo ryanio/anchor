@@ -47,6 +47,8 @@ interface Surface {
   title: string;
   /** Where the shot lands under `review/`, when it is not `<id>.png`. */
   fileName?: string;
+  /** The folder this appears under on the review page. Defaults to the group. */
+  category?: string;
   /** What a reviewer should be looking for. Shown beside the shot. */
   looking: string;
   capture: (file: string) => Promise<void>;
@@ -311,6 +313,7 @@ const SURFACES: Surface[] = [
   {
     id: "bar",
     group: "widget",
+    category: "The bar",
     title: "Bar — the mark among its neighbours",
     looking:
       "The mark has to sit in a row of other people's icons. Compare drawn height, width and weight " +
@@ -333,6 +336,7 @@ const SURFACES: Surface[] = [
       title: state.title,
       looking: state.looking,
       fileName: state.file,
+      category: state.category,
       capture: ensurePanelStates,
     }),
   ),
@@ -343,27 +347,51 @@ const SURFACES: Surface[] = [
 const esc = (s: string): string =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
-function page(shots: Array<{ surface: Surface; file: string | null; reason?: string }>): string {
+type Shot = { surface: Surface; file: string | null; reason?: string };
+
+function page(shots: Shot[]): string {
   const captured = shots.filter((s) => s.file !== null);
-  const cards = shots
-    .map(({ surface, file, reason }) => {
-      const body =
-        file === null
-          ? `<p class="skipped">Not captured — ${esc(reason ?? "unknown reason")}</p>`
-          : `<div class="shot" data-id="${esc(surface.id)}">
-        <img src="${esc(file)}" alt="${esc(surface.title)}">
+
+  const card = ({ surface, file, reason }: Shot): string => {
+    const body =
+      file === null
+        ? `<p class="skipped">Not captured — ${esc(reason ?? "unknown reason")}</p>`
+        : `<div class="shot" data-id="${esc(surface.id)}">
+        <img src="${esc(file)}" alt="${esc(surface.title)}" loading="lazy">
         <div class="pins"></div>
       </div>`;
-      return `<section class="card" id="s-${esc(surface.id)}">
+    // The bar strip is 1040px wide against a panel's 388, so it takes the whole row rather than a
+    // column it would have to shrink into — the one thing you cannot do to a shot of a 26px bar.
+    const wide = surface.group === "widget" ? " wide" : "";
+    return `<section class="card${wide}" id="s-${esc(surface.id)}">
   <header>
     <h2>${esc(surface.title)}</h2>
-    <span class="group">${esc(surface.group)}</span>
+    <span class="count" data-count-for="${esc(surface.id)}"></span>
   </header>
   <p class="looking">${esc(surface.looking)}</p>
   ${body}
   <ol class="notes" data-for="${esc(surface.id)}"></ol>
 </section>`;
-    })
+  };
+
+  // One folder per category, in declaration order — which is the order they are worth looking at,
+  // not alphabetical. Sixteen surfaces in one column is a scroll nobody finishes; five labelled
+  // folders of three or four, laid out across the page, is something you can hold in your head.
+  const folders = new Map<string, Shot[]>();
+  for (const shot of shots) {
+    const key = shot.surface.category ?? shot.surface.group;
+    folders.set(key, [...(folders.get(key) ?? []), shot]);
+  }
+
+  const cards = [...folders]
+    .map(
+      ([name, group]) => `<details class="folder" open>
+  <summary><span class="folder-name">${esc(name)}</span><span class="folder-count">${group.length}</span></summary>
+  <div class="cards">
+${group.map(card).join("\n")}
+  </div>
+</details>`,
+    )
     .join("\n");
 
   return `<!doctype html>
@@ -385,7 +413,40 @@ function page(shots: Array<{ surface: Surface; file: string | null; reason?: str
     font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, sans-serif;
     padding: 32px clamp(16px, 4vw, 40px) 120px;
   }
-  .wrap { max-width: 1180px; margin: 0 auto; }
+  /* Wide, because the point is to see states beside each other rather than one at a time. */
+  .wrap { max-width: 1800px; margin: 0 auto; }
+
+  .folder { border-top: 1px solid var(--border); margin-top: 26px; }
+  .folder > summary {
+    display: flex; align-items: center; gap: 10px; cursor: pointer;
+    padding: 14px 2px; list-style: none; user-select: none;
+  }
+  .folder > summary::-webkit-details-marker { display: none; }
+  /* A disclosure triangle drawn rather than borrowed, so it points the same way in every browser. */
+  .folder > summary::before {
+    content: ""; width: 0; height: 0; flex: none;
+    border-left: 6px solid var(--muted); border-top: 5px solid transparent;
+    border-bottom: 5px solid transparent; transform: rotate(0deg);
+    transition: transform .15s ease;
+  }
+  .folder[open] > summary::before { transform: rotate(90deg); }
+  .folder-name { font-size: 17px; font-weight: 620; letter-spacing: -.01em; }
+  .folder-count {
+    color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums;
+    border: 1px solid var(--border); border-radius: 999px; padding: 1px 8px;
+  }
+  .folder-count.has-notes { color: var(--accent); border-color: var(--accent); }
+
+  /* The panel shots are 388px, so three or four fit across a wide window. auto-fill rather than
+     auto-fit: with one card left over in a folder, auto-fit stretches it to the full width and a
+     388px screenshot becomes a blurry banner. */
+  .cards {
+    display: grid; gap: 18px; padding: 4px 0 22px;
+    grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
+    align-items: start;
+  }
+  .card.wide { grid-column: 1 / -1; }
+  @media (max-width: 900px) { .cards { grid-template-columns: 1fr; } }
   h1 { margin: 0 0 6px; font-size: 26px; letter-spacing: -.02em; }
   .lede { margin: 0 0 28px; color: var(--muted); max-width: 68ch; }
   .lede kbd {
@@ -398,6 +459,10 @@ function page(shots: Array<{ surface: Surface; file: string | null; reason?: str
   }
   .card header { display: flex; align-items: baseline; gap: 12px; }
   h2 { margin: 0; font-size: 17px; font-weight: 600; }
+  .count:not(:empty) {
+    color: var(--bg); background: var(--accent); font-size: 11px; font-weight: 700;
+    border-radius: 999px; padding: 1px 7px; font-variant-numeric: tabular-nums;
+  }
   .group {
     font: 10.5px ui-monospace, Menlo, monospace; letter-spacing: .1em;
     text-transform: uppercase; color: var(--accent);
@@ -547,6 +612,21 @@ function page(shots: Array<{ surface: Surface; file: string | null; reason?: str
       ta.style.height = "auto";
       ta.style.height = ta.scrollHeight + "px";
     });
+
+    // Open notes only. A folder can be collapsed, and a badge that counted handled ones would say
+    // "there is something here" long after there was not.
+    var open = items.filter(function (n) { return !n.done; }).length;
+    var badge = document.querySelector('[data-count-for="' + id + '"]');
+    if (badge) badge.textContent = open > 0 ? String(open) : "";
+
+    document.querySelectorAll(".folder").forEach(function (folder) {
+      var pending = folder.querySelectorAll(".count:not(:empty)").length;
+      var label = folder.querySelector(".folder-count");
+      if (!label) return;
+      var total = folder.querySelectorAll(".card").length;
+      label.textContent = pending > 0 ? pending + " of " + total : String(total);
+      label.classList.toggle("has-notes", pending > 0);
+    });
   }
 
   document.querySelectorAll(".shot").forEach(function (shot) {
@@ -661,7 +741,7 @@ if (wanted.some((s) => s.group === "widget")) warnIfWidgetIsStale();
 if (existsSync(OUT)) for (const f of readdirSync(OUT)) rmSync(join(OUT, f), { recursive: true });
 mkdirSync(OUT, { recursive: true });
 
-const results: Array<{ surface: Surface; file: string | null; reason?: string }> = [];
+const results: Shot[] = [];
 for (const surface of wanted) {
   const name = surface.fileName ?? `${surface.id}.png`;
   try {
