@@ -14,6 +14,25 @@ becomes `## [0.1.0] - YYYY-MM-DD` at the moment the tag is pushed, and not befor
 
 ### Added
 
+**Devices** — Anchor on physical hardware, starting with the Elgato Stream Deck. Opt-in: the
+workspace keeps its own dependency, so a machine with no device attached installs nothing.
+
+- A device contract (`AnchorDevice`) that panels are written against rather than a Stream Deck
+  program: devices declare named slots, Anchor paints medium-neutral surfaces into them and receives
+  input back. A `VirtualDevice` is the second implementation, so panels render and are reviewable
+  with no hardware attached.
+- Colour resolves through the live Omarchy theme, never a literal, and the font family stays
+  `monospace` so a device follows `omarchy font set`. Marks are held to WCAG AA over every installed
+  theme; a theme whose accent misses the 3:1 floor is nudged toward its own foreground rather than
+  drawn illegibly.
+- Key faces are authored as SVG and rasterised straight to raw RGB by ImageMagick, so rendering adds
+  no dependency. Glyph ink is measured through the same rasteriser and cached per font, because Nerd
+  Font symbols advance 0.6em but paint up to 1.04em wide.
+- No device action can sign, spend or approve. The vocabulary has no such verb and a test asserts it.
+- Two pages ship: Omarchy desktop control (workspaces, theme, night light, screenshot, volume and
+  workspace dials) and an Anchor page showing service reachability and whether a wallet is
+  configured.
+
 **The data service** — the foundation everything else reads from, so there is one cache, one
 outbound rate limit, and one place where freshness is tracked.
 
