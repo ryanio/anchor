@@ -14,6 +14,40 @@ Findings were reported upstream on **2026-09-07**, and this file was last checke
 
 ---
 
+## 0. The live API answers in camelCase; the generated types declare snake_case
+
+**Upstream problem.** `@opensea/api-types@0.9.3` declares these responses in snake_case, and
+`api.opensea.io` answers in camelCase. Measured 2026-09-08 through the local service against a real
+wallet:
+
+| Declared in `api-types` | Actually returned |
+|---|---|
+| `total_value_usd`, `nft_value_usd`, `token_value_usd` | `totalValueUsd`, `nftValueUsd`, `tokenValueUsd` |
+| `pnl_absolute`, `pnl_percentage` | `pnlAbsolute`, `pnlPercentage` |
+| `token_balances[].usd_value`, `.usd_price`, `.image_url` | `tokenBalances[].usdValue`, `.usdPrice`, `.imageUrl` |
+| `TokenBalanceResponse.status` (spam classification) | **absent entirely** |
+
+`nfts[]` and `.collection` agree in both, so only some responses are affected.
+
+This one is worth stating carefully, because it inverts the usual rule. Generated types are supposed
+to turn a wrong field name into a compile error — here the generated types *are* the wrong field
+name, and the code compiled cleanly while reading nothing. Only a real response revealed it. The
+absent `status` is the sharper half: code that filters on a documented spam classification silently
+filters out everything when the field never arrives.
+
+**What we wrote.** `field(raw, ...names)` in `devices/src/state/anchor.ts`, accepting either
+spelling at each site, and treating an absent `status` as `OK` rather than as spam. Tests pin both
+shapes, so whichever side changes, the panel keeps working.
+
+**What to delete when upstream fixes it.** The `field()` helper and its second argument at each call
+site, once `api-types` and the API agree. Keep the tests: they document which spelling arrived.
+
+**Report this.** Either the spec or the serializer is wrong, and a consumer cannot tell which from
+the outside. The missing `status` field should be reported separately — it is documented in detail
+in the schema and does not appear in responses.
+
+---
+
 ## 1. Percent-encoding path segments before the SDK sees them
 
 **Upstream problem.** `lib/api/apiPaths.js` builds every path with a bare template literal. Sixty-one

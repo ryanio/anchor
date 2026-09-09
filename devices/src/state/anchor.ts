@@ -167,17 +167,38 @@ function str(value: unknown): string | null {
   return typeof value === "string" && value !== "" ? value : null;
 }
 
-function readStats(data: unknown): PortfolioStats | null {
+/**
+ * Read the first field that is present, by any of its spellings.
+ *
+ * `@opensea/api-types` declares these responses in snake_case — `total_value_usd`, `token_balances`,
+ * `usd_value` — and the live API answers in camelCase. Measured against `api.opensea.io` on
+ * 2026-09-08 through the local service:
+ *
+ *     /portfolio/value -> { totalValueUsd, nftValueUsd, tokenValueUsd, pnlAbsolute, pnlPercentage }
+ *     /balances        -> { tokenBalances: [{ symbol, usdValue, usdPrice, imageUrl, ... }] }
+ *
+ * Reading the generated types is normally the thing that prevents a wrong field name; here the
+ * generated types *are* the wrong field name. Accepting both spellings is the smallest fix that
+ * cannot break when the mismatch is resolved in either direction. See `docs/upstream.md`.
+ */
+function field(raw: Record<string, unknown>, ...names: readonly string[]): unknown {
+  for (const name of names) {
+    if (name in raw) return raw[name];
+  }
+  return undefined;
+}
+
+export function readStats(data: unknown): PortfolioStats | null {
   if (typeof data !== "object" || data === null) return null;
   const raw = data as Record<string, unknown>;
-  const total = str(raw.total_value_usd);
+  const total = str(field(raw, "total_value_usd", "totalValueUsd"));
   if (total === null) return null;
   return {
     totalUsd: total,
-    nftUsd: str(raw.nft_value_usd),
-    tokenUsd: str(raw.token_value_usd),
-    pnlAbsolute: str(raw.pnl_absolute),
-    pnlPercentage: str(raw.pnl_percentage),
+    nftUsd: str(field(raw, "nft_value_usd", "nftValueUsd")),
+    tokenUsd: str(field(raw, "token_value_usd", "tokenValueUsd")),
+    pnlAbsolute: str(field(raw, "pnl_absolute", "pnlAbsolute")),
+    pnlPercentage: str(field(raw, "pnl_percentage", "pnlPercentage")),
     timeframe: str(raw.timeframe) ?? "",
   };
 }
@@ -191,16 +212,20 @@ function readStats(data: unknown): PortfolioStats | null {
  */
 export function readTokens(data: unknown): TokenHolding[] {
   if (typeof data !== "object" || data === null) return [];
-  const list = (data as { token_balances?: unknown }).token_balances;
+  const list = field(data as Record<string, unknown>, "token_balances", "tokenBalances");
   if (!Array.isArray(list)) return [];
   return list
     .flatMap((entry): TokenHolding[] => {
       if (typeof entry !== "object" || entry === null) return [];
       const raw = entry as Record<string, unknown>;
       const symbol = str(raw.symbol);
-      const status = str(raw.status) ?? "OK";
+      // The spec documents a `status` spam classification; the live response does not carry it at
+      // all. An absent classification is treated as OK rather than as spam — filtering everything
+      // out because a field is missing would be a worse failure than showing an unfiltered list,
+      // and it is the shape that actually arrives today.
+      const status = str(field(raw, "status")) ?? "OK";
       if (symbol === null || status !== "OK") return [];
-      const usdValue = Number.parseFloat(str(raw.usd_value) ?? "");
+      const usdValue = Number.parseFloat(str(field(raw, "usd_value", "usdValue")) ?? "");
       return [{ symbol, usdValue: Number.isFinite(usdValue) ? usdValue : 0, status }];
     })
     .sort((a, b) => b.usdValue - a.usdValue);
@@ -216,7 +241,7 @@ export function readTokens(data: unknown): TokenHolding[] {
  */
 export function readCollections(data: unknown): { slug: string; count: number }[] {
   if (typeof data !== "object" || data === null) return [];
-  const list = (data as { nfts?: unknown }).nfts;
+  const list = field(data as Record<string, unknown>, "nfts");
   if (!Array.isArray(list)) return [];
   const counts = new Map<string, number>();
   for (const entry of list) {

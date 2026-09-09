@@ -57,6 +57,10 @@ outbound rate limit, and one place where freshness is tracked.
   Every call goes through the SDK and every response is typed from the generated OpenAPI types.
 - Loopback-only, and it requires a loopback `Host` header — binding to `127.0.0.1` stops the network
   reaching it but not a browser whose DNS rebinds to it.
+- When no wallet is configured and the stored PAT is opaque, it is exchanged at
+  `/api/v2/auth/tokens/exchange` and the resulting JWT's `wallet` and `linked_wallets` claims supply
+  the wallet list, filtered to the configured chains. One network call, only on the path where
+  nothing else supplied a wallet, and every failure leaves the service as it was.
 - When no wallet is configured, the address is derived from the wallet PAT's `wallet` claim via
   `@opensea/sdk`'s `extractWalletAddress` — a local decode, so it needs no scope and cannot 401. A
   configured wallet always wins; a token that is opaque, carries no wallet claim, or names an
