@@ -66,7 +66,11 @@ export class PairingError extends Error {}
  * compose a `screen` slot at all — see the note in `docs/devices-esp32.md` under "What this needs
  * from the shared contract". Move it, do not copy it.
  */
-export const SCREEN_SLOT = "screen:0";
+// Re-exported so this adapter's own tests and callers keep their import, but the id itself now
+// lives in `panel.ts`: two adapters needed it, and a slot id defined twice gets spelled two ways.
+import { SCREEN_SLOT } from "../panel.ts";
+
+export { SCREEN_SLOT };
 
 /** Default port. Chosen next to the data service's 8787 so one number is easy to remember. */
 export const DEFAULT_PORT = 8788;

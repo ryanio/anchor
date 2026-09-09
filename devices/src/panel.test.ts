@@ -10,7 +10,16 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import { parseConfig } from "./config.ts";
 import type { PanelState } from "./panel.ts";
-import { dialSlot, keySlot, Panel, readKeySource, SEGMENT_SOURCES, STRIP_SLOT, usd } from "./panel.ts";
+import {
+  dialSlot,
+  keySlot,
+  Panel,
+  readKeySource,
+  SCREEN_SLOT,
+  SEGMENT_SOURCES,
+  STRIP_SLOT,
+  usd,
+} from "./panel.ts";
 import { EMPTY_SNAPSHOT } from "./state/desktop.ts";
 import { toTokens } from "./tokens.ts";
 import type { AnchorDevice, DeviceCapabilities, Frame, SlotSpec } from "./types.ts";
@@ -330,5 +339,112 @@ describe("the timeframe dial", () => {
     panel.handle({ kind: "rotate", slot: dialSlot(0), delta: 1 });
     const reading = readKeySource("portfolio.pnl", { ...withPortfolio, timeframe: panel.timeframe });
     assert.equal(reading?.label, "P&L week");
+  });
+});
+
+/** A device with one screen and no keys — a Cardputer or an ESP32 panel, in the abstract. */
+const screenDevice = (): AnchorDevice =>
+  fakeDevice([{ id: SCREEN_SLOT, kind: "screen", paintable: true, width: 240, height: 135 }]);
+
+describe("screen devices", () => {
+  const config = parseConfig({
+    pages: [
+      {
+        name: "portfolio",
+        keys: [
+          { index: 0, label: "Total", source: "portfolio.total" },
+          { index: 1, label: "Ethereum", action: "exec true" },
+          { index: 2, label: "Solana", action: "exec true" },
+        ],
+      },
+    ],
+  });
+
+  test("the same page composes as a list, with no adapter fetching anything", () => {
+    // This is the claim of the whole layer: one page config, two very different devices.
+    const frame = new Panel(config, TOKENS).build(screenDevice(), withPortfolio);
+    const list = frame.get(SCREEN_SLOT);
+    assert.equal(list?.kind, "list");
+    if (list?.kind !== "list") return;
+    assert.deepEqual(
+      list.rows.map((r) => r.label),
+      ["Total", "Ethereum", "Solana"],
+    );
+    assert.equal(list.rows[0]?.value, "$125,431");
+  });
+
+  test("a key grid and a list carry the same readings", () => {
+    const panel = new Panel(config, TOKENS);
+    const tile = panel.build(streamDeckPlus(), withPortfolio).get(keySlot(0));
+    const list = panel.build(screenDevice(), withPortfolio).get(SCREEN_SLOT);
+    assert.equal(tile?.kind === "tile" && tile.value, "$125,431");
+    assert.equal(list?.kind === "list" && list.rows[0]?.value, "$125,431");
+  });
+
+  test("rotation moves the selection, and the panel owns it", () => {
+    const panel = new Panel(config, TOKENS);
+    assert.equal(panel.selected, 0);
+    panel.handle({ kind: "rotate", slot: SCREEN_SLOT, delta: 1 });
+    assert.equal(panel.selected, 1);
+    panel.handle({ kind: "rotate", slot: SCREEN_SLOT, delta: -1 });
+    assert.equal(panel.selected, 0);
+    panel.handle({ kind: "rotate", slot: SCREEN_SLOT, delta: -1 });
+    assert.equal(panel.selected, 0, "must not select above the first row");
+  });
+
+  test("selection is clamped to the rows that exist", () => {
+    const panel = new Panel(config, TOKENS);
+    for (let i = 0; i < 10; i++) panel.handle({ kind: "rotate", slot: SCREEN_SLOT, delta: 1 });
+    const list = panel.build(screenDevice(), withPortfolio).get(SCREEN_SLOT);
+    assert.equal(list?.kind === "list" && list.selected, 2, "three rows means the last index is 2");
+  });
+});
+
+describe("text input", () => {
+  const config = parseConfig({
+    pages: [
+      {
+        name: "p",
+        keys: [
+          { index: 0, label: "Ethereum", action: "exec true" },
+          { index: 1, label: "Solana", action: "exec true" },
+          { index: 2, label: "Base", action: "exec true" },
+        ],
+      },
+    ],
+  });
+
+  test("narrows the rows and nothing else", () => {
+    const panel = new Panel(config, TOKENS);
+    panel.handle({ kind: "text", slot: SCREEN_SLOT, value: "sol" });
+    assert.equal(panel.filter, "sol");
+    const list = panel.build(screenDevice(), state()).get(SCREEN_SLOT);
+    assert.deepEqual(list?.kind === "list" ? list.rows.map((r) => r.label) : [], ["Solana"]);
+  });
+
+  test("an empty list says why it is empty", () => {
+    const panel = new Panel(config, TOKENS);
+    panel.handle({ kind: "text", slot: SCREEN_SLOT, value: "zzz" });
+    const list = panel.build(screenDevice(), state()).get(SCREEN_SLOT);
+    assert.equal(list?.kind === "list" && list.rows.length, 0);
+    assert.match(list?.kind === "list" ? (list.empty ?? "") : "", /zzz/);
+  });
+
+  test("filter text is never dispatched as an action", () => {
+    // The whole safety argument for having a keyboard at all: this is a filter, not a command.
+    const panel = new Panel(config, TOKENS);
+    const dispatched = false;
+    const before = panel.pageName;
+    panel.handle({ kind: "text", slot: SCREEN_SLOT, value: "page other" });
+    assert.equal(panel.pageName, before, "text must not switch pages");
+    assert.equal(dispatched, false);
+    assert.equal(panel.filter, "page other", "it is kept, verbatim, as a filter");
+  });
+
+  test("committing text resets the selection to the top of the new list", () => {
+    const panel = new Panel(config, TOKENS);
+    panel.handle({ kind: "rotate", slot: SCREEN_SLOT, delta: 1 });
+    panel.handle({ kind: "text", slot: SCREEN_SLOT, value: "a" });
+    assert.equal(panel.selected, 0);
   });
 });

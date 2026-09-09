@@ -29,8 +29,24 @@ four encoders report turns and presses but have no display; other Elgato models 
 around theirs. Both are encoders, only one can be drawn on. Painting is gated on the flag, so a
 panel never rasterises a frame that has nowhere to go.
 
-A `Surface` is medium-neutral — a `tile` (icon, label, emphasis, optional meter or badge) or a `bar`
-(a row of icon/text segments). It says what to show, not how to draw it. The Stream Deck adapter
+A `Surface` is medium-neutral. Four exist:
+
+| Surface | For |
+|---|---|
+| `tile` | One key: icon, label, an optional large `value`, meter or badge |
+| `bar` | A row of icon/text segments — a status strip |
+| `list` | Rows on a screen, with panel-owned `selected` |
+| `detail` | One thing in full: title, labelled lines, a footer that is never truncated |
+
+`list` and `detail` are shared vocabulary rather than device-specific, and the reason is structural:
+`Panel.build` is the only thing that turns config plus state into surfaces, so a surface the panel
+cannot emit is one no config can request — and an adapter-local list type would force the *adapter*
+to fetch its own data. That is the exact coupling this layer exists to prevent.
+
+The proof that it is shared: the same page config becomes a grid of keys on a Stream Deck and a list
+of rows on a screen device, and a test asserts both carry identical readings.
+
+A surface says what to show, not how to draw it. The Stream Deck adapter
 rasterises surfaces to RGB; a network device could just as well receive the surface and draw it
 itself. That choice belongs to the adapter.
 
@@ -75,6 +91,28 @@ installed theme, gated by `contrast.test.ts`. A theme designed for a large scree
 does not always clear the bar on a 120px key: Omarchy's `rose-pine` puts a `#56949f` accent on an
 `#ede7e1` ground, which is 2.79:1. Rather than lower the threshold, a failing mark colour is blended
 toward the theme's own foreground until it clears, so the result still belongs to the palette.
+
+### Text is a filter, never a command
+
+`DeviceInput` has a `text` member for devices with a keyboard, and it is deliberately *committed*
+text rather than a keystroke stream — a stream invites dispatching on each one. The panel uses it to
+narrow the rows already on screen. Nothing evaluates it, it never reaches `actions.dispatch`, and a
+test asserts that committing `page other` changes no page.
+
+If a filter ever becomes a query parameter to the data service, an untrusted device is steering host
+requests. That is a different feature and needs an allowlist; say so rather than letting it happen.
+
+### A display blanks when the session locks
+
+`setBlanked` is optional on `AnchorDevice`, because a device only ever driven while someone is
+present does not need it. A desk display does: it sits in a room its owner has walked out of, and
+`docs/security.md` reasoning applies — a panel still showing a portfolio after the screen locks is a
+security property, not a nicety.
+
+The signal is logind's `LockedHint`, not a search for a lock-screen process, because that is what
+every other desktop component uses and it does not care which locker is installed. The Stream Deck
+adapter both clears the keys and takes the backlight to zero: brightness alone leaves the image
+faintly readable in a dark room and fully readable to a phone camera.
 
 ### The font is the user's
 

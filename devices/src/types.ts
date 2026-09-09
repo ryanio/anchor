@@ -36,7 +36,7 @@ export interface SlotSpec {
 }
 
 /** What a device can report. A device omits what it does not have. */
-export type InputKind = "press" | "release" | "rotate" | "tap" | "swipe";
+export type InputKind = "press" | "release" | "rotate" | "tap" | "swipe" | "text";
 
 export interface DeviceCapabilities {
   readonly slots: readonly SlotSpec[];
@@ -48,7 +48,15 @@ export type DeviceInput =
   | { readonly kind: "release"; readonly slot: string }
   | { readonly kind: "rotate"; readonly slot: string; readonly delta: number }
   | { readonly kind: "tap"; readonly slot: string; readonly x: number; readonly y: number }
-  | { readonly kind: "swipe"; readonly slot: string; readonly from: number; readonly to: number };
+  | { readonly kind: "swipe"; readonly slot: string; readonly from: number; readonly to: number }
+  /**
+   * Committed text, from a device with a keyboard.
+   *
+   * Committed rather than per-keystroke: a stream of keystrokes invites dispatching on each one,
+   * and the only legitimate use of text here is narrowing what is already on screen. It is a
+   * filter, never a command, never an address or an amount, and nothing evaluates it.
+   */
+  | { readonly kind: "text"; readonly slot: string; readonly value: string };
 
 /**
  * Visual weight, named after the design system's three surfaces rather than after colours.
@@ -81,6 +89,21 @@ export interface BarSegment {
  * A medium-neutral description of what to show. The Stream Deck rasterises these to RGB; a future
  * ESP32 adapter can send the same surface over the wire and draw it with its own primitives.
  */
+/** One row of a list surface. */
+export interface ListRow {
+  readonly label: string;
+  readonly value?: string;
+  readonly icon?: string;
+  readonly tone?: TokenName;
+}
+
+/** One labelled line of a detail surface. */
+export interface DetailLine {
+  readonly label: string;
+  readonly value: string;
+  readonly tone?: TokenName;
+}
+
 export type Surface =
   | {
       readonly kind: "tile";
@@ -100,7 +123,39 @@ export type Surface =
       readonly meter?: number;
       readonly badge?: string;
     }
-  | { readonly kind: "bar"; readonly segments: readonly BarSegment[] };
+  | { readonly kind: "bar"; readonly segments: readonly BarSegment[] }
+  /**
+   * Rows on a screen.
+   *
+   * The same page that becomes a grid of keys on a Stream Deck becomes this on a device that has
+   * one screen instead of eight buttons. That is the claim of this layer made concrete: the panel
+   * composes it, so no adapter has to fetch its own data in order to draw a list.
+   *
+   * `selected` belongs to the panel rather than the device, because only the panel knows how many
+   * rows there are once a filter has been applied.
+   */
+  | {
+      readonly kind: "list";
+      readonly rows: readonly ListRow[];
+      readonly selected?: number;
+      /** Shown when there are no rows. An empty list must say why it is empty. */
+      readonly empty?: string;
+    }
+  /**
+   * One thing, in full. Separate from `list` because the layouts differ, and a vocabulary with one
+   * name for two layouts stops being enforceable.
+   */
+  | {
+      readonly kind: "detail";
+      readonly title: string;
+      readonly lines: readonly DetailLine[];
+      /**
+       * Never truncated. Where a card has to say that approval happens somewhere else, this is the
+       * line that says it, and a truncated one would be worse than none at all.
+       */
+      readonly footer?: string;
+      readonly badge?: string;
+    };
 
 /** One paint: the surfaces to show, keyed by slot id. Slots left out keep what they had. */
 export type Frame = ReadonlyMap<string, Surface>;
@@ -110,6 +165,14 @@ export interface AnchorDevice {
   readonly capabilities: DeviceCapabilities;
   paint(frame: Frame): Promise<void>;
   setBrightness(percent: number): Promise<void>;
+  /**
+   * Blank or restore the display.
+   *
+   * Optional, because a device only ever driven while someone is present does not need it. A desk
+   * display does: it sits in a room the user has walked out of, and a panel still showing a
+   * portfolio after the session locks is a security property rather than a nicety.
+   */
+  setBlanked?(blanked: boolean): Promise<void>;
   onInput(handler: (input: DeviceInput) => void): void;
   close(): Promise<void>;
 }

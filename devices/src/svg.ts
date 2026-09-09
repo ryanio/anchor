@@ -192,9 +192,154 @@ function renderBar(surface: Extract<Surface, { kind: "bar" }>, tokens: Tokens, s
   return parts.join("");
 }
 
+/**
+ * Rows on a screen.
+ *
+ * Row height is derived from the slot rather than fixed, so the same surface fills a 135px Cardputer
+ * screen and a 466px round panel without either being told about the other. Rows past the bottom are
+ * dropped rather than squeezed: a half-legible row is worse than an absent one, and the panel owns
+ * selection so it can scroll rather than relying on the device to.
+ */
+function renderList(surface: Extract<Surface, { kind: "list" }>, tokens: Tokens, slot: SlotSpec): string {
+  const { width: w, height: h } = slot;
+  const parts: string[] = [`<rect width="${w}" height="${h}" fill="${tokens.ground}"/>`];
+
+  const rowHeight = Math.max(18, Math.round(h * 0.14));
+  const fontSize = Math.round(rowHeight * 0.52);
+  const pad = Math.round(w * 0.04);
+
+  if (surface.rows.length === 0) {
+    const message = surface.empty ?? "nothing to show";
+    parts.push(
+      `<text x="${w / 2}" y="${h / 2}" font-family="monospace" font-size="${fontSize}" ` +
+        `fill="${tokens.inkDim}" text-anchor="middle" dominant-baseline="central">${escapeXml(message)}</text>`,
+    );
+    return parts.join("");
+  }
+
+  const visible = Math.max(1, Math.floor((h - pad) / rowHeight));
+  // Keep the selected row on screen by scrolling the window, not by shrinking rows.
+  const selected = surface.selected ?? -1;
+  const first =
+    selected < visible ? 0 : Math.min(selected - visible + 1, Math.max(0, surface.rows.length - visible));
+
+  surface.rows.slice(first, first + visible).forEach((row, offset) => {
+    const index = first + offset;
+    const top = pad / 2 + offset * rowHeight;
+    const mid = top + rowHeight / 2;
+    const isSelected = index === selected;
+    if (isSelected) {
+      parts.push(
+        `<rect x="${pad / 2}" y="${top}" width="${w - pad}" height="${rowHeight - 2}" rx="4" fill="${tokens.raised}"/>`,
+      );
+    }
+    const ink = isSelected ? tokens.inkStrong : tokens.ink;
+    let x = pad;
+    if (row.icon) {
+      parts.push(
+        `<text x="${x}" y="${mid}" font-family="monospace" font-size="${fontSize}" ` +
+          `fill="${row.tone === undefined ? tokens.accent : tokens[row.tone]}" ` +
+          `dominant-baseline="central">${escapeXml(row.icon)}</text>`,
+      );
+      x += cellWidth(row.icon, fontSize);
+    }
+    const valueWidth = row.value === undefined ? 0 : advance(row.value, fontSize) + pad;
+    parts.push(
+      `<text x="${x}" y="${mid}" font-family="monospace" font-size="${fontSize}" fill="${ink}" ` +
+        `dominant-baseline="central">${escapeXml(fit(row.label, fontSize, w - x - valueWidth - pad))}</text>`,
+    );
+    if (row.value !== undefined) {
+      parts.push(
+        `<text x="${w - pad}" y="${mid}" font-family="monospace" font-size="${fontSize}" ` +
+          `fill="${row.tone === undefined ? ink : tokens[row.tone]}" text-anchor="end" ` +
+          `dominant-baseline="central">${escapeXml(row.value)}</text>`,
+      );
+    }
+  });
+  return parts.join("");
+}
+
+/**
+ * One thing, in full.
+ *
+ * The footer is laid out first and never truncated. It is where a card says that approval happens
+ * somewhere else, and a shortened version of that sentence would be worse than no sentence.
+ */
+function renderDetail(surface: Extract<Surface, { kind: "detail" }>, tokens: Tokens, slot: SlotSpec): string {
+  const { width: w, height: h } = slot;
+  const pad = Math.round(w * 0.05);
+  const titleSize = Math.round(h * 0.11);
+  const lineSize = Math.round(h * 0.08);
+  const footerSize = Math.round(h * 0.07);
+  const parts: string[] = [`<rect width="${w}" height="${h}" fill="${tokens.ground}"/>`];
+
+  let footerTop = h - pad;
+  if (surface.footer !== undefined) {
+    // Shrink rather than clip, so the whole sentence survives on a narrow screen.
+    const size = autoSize(surface.footer, w - pad * 2, footerSize, Math.round(footerSize * 0.6));
+    footerTop = h - pad - size;
+    parts.push(
+      `<rect x="0" y="${footerTop - size * 0.4}" width="${w}" height="${h - footerTop + size * 0.4}" fill="${tokens.sunken}"/>`,
+    );
+    parts.push(
+      `<text x="${w / 2}" y="${footerTop + size * 0.2}" font-family="monospace" font-size="${size}" ` +
+        `fill="${tokens.inkDim}" text-anchor="middle" dominant-baseline="central">${escapeXml(surface.footer)}</text>`,
+    );
+  }
+
+  parts.push(
+    `<text x="${pad}" y="${pad + titleSize * 0.6}" font-family="monospace" font-size="${titleSize}" ` +
+      `font-weight="700" fill="${tokens.inkStrong}" dominant-baseline="central">` +
+      `${escapeXml(fit(surface.title, titleSize, w - pad * 2))}</text>`,
+  );
+
+  if (surface.badge !== undefined) {
+    const size = Math.round(lineSize * 0.85);
+    const width = advance(surface.badge, size) + size;
+    parts.push(
+      `<rect x="${w - pad - width}" y="${pad * 0.6}" width="${width}" height="${size * 1.8}" rx="${size * 0.5}" fill="${tokens.warning}"/>`,
+    );
+    parts.push(
+      `<text x="${w - pad - width / 2}" y="${pad * 0.6 + size * 0.9}" font-family="monospace" font-size="${size}" ` +
+        `font-weight="700" fill="${tokens.sunken}" text-anchor="middle" dominant-baseline="central">` +
+        `${escapeXml(surface.badge)}</text>`,
+    );
+  }
+
+  let y = pad + titleSize * 1.6;
+  for (const line of surface.lines) {
+    if (y + lineSize > footerTop - lineSize * 0.5) break;
+    parts.push(
+      `<text x="${pad}" y="${y}" font-family="monospace" font-size="${lineSize}" fill="${tokens.inkDim}" ` +
+        `dominant-baseline="central">${escapeXml(fit(line.label, lineSize, w * 0.45))}</text>`,
+    );
+    parts.push(
+      `<text x="${w - pad}" y="${y}" font-family="monospace" font-size="${lineSize}" ` +
+        `fill="${line.tone === undefined ? tokens.ink : tokens[line.tone]}" text-anchor="end" ` +
+        `dominant-baseline="central">${escapeXml(fit(line.value, lineSize, w * 0.5))}</text>`,
+    );
+    y += lineSize * 1.6;
+  }
+  return parts.join("");
+}
+
 /** Render one surface for one slot. Returns a complete standalone SVG document. */
 export function toSvg(surface: Surface, tokens: Tokens, slot: SlotSpec): string {
-  const body = surface.kind === "tile" ? renderTile(surface, tokens, slot) : renderBar(surface, tokens, slot);
+  let body: string;
+  switch (surface.kind) {
+    case "tile":
+      body = renderTile(surface, tokens, slot);
+      break;
+    case "bar":
+      body = renderBar(surface, tokens, slot);
+      break;
+    case "list":
+      body = renderList(surface, tokens, slot);
+      break;
+    default:
+      body = renderDetail(surface, tokens, slot);
+      break;
+  }
   return (
     `<svg xmlns="http://www.w3.org/2000/svg" width="${slot.width}" height="${slot.height}" ` +
     `viewBox="0 0 ${slot.width} ${slot.height}">${body}</svg>`

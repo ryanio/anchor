@@ -152,3 +152,21 @@ export class DesktopState {
     return this.#inFlight;
   }
 }
+
+/**
+ * Whether the session is locked, from logind's `LockedHint`.
+ *
+ * A device on a desk keeps showing whatever was last painted, in a room its owner has walked out
+ * of. That is fine for a workspace indicator and not fine for a portfolio, so the panel needs to
+ * know. logind is asked rather than looking for a lock screen process: `LockedHint` is the same
+ * signal every other desktop component uses, and it does not care which locker is installed.
+ *
+ * Any failure reads as unlocked. Blanking a panel because a subprocess failed would be a worse bug
+ * than not blanking one.
+ */
+export async function sessionLocked(): Promise<boolean> {
+  const session = process.env.XDG_SESSION_ID;
+  if (session === undefined) return false;
+  const text = await run("loginctl", ["show-session", session, "-p", "LockedHint"]);
+  return text?.trim() === "LockedHint=yes";
+}
