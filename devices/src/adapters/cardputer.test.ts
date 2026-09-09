@@ -21,6 +21,7 @@ import { toTokens } from "../tokens.ts";
 import type { DeviceInput, Frame, Surface } from "../types.ts";
 import {
   backlightFor,
+  CARDPUTER_FLINT,
   CARDPUTER_V11,
   CardputerDevice,
   capabilitiesFor,
@@ -86,6 +87,18 @@ describe("geometry", () => {
       assert.ok(rect.x >= 0 && rect.y >= 0, "no slot starts off-screen");
       assert.ok(rect.x + rect.w <= CARDPUTER_V11.width, "no slot runs past the right edge");
       assert.ok(rect.y + rect.h <= CARDPUTER_V11.height, "no slot runs past the bottom edge");
+    }
+  });
+
+  test("the flint geometry stops where the firmware's own status bar starts", () => {
+    // flint owns the bottom 12 rows of the panel and draws a status bar there. A host layout that
+    // assumed the whole 240x135 would paint over it, and the device would be right to refuse the op.
+    const rects = [...slotRects(CARDPUTER_FLINT).values()];
+    const area = rects.reduce((sum, rect) => sum + rect.w * rect.h, 0);
+    assert.equal(area, CARDPUTER_FLINT.width * CARDPUTER_FLINT.height, "the slots tile the body");
+    for (const rect of rects) {
+      assert.ok(rect.y + rect.h <= 123, "nothing reaches into the firmware's status bar");
+      assert.ok(rect.x + rect.w <= 240);
     }
   });
 
@@ -471,5 +484,68 @@ describe("lifecycle", () => {
     await device.close();
     assert.equal(link.sent().at(-1)?.t, "clear");
     assert.equal(link.closed, true);
+  });
+});
+
+describe("a device that comes and goes", () => {
+  // The firmware re-announces itself every two seconds while it has no host, and says hello once on
+  // boot. Both mean the same thing to the adapter: the glass may be showing nothing at all.
+  test("a hello makes every slot dirty, because a rebooted device is showing nothing", async () => {
+    const { device, link } = build();
+    await device.paint(frameOf({ [keySlot(0)]: tile("Feed"), [keySlot(1)]: tile("Queue") }));
+    const before = ops(link).length;
+    assert.equal(before, 2);
+    link.receive({ t: "hello", proto: 1, fw: "0.1.0", width: 240, height: 135 });
+    await device.paint(frameOf({ [keySlot(0)]: tile("Feed"), [keySlot(1)]: tile("Queue") }));
+    // Without this the device that rebooted mid-session stays blank for good: the panel has not
+    // changed, so the diff has nothing to send, so the screen is never redrawn.
+    assert.equal(ops(link).length, before + 2);
+    assert.equal(device.firmware, "0.1.0");
+  });
+
+  test("a port is not identified until it answers", async () => {
+    const { device, link } = build();
+    // Every ESP32-S3 enumerates through the same Espressif descriptor, so a matching port name is a
+    // guess. A handshake is the only thing that distinguishes a Cardputer from another board.
+    assert.equal(await device.waitForHello(10), false);
+    const waited = device.waitForHello(1000);
+    link.receive({ t: "hello", proto: 1, fw: "0.1.0", width: 240, height: 135 });
+    assert.equal(await waited, true);
+    assert.equal(await device.waitForHello(10), true, "an identified device stays identified");
+  });
+
+  test("an idle panel still says something, so silence means the link is gone", async () => {
+    const { device, link } = build();
+    await device.ping();
+    assert.equal(link.sent().at(-1)?.t, "ping");
+  });
+});
+
+describe("blanking", () => {
+  test("a locked session clears the frame as well as the backlight", async () => {
+    // Brightness alone leaves the image faintly readable in a dark room and fully readable to a
+    // phone camera, and a Cardputer sits in a room its owner has walked out of.
+    const { device, link } = build();
+    await device.setBrightness(80);
+    await device.paint(frameOf({ [keySlot(0)]: tile("Feed"), [keySlot(1)]: tile("Queue") }));
+    await device.setBlanked(true);
+    const sent = link.sent();
+    assert.equal(sent.at(-2)?.t, "clear");
+    const backlight = sent.at(-1);
+    assert.equal(backlight?.t === "backlight" && backlight.percent, 0);
+  });
+
+  test("unblanking repaints every slot rather than diffing against an empty screen", async () => {
+    const { device, link } = build();
+    await device.setBrightness(80);
+    await device.paint(frameOf({ [keySlot(0)]: tile("Feed"), [keySlot(1)]: tile("Queue") }));
+    await device.setBlanked(true);
+    const before = ops(link).length;
+    await device.setBlanked(false);
+    assert.equal(ops(link).length, before + 2);
+    const backlights = link
+      .sent()
+      .filter((message): message is Extract<HostMessage, { t: "backlight" }> => message.t === "backlight");
+    assert.equal(backlights.at(-1)?.percent, 80, "the configured brightness comes back");
   });
 });

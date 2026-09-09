@@ -140,7 +140,7 @@ Run the gates: `npm run typecheck` and `npm test` in `devices/`, `npm run lint` 
 | Elgato Stream Deck + | Working. Measured on firmware 2.0.3.5: 8 keys at 120x120, an 800x100 LCD segment, 4 encoders with no display. Input and output verified on hardware. |
 | Other Stream Deck models | Should work — capabilities are read from the device, not hard-coded — but untested. |
 | ESP32 pulse display | Designed, not built. See `devices-esp32.md`. |
-| M5Stack Cardputer | Designed, not built. See `devices-cardputer.md`. |
+| M5Stack Cardputer | Both ends written, neither run on hardware. The adapter is here; the device end is an app in **flint** (`ryanio/cardputer`), Ryan's Cardputer ADV firmware, built and photographed in its simulator. See `devices-cardputer.md`. |
 
 The Anchor page currently shows service reachability and whether a wallet is configured. It does not
 render a portfolio value: the shape of `/portfolio/value`'s `data` comes from the OpenSea SDK and has

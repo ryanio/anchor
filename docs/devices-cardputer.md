@@ -8,10 +8,14 @@ has no vocabulary for, and a 240x135 screen wants a surface the shared contract 
 This document says which of those should change the contract and which should not, where the
 proposal queue's approval boundary sits, and what runs on the device.
 
-> **Status: scaffold.** `devices/src/adapters/cardputer.ts` implements `AnchorDevice` and its tests
-> run with nothing plugged in. No part of it has been run against hardware — there is none attached.
-> Every hardware fact below comes from M5Stack's or Espressif's documentation and is marked. AGENTS.md
-> is emphatic that a plausible reading is not a measured one, and this file keeps that distinction.
+> **Status: both ends written, neither run on a Cardputer.** `devices/src/adapters/cardputer.ts`
+> implements `AnchorDevice` and its tests run with nothing plugged in. The device end now exists too,
+> as an app in **flint** (`ryanio/cardputer`), Ryan's Cardputer ADV firmware: `src/views/anchor.cpp`
+> against a `cable::` transport, built and photographed in flint's simulator, which runs the real
+> view, ui and store code against M5GFX's own panel driver at the real 240x135. **No Cardputer has
+> run it** — none has been attached — so everything below about the hardware itself is still vendor
+> documentation rather than measurement, and is marked where it is used. AGENTS.md is emphatic that a
+> plausible reading is not a measured one, and this file keeps that distinction.
 
 ## What the device is
 
@@ -402,6 +406,13 @@ host`. Not an empty panel, and certainly not a plausible-looking one.
 
 ### What runs on the device
 
+**Built, and running in flint's simulator.** `src/views/anchor.cpp` is a view like any other in that
+firmware: it draws the body and answers keys, and the spine owns the menu, the exit convention and
+the status bar. One difference from the sketch below is worth carrying back into this document: flint
+draws its own status bar across the bottom 12 rows, so the host's geometry stops at 123 rows rather
+than 135. `CARDPUTER_FLINT` in the adapter is that area, an 18px strip over nine 80x35 tiles, and a
+test asserts it tiles exactly.
+
 A thin renderer, and deliberately nothing else. It holds:
 
 - the palette, received from the host;
@@ -441,13 +452,17 @@ legitimate alternative worth an hour's thought.
 Over USB-C. The ESP32-S3 has native USB, so no bridge chip and no driver.
 
 ```bash
-# Arduino CLI, once the sketch exists
-arduino-cli compile --fqbn esp32:esp32:m5stack_stamps3 devices/firmware/cardputer
-arduino-cli upload  --fqbn esp32:esp32:m5stack_stamps3 -p /dev/ttyACM0 devices/firmware/cardputer
+# In a flint checkout. The anchor profile ships that one app and brings no radio up.
+pio run -e cardputer-adv-anchor -t upload
+pio device monitor
 
-# or flash a prebuilt image
-esptool.py --chip esp32s3 --port /dev/ttyACM0 write_flash 0x0 cardputer-anchor.bin
+# The whole firmware, Anchor among its eleven apps
+pio run -t upload
 ```
+
+The FQBN this section used to name, `esp32:esp32:m5stack_stamps3`, does not exist: the Espressif
+core calls the board `m5stack_stamp_s3` and has had a `m5stack_cardputer` since 3.x. It was written
+from memory, which is the mistake AGENTS.md names about endpoint paths, in another dialect.
 
 **Unverified, and the first things to check with hardware in hand:**
 
@@ -464,13 +479,25 @@ reproducible build is the point.
 
 ### Where firmware should live
 
-Not decided. `devices/firmware/cardputer/` in this repo keeps the protocol and its two ends in one
-commit, which is worth a lot for a wire format that will change — but it also puts a C++ toolchain in
-a repo whose CI is Node, and `arduino-cli compile` is a slow gate. The alternative is a small
-out-of-tree repo pinned by protocol version. **Ryan's call.**
+**Decided: in flint**, `ryanio/cardputer`, as `src/views/anchor.cpp`. Anchor keeps the protocol, the
+adapter and a capture tool; `devices/firmware/cardputer/README.md` is the pointer between them.
 
-Whichever it is, the build settings are part of the artefact: board, flash size, PSRAM, USB CDC on
-boot, and the pinned library versions.
+The question stopped being "where should a new firmware live" the moment there was already a working
+one for this exact board. flint has a view contract, an exit convention every screen obeys, a
+keyboard layer that has met the ADV's TCA8418 controller, a status bar, and a simulator that renders
+the real view code at the real geometry. A standalone sketch here was written first, and it compiled
+— and it had none of that. Two firmwares for one device is a cost with no payer, and the second one
+starts by rebuilding what the first already does.
+
+What Anchor gives up by that choice is a wire format whose two ends move in one commit; a protocol
+version is now the thing that keeps them honest, and `hello` carries it in both directions. What it
+gains is every app on that unit, and a way to look at this one without hardware.
+
+Three things flint grew to take the app, and each was friction worth fixing in the platform rather
+than working around in the view: `cable.*`, a host link beside `net` with a simulator half; build
+profiles, so a unit can ship one app without deleting the other ten; and `ui::clip`, plus an
+`asciify` that folds an em dash to a hyphen rather than dropping it, since Anchor writes one wherever
+it has no reading.
 
 ## What the scaffold does today
 
@@ -502,7 +529,8 @@ add a dependency, or touch shared code.
 3. **Wi-Fi or a broker**, if tethered Cardputers turn out to be unacceptable. That is a change to
    invariant 6's blast radius and needs `docs/security.md` updated in the same change, plus — for
    MQTT — the first new runtime dependency this workspace would take.
-4. **Where firmware lives**, and whether its build is a CI gate.
+4. ~~**Where firmware lives**~~ — settled: flint, `ryanio/cardputer`. Still open is whether a
+   protocol change should be gated by building both ends, and where that gate would run.
 5. **`O_NOCTTY`.** If it turns out to matter for opening the serial port from a daemon with no
    controlling terminal, `fs.createReadStream` cannot pass the flag and the fix is either a tiny
    native helper or a serial-port dependency. Worth knowing before it is a surprise.

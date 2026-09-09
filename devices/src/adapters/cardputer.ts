@@ -89,6 +89,25 @@ export const CARDPUTER_V11: CardputerGeometry = {
   rows: 3,
 };
 
+/**
+ * The area flint leaves to an app.
+ *
+ * flint (`ryanio/cardputer`) is the firmware this adapter actually drives, and its view loop owns
+ * the bottom 12 rows of the panel: a status bar naming the source, the radio and the battery. An
+ * app paints the 123 rows above it and nowhere else, so the host's layout has to stop where flint's
+ * begins rather than assuming the whole 240x135.
+ *
+ * 18 rows of status strip and three rows of 80x35 tiles tile that area exactly, which a test
+ * asserts, because a slot that runs one pixel long is a slot that paints over somebody else's bar.
+ */
+export const CARDPUTER_FLINT: CardputerGeometry = {
+  width: 240,
+  height: 123,
+  status: 18,
+  columns: 3,
+  rows: 3,
+};
+
 export interface Rect {
   readonly x: number;
   readonly y: number;
@@ -478,9 +497,13 @@ export class CardputerDevice implements AnchorDevice {
   #brightness = 0;
   #pressed: string | null = null;
 
+  #blanked = false;
+
   #input: ((input: DeviceInput) => void) | null = null;
   #queryHandler: ((text: string) => void) | null = null;
   #powerHandler: ((power: PowerState) => void) | null = null;
+  /** Resolved by the device's `hello`. Empty except while something is waiting for one. */
+  readonly #helloWaiters = new Set<() => void>();
 
   constructor(link: CardputerLink, tokens: Tokens, id = "cardputer", geometry = CARDPUTER_V11) {
     this.#link = link;
@@ -545,6 +568,44 @@ export class CardputerDevice implements AnchorDevice {
    * asks for a `text` input kind so this can stop being a side channel. What it is emphatically not
    * is a command — the string narrows what is already on screen, and nothing dispatches it.
    */
+  /**
+   * Wait for the device to identify itself.
+   *
+   * An ESP32-S3 with native USB enumerates through Espressif's own JTAG/serial descriptor whatever
+   * is running on it, so a port that *looks* like a Cardputer is a guess and nothing more. A
+   * handshake is the only honest identification: the firmware answers `hello` with its version and
+   * the panel size it actually has. `--cardputer` with no path uses this rather than believing the
+   * descriptor, which is the difference between finding a device and finding a port.
+   */
+  async waitForHello(timeoutMs = 2000): Promise<boolean> {
+    if (this.#firmware !== "") return true;
+    return await new Promise<boolean>((resolve) => {
+      const done = (): void => {
+        clearTimeout(timer);
+        this.#helloWaiters.delete(done);
+        resolve(true);
+      };
+      const timer = setTimeout(() => {
+        this.#helloWaiters.delete(done);
+        resolve(false);
+      }, timeoutMs);
+      // A pending identification must not be the reason a process stays alive.
+      timer.unref?.();
+      this.#helloWaiters.add(done);
+    });
+  }
+
+  /**
+   * Liveness, every five seconds.
+   *
+   * The adapter deliberately writes nothing when no slot has changed, which on a battery is the
+   * point — but silence and a dead host look identical from the device, and the firmware treats
+   * fifteen seconds of it as a lost link. A ping is the cheapest thing that tells the difference.
+   */
+  async ping(): Promise<void> {
+    await this.#send({ t: "ping" });
+  }
+
   onQuery(handler: (text: string) => void): void {
     this.#queryHandler = handler;
   }
@@ -570,6 +631,28 @@ export class CardputerDevice implements AnchorDevice {
   async setBrightness(percent: number): Promise<void> {
     this.#brightness = Math.min(100, Math.max(0, Math.round(percent)));
     await this.#send({ t: "backlight", percent: backlightFor(this.#brightness, this.#power) });
+  }
+
+  /**
+   * Blank on session lock, and restore on unlock.
+   *
+   * A Cardputer is a desk display: it sits in a room its owner has walked out of, so a panel still
+   * showing a portfolio after the screen locks is a security property rather than a nicety. The
+   * backlight alone is not enough — at zero the image is still faintly readable in a dark room and
+   * fully readable to a phone camera — so the frame is cleared as well, which is why unblanking has
+   * to repaint every slot rather than diff against a screen that no longer holds anything.
+   */
+  async setBlanked(blanked: boolean): Promise<void> {
+    if (blanked === this.#blanked) return;
+    this.#blanked = blanked;
+    if (blanked) {
+      await this.#send({ t: "clear" });
+      await this.#send({ t: "backlight", percent: 0 });
+      this.#painted.clear();
+      return;
+    }
+    await this.#send({ t: "backlight", percent: backlightFor(this.#brightness, this.#power) });
+    await this.#sendSlots([...this.#surfaces.keys()]);
   }
 
   onInput(handler: (input: DeviceInput) => void): void {
@@ -721,6 +804,11 @@ export class CardputerDevice implements AnchorDevice {
     if (message === null) return;
     if (message.t === "hello") {
       this.#firmware = message.fw;
+      // A device says hello when it boots, and the firmware repeats it while it has no host. Either
+      // way the glass may be showing nothing at all, so every slot is dirty: diffing against a
+      // screen that has been through a reset is how a rebooted device stays blank for good.
+      this.#painted.clear();
+      for (const waiter of [...this.#helloWaiters]) waiter();
       return;
     }
     if (message.t === "key") {
@@ -757,10 +845,20 @@ export class CardputerDevice implements AnchorDevice {
  * Open the first attached Cardputer, or the one at `path`.
  *
  * Mirrors `streamdeck.open`. The greeting is sent immediately so a device that was already running
- * re-syncs its palette; nothing waits for a reply, because a device that never says hello should
- * still show the panel rather than a blank screen.
+ * re-syncs its palette; nothing waits for a reply by default, because a device that never says hello
+ * should still show the panel rather than a blank screen.
+ *
+ * `confirmMs` is for the case where the port was *guessed* rather than named. Every ESP32-S3 with
+ * native USB enumerates through the same Espressif JTAG/serial descriptor whatever is running on it,
+ * so picking a port by name identifies a chip family and not a device. When a path was not given,
+ * the caller should insist on a `hello` before painting: writing a frame to whatever else happens to
+ * be on the bus is rude at best, and reading a blank screen as a working panel is worse.
  */
-export async function open(tokens: Tokens, path?: string): Promise<CardputerDevice> {
+export async function open(
+  tokens: Tokens,
+  path?: string,
+  { confirmMs = 0, geometry = CARDPUTER_FLINT }: { confirmMs?: number; geometry?: CardputerGeometry } = {},
+): Promise<CardputerDevice> {
   const chosen = path ?? listPorts()[0];
   if (chosen === undefined) {
     throw new NoCardputerError(
@@ -768,7 +866,15 @@ export async function open(tokens: Tokens, path?: string): Promise<CardputerDevi
         "Omarchy logind grants that to the logged-in user automatically.",
     );
   }
-  const device = new CardputerDevice(openSerial(chosen), tokens, chosen);
+  const device = new CardputerDevice(openSerial(chosen), tokens, chosen, geometry);
   await device.greet();
+  if (confirmMs > 0 && !(await device.waitForHello(confirmMs))) {
+    await device.close();
+    throw new NoCardputerError(
+      `${chosen} did not answer as a Cardputer within ${confirmMs}ms. Every ESP32-S3 enumerates ` +
+        "through the same Espressif serial descriptor, so this may be another board entirely — or a " +
+        "Cardputer that is not running the Anchor firmware in devices/firmware/cardputer/.",
+    );
+  }
   return device;
 }

@@ -63,6 +63,17 @@
   readings. Text narrows what is on screen and is never dispatched. A display blanks on logind's
   `LockedHint`, clearing the keys as well as the backlight.
 - No device action can sign, spend or approve. The vocabulary has no such verb and a test asserts it.
+- **The Cardputer has a device end.** Anchor now paints an M5Stack Cardputer over USB CDC, and the
+  firmware is an app in flint (`ryanio/cardputer`) rather than a second firmware in this repo: a
+  view drawing the surfaces the adapter sends, in the palette of the live Omarchy theme. Nothing on
+  the unit fetches anything, holds a credential or can ask for an action; the desktop composes every
+  frame, because the data service binds loopback and no device should hold a key to it. Typing on
+  the keyboard opens a filter that narrows rows the host already has, and no keystroke while it is
+  open reaches the panel at all. Verified in flint's simulator, which renders the real view code at
+  the real 240x135; **no Cardputer has run it yet.**
+- `anchor-devices --cardputer` drives one, and waits for the device's `hello` before painting when
+  the port was guessed: every ESP32-S3 with native USB enumerates through the same Espressif
+  descriptor, so a matching port name identifies a chip family and not a device.
 - Two pages ship: Omarchy desktop control (workspaces, theme, night light, screenshot, volume and
   workspace dials) and an Anchor page showing service reachability and whether a wallet is
   configured.
