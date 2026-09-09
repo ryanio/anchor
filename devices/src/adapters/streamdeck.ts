@@ -115,8 +115,29 @@ export class StreamDeckDevice implements AnchorDevice {
     }
   }
 
+  #brightness = 70;
+
   async setBrightness(percent: number): Promise<void> {
-    await this.#deck.setBrightness(Math.min(100, Math.max(0, Math.round(percent))));
+    this.#brightness = Math.min(100, Math.max(0, Math.round(percent)));
+    await this.#deck.setBrightness(this.#brightness);
+  }
+
+  /**
+   * Blank the panel when the session locks, and restore it when it unlocks.
+   *
+   * Both are done: the keys are cleared *and* the backlight is taken to zero. Brightness alone
+   * leaves the image on the LCDs, faintly readable in a dark room and fully readable to a phone
+   * camera; clearing alone leaves a lit blank panel that looks broken. The painted-face cache is
+   * dropped so the first frame after unlocking redraws everything.
+   */
+  async setBlanked(blanked: boolean): Promise<void> {
+    if (blanked) {
+      await this.#deck.clearPanel();
+      this.#painted.clear();
+      await this.#deck.setBrightness(0);
+      return;
+    }
+    await this.#deck.setBrightness(this.#brightness);
   }
 
   onInput(handler: (input: DeviceInput) => void): void {

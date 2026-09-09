@@ -80,8 +80,14 @@ export class VirtualDevice implements AnchorDevice {
     this.frames.push(frame);
   }
 
+  blanked = false;
+
   async setBrightness(percent: number): Promise<void> {
     this.brightness = percent;
+  }
+
+  async setBlanked(blanked: boolean): Promise<void> {
+    this.blanked = blanked;
   }
 
   onInput(_handler: (input: DeviceInput) => void): void {

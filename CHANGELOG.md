@@ -33,6 +33,13 @@ workspace keeps its own dependency, so a machine with no device attached install
   OpenSea classifies `OK` are shown — an unfiltered list on an airdropped-at wallet is a list of
   scams. An absent reading renders as an em dash, never a zero. The strip carries the figures' age
   and staleness, and a dial scrubs the window through the four timeframes the endpoint accepts.
+- The device contract gains `list` and `detail` surfaces, committed-text input, screen slots, and
+  optional blanking. Both were asked for independently by the ESP32 and Cardputer designs, which is
+  what made them contract changes rather than adapter concerns: the panel is the only thing that
+  turns config plus state into surfaces, so an adapter-local list would have to fetch its own data.
+  The same page now composes as a key grid or as rows, and a test asserts both carry identical
+  readings. Text narrows what is on screen and is never dispatched. A display blanks on logind's
+  `LockedHint`, clearing the keys as well as the backlight.
 - No device action can sign, spend or approve. The vocabulary has no such verb and a test asserts it.
 - Two pages ship: Omarchy desktop control (workspaces, theme, night light, screenshot, volume and
   workspace dials) and an Anchor page showing service reachability and whether a wallet is

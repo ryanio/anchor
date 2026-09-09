@@ -31,7 +31,7 @@ import { Panel } from "./panel.ts";
 import { clearRasterCache } from "./raster.ts";
 import * as anchor from "./state/anchor.ts";
 import { EMPTY_PORTFOLIO, type PortfolioSnapshot, type Timeframe } from "./state/anchor.ts";
-import { DesktopState } from "./state/desktop.ts";
+import { DesktopState, sessionLocked } from "./state/desktop.ts";
 import * as hypr from "./state/hypr.ts";
 import { loadTokens } from "./tokens.ts";
 
@@ -229,7 +229,20 @@ async function main(): Promise<void> {
     }
   });
 
-  const tick = setInterval(() => void repaint(), TICK_MS);
+  // Blanking is checked on its own beat and only acted on when it changes, so a locked session
+  // costs one subprocess per tick and no USB traffic at all.
+  let blanked = false;
+  const lockWatch = setInterval(async () => {
+    const locked = await sessionLocked();
+    if (locked === blanked) return;
+    blanked = locked;
+    await device.setBlanked?.(locked);
+    if (!locked) void repaint();
+  }, TICK_MS);
+
+  const tick = setInterval(() => {
+    if (!blanked) void repaint();
+  }, TICK_MS);
   const servicePoll = setInterval(async () => {
     service = await anchor.status();
     await refreshPortfolio(true);
@@ -237,6 +250,7 @@ async function main(): Promise<void> {
 
   const shutdown = async (): Promise<void> => {
     clearInterval(tick);
+    clearInterval(lockWatch);
     clearInterval(servicePoll);
     unsubscribe();
     await device.close();

@@ -19,7 +19,7 @@ import {
 } from "./state/anchor.ts";
 import type { DesktopSnapshot } from "./state/desktop.ts";
 import type { Tokens } from "./tokens.ts";
-import type { AnchorDevice, BarSegment, DeviceInput, Frame, Surface, TokenName } from "./types.ts";
+import type { AnchorDevice, BarSegment, DeviceInput, Frame, ListRow, Surface, TokenName } from "./types.ts";
 
 export interface PanelState {
   readonly desktop: DesktopSnapshot;
@@ -116,7 +116,15 @@ export function readKeySource(name: string, state: PanelState): KeyReading | nul
 /** Slot ids the adapters agree on. Kept here so panel and adapter cannot drift apart. */
 export const keySlot = (index: number): string => `key:${index}`;
 export const dialSlot = (index: number): string => `dial:${index}`;
+export const screenSlot = (index: number): string => `screen:${index}`;
 export const STRIP_SLOT = "strip:0";
+/**
+ * The screen of a device that has one instead of a key grid.
+ *
+ * It lives here rather than in an adapter because two adapters needed it independently, and a slot
+ * id defined twice is a slot id that will eventually be spelled two ways.
+ */
+export const SCREEN_SLOT = screenSlot(0);
 
 /**
  * Named values a strip segment can show.
@@ -162,6 +170,8 @@ export class Panel {
   #tokens: Tokens;
   #pressed = new Set<string>();
   #timeframe: Timeframe = "DAY";
+  #selected = 0;
+  #filter = "";
 
   constructor(config: PanelConfig, tokens: Tokens) {
     const first = config.pages[0];
@@ -188,6 +198,41 @@ export class Panel {
   /** The window the portfolio page is reporting over. Scrubbed by a dial, read by the poller. */
   get timeframe(): Timeframe {
     return this.#timeframe;
+  }
+
+  /** The filter text a keyboard device has committed. Narrows rows; never dispatched. */
+  get filter(): string {
+    return this.#filter;
+  }
+
+  get selected(): number {
+    return this.#selected;
+  }
+
+  /**
+   * The page's keys as rows, filtered.
+   *
+   * A key and a row are the same thing said for different hardware: a label, an optional reading,
+   * and something to do when it is chosen. Composing rows here rather than in an adapter is what
+   * stops a screen device having to fetch its own data.
+   */
+  rows(state: PanelState): ListRow[] {
+    const needle = this.#filter.trim().toLowerCase();
+    return this.page.keys
+      .map((key) => {
+        const reading = key.source === "" ? null : readKeySource(key.source, state);
+        return {
+          key,
+          row: {
+            label: key.label || reading?.label || `Key ${key.index}`,
+            value: reading?.value,
+            icon: key.icon || undefined,
+            tone: reading?.tone ?? key.tone,
+          } satisfies ListRow,
+        };
+      })
+      .filter(({ row }) => needle === "" || row.label.toLowerCase().includes(needle))
+      .map(({ row }) => row);
   }
 
   get page(): PageConfig {
@@ -250,6 +295,20 @@ export class Panel {
       });
     }
 
+    // A screen device gets the same page as a list. Selection is clamped here because the row count
+    // depends on the filter, which only the panel knows.
+    for (const slot of device.capabilities.slots) {
+      if (!slot.paintable || slot.kind !== "screen") continue;
+      const rows = this.rows(state);
+      this.#selected = rows.length === 0 ? 0 : Math.min(this.#selected, rows.length - 1);
+      frame.set(slot.id, {
+        kind: "list",
+        rows,
+        selected: rows.length === 0 ? undefined : this.#selected,
+        empty: this.#filter === "" ? "nothing on this page" : `nothing matches "${this.#filter}"`,
+      });
+    }
+
     if (slots.has(STRIP_SLOT)) {
       const segments: BarSegment[] = page.segments.map((segment) => ({
         icon: segment.icon || undefined,
@@ -275,6 +334,12 @@ export class Panel {
     switch (input.kind) {
       case "press": {
         this.#pressed.add(input.slot);
+        if (input.slot.startsWith("screen:")) {
+          // On a screen device the chosen row is the action, and the panel knows which row that is.
+          const key = this.page.keys[this.#selected];
+          if (key !== undefined && key.action !== "") actions.dispatch(key.action, context);
+          return true;
+        }
         const key = page.keys.find((k) => keySlot(k.index) === input.slot);
         if (key && key.action !== "") actions.dispatch(key.action, context);
         const dial = page.dials.find((d) => dialSlot(d.index) === input.slot);
@@ -285,6 +350,10 @@ export class Panel {
         this.#pressed.delete(input.slot);
         return true;
       case "rotate": {
+        if (input.slot.startsWith("screen:")) {
+          this.#selected = Math.max(0, this.#selected + (input.delta > 0 ? 1 : -1));
+          return true;
+        }
         const dial = page.dials.find((d) => dialSlot(d.index) === input.slot);
         if (!dial) return false;
         if (dial.control === "timeframe") {
@@ -310,6 +379,12 @@ export class Panel {
         if (target !== undefined) this.setPage(target);
         return true;
       }
+      case "text":
+        // A filter, and only a filter. It narrows what is already on screen; nothing evaluates it,
+        // and it never reaches `actions.dispatch`.
+        this.#filter = input.value;
+        this.#selected = 0;
+        return true;
       case "tap":
         return false;
       default:
