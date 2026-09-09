@@ -14,6 +14,21 @@
 
 import { NoDeviceError, open as openStreamDeck } from "./adapters/streamdeck.ts";
 
+/**
+ * Open a Cardputer, over USB CDC.
+ *
+ * Imported lazily so the Stream Deck path is byte-for-byte what it was: nothing here opens a serial
+ * port, shells out to `stty`, or reads `/dev/serial/by-id` unless someone asked for a Cardputer.
+ *
+ * A named port is taken at its word. A guessed one has to answer first — every ESP32-S3 with native
+ * USB enumerates through the same Espressif JTAG/serial descriptor whatever is running on it, so
+ * matching the port name identifies a chip family and not a device.
+ */
+async function openCardputer(tokens: Tokens, path?: string) {
+  const { open } = await import("./adapters/cardputer.ts");
+  return await open(tokens, path, { confirmMs: path === undefined ? 3000 : 0 });
+}
+
 /** Build a hardware-free device for `--dry-run`. */
 async function openVirtual(model: string) {
   const { GEOMETRIES, VirtualDevice } = await import("./adapters/virtual.ts");
@@ -27,16 +42,24 @@ async function openVirtual(model: string) {
 
 import { loadConfig } from "./config.ts";
 import { loadGlyphMetrics } from "./glyphs.ts";
-import { Panel } from "./panel.ts";
+import { Panel, STRIP_SLOT } from "./panel.ts";
 import { clearRasterCache } from "./raster.ts";
 import * as anchor from "./state/anchor.ts";
 import { EMPTY_PORTFOLIO, type PortfolioSnapshot, type Timeframe } from "./state/anchor.ts";
 import { DesktopState, sessionLocked } from "./state/desktop.ts";
 import * as hypr from "./state/hypr.ts";
-import { loadTokens } from "./tokens.ts";
+import { loadTokens, type Tokens } from "./tokens.ts";
 
 const TICK_MS = 1000;
 const SERVICE_POLL_MS = 15000;
+/**
+ * Liveness for a device that can tell the difference between an idle host and a dead one.
+ *
+ * An unchanged panel writes nothing, which is the whole reason an idle device costs no USB traffic
+ * — but from the far end of the cable silence and a crashed host look identical. The Cardputer
+ * firmware treats fifteen seconds of it as a lost link, so the host speaks every five.
+ */
+const PING_MS = 5000;
 
 interface Options {
   configPath?: string;
@@ -48,10 +71,18 @@ interface Options {
   theme?: string;
   dryRun: boolean;
   model: string;
+  cardputer: boolean;
+  cardputerPath?: string;
 }
 
 function parseArgs(argv: readonly string[]): Options {
-  const options: Options = { once: false, list: false, dryRun: false, model: "plus" };
+  const options: Options = {
+    once: false,
+    list: false,
+    dryRun: false,
+    model: "plus",
+    cardputer: false,
+  };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === "--config") options.configPath = argv[++i];
@@ -61,7 +92,12 @@ function parseArgs(argv: readonly string[]): Options {
     else if (arg === "--page") options.page = argv[++i];
     else if (arg === "--theme") options.theme = argv[++i];
     else if (arg === "--model") options.model = argv[++i] ?? "plus";
-    else if (arg === "--dry-run") {
+    else if (arg === "--cardputer") {
+      options.cardputer = true;
+      // An optional path, so `--cardputer /dev/ttyACM1` names one and `--cardputer` finds one.
+      const next = argv[i + 1];
+      if (next !== undefined && !next.startsWith("-")) options.cardputerPath = argv[++i];
+    } else if (arg === "--dry-run") {
       options.dryRun = true;
       options.once = true;
     } else if (arg === "--list") options.list = true;
@@ -76,6 +112,7 @@ function parseArgs(argv: readonly string[]): Options {
           "  --theme <name>      render in this Omarchy theme instead of the active one\n" +
           "  --dry-run           render with no hardware attached; implies --once\n" +
           "  --model <name>      geometry for --dry-run (plus, original, mini, xl)\n" +
+          "  --cardputer [port]  drive an M5Stack Cardputer over USB CDC instead of a Stream Deck\n" +
           "  --list              list attached devices and exit\n",
       );
       process.exit(0);
@@ -89,17 +126,28 @@ async function main(): Promise<void> {
 
   if (options.list) {
     const { listStreamDecks } = await import("@elgato-stream-deck/node");
+    const { listPorts } = await import("./adapters/cardputer.ts");
     const found = await listStreamDecks();
-    if (found.length === 0) process.stdout.write("no devices found\n");
+    const ports = listPorts();
+    if (found.length === 0 && ports.length === 0) process.stdout.write("no devices found\n");
     for (const device of found) {
       process.stdout.write(`${device.model}\t${device.path}\t${device.serialNumber ?? "-"}\n`);
     }
+    // Listed as a candidate rather than as a Cardputer, because that is all the descriptor says.
+    // Every ESP32-S3 with native USB enumerates through the same Espressif JTAG/serial device, and
+    // the board on this desk that looked exactly like a Cardputer turned out to be an N16R8 devkit.
+    // Only the handshake `--cardputer` performs can tell them apart.
+    for (const port of ports) process.stdout.write(`esp32?\t${port}\t-\n`);
     return;
   }
 
   const { config, source } = loadConfig(options.configPath);
   let tokens = loadTokens(options.theme);
-  const device = options.dryRun ? await openVirtual(options.model) : await openStreamDeck(tokens);
+  const device = options.dryRun
+    ? await openVirtual(options.model)
+    : options.cardputer
+      ? await openCardputer(tokens, options.cardputerPath)
+      : await openStreamDeck(tokens);
   const panel = new Panel(config, tokens);
   const desktop = new DesktopState();
 
@@ -217,6 +265,23 @@ async function main(): Promise<void> {
     void refreshPortfolio().then(() => repaint());
   });
 
+  /**
+   * A committed filter string from a device with a keyboard.
+   *
+   * The decision to treat typed text as a filter is made here rather than in the adapter, and that
+   * is deliberate: the Cardputer adapter never turns a keystroke into a `DeviceInput` at all — its
+   * tests exhaust the key space to prove it — so a keyboard cannot manufacture panel input on its
+   * own. This is the host choosing, at one call site, to narrow rows it already has. Nothing
+   * evaluates the string, it never reaches `actions.dispatch`, and it is never a query parameter to
+   * the data service; that would be an untrusted device steering the host's requests.
+   */
+  if ("onQuery" in device) {
+    (device as { onQuery(handler: (text: string) => void): void }).onQuery((text) => {
+      if (!panel.handle({ kind: "text", slot: STRIP_SLOT, value: text })) return;
+      void repaint();
+    });
+  }
+
   const unsubscribe = hypr.subscribe((name) => {
     if (
       name.startsWith("workspace") ||
@@ -247,11 +312,20 @@ async function main(): Promise<void> {
     service = await anchor.status();
     await refreshPortfolio(true);
   }, SERVICE_POLL_MS);
+  // Only a device that can lose the link needs one; a Stream Deck notices a dead host by being
+  // unplugged from it.
+  const ping =
+    "ping" in device
+      ? setInterval(() => {
+          void (device as { ping(): Promise<void> }).ping();
+        }, PING_MS)
+      : null;
 
   const shutdown = async (): Promise<void> => {
     clearInterval(tick);
     clearInterval(lockWatch);
     clearInterval(servicePoll);
+    if (ping !== null) clearInterval(ping);
     unsubscribe();
     await device.close();
     process.exit(0);
