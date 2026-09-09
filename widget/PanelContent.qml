@@ -175,9 +175,10 @@ Column {
     iconComponent: Component {
       AnchorMark {
         iconSize: Style.font.display
-        // Large enough for the brand's own stroke weight, which is what the mark was drawn
-        // at. The lighter default exists only to survive bar size.
-        strokeUnits: 5
+        // `anchor.svg`'s weight rather than the default. The default is `anchor-solid.svg`'s 6,
+        // which exists so the stroke clears one device pixel in a bar slot; at hero size there is
+        // room for the lighter of the two.
+        strokeUnits: 4.5
         color: root.panelForeground
       }
     }

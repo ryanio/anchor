@@ -1,3 +1,12 @@
+- **One mark, at every size.** A ring, two branches off it, a crossbar — square bounds of 36×36,
+  and three files that are the same drawing at three weights. It briefly was two marks, a whole
+  anchor plus a cropped variant for the bar, and two marks for one product is a cost with no payer:
+  the bar showed one thing and the site showed another. A status bar broke the whole anchor two ways
+  — 10×12 in a row of glyphs drawing 9–11 square, and a stroke computing to 0.93 device pixels,
+  under one, so it antialiased to grey. Neither is a size problem: scaling preserves aspect ratio,
+  and a smaller slot makes the stroke smaller with it. Only fewer elements buy the weight, so six
+  became four and the stroke became 1.57 pixels. What it costs is the anchor read at large sizes,
+  which was the trade — a mark that only works when it is large is not a mark.
 # Changelog
 
 All notable changes to Anchor are recorded here, following
@@ -204,17 +213,15 @@ deadlines and an activity count, in the Omarchy top bar, read from the local ser
   a live machine is in exactly one of them, so its error screens had never been reviewed by anyone.
   `PanelContent.qml` renders from a single reading and takes no action itself, so `widget/gallery/`
   mounts it against a fixture per state and photographs all fifteen with no service, bar or desktop.
-- **The favicon carries the same geometry.** A favicon and a bar slot are the same problem at the
-  same size, so `favicon.svg` is now the bar mark on its tile rather than a third drawing. The
-  system is one rule — the full anchor where there is room, the crown where there is not.
-- **The mark has a bar variant, because a bar breaks it two ways.** Fitted to a bar slot the full
-  mark drew 10×12 against neighbours drawing 9–11 square — the one tall, narrow thing in the row —
-  and its stroke computed to 0.93 device pixels, under one, so it antialiased to grey. Neither is a
-  size problem: scaling preserves aspect ratio, and a thinner slot makes the stroke thinner still.
-  So `site/brand/anchor-bar.svg` is the top of the anchor — the ring and the branches off it, flukes
-  cropped — on square bounds of 36×36 at stroke 6, which draws 1.57 pixels and fills the slot both
-  ways. It reads as a monogram rather than an anchor, which is the trade a 16px glyph is worth; the
-  full mark stays the logo everywhere it has room.
+- **One mark, at every size.** A ring, two branches off it, a crossbar — square bounds of 36×36, and
+  three files that are the same drawing at three weights. It briefly was two marks, a whole anchor
+  plus a cropped variant for the bar, and two marks for one product is a cost with no payer: the bar
+  showed one thing and the site showed another. A bar broke the whole anchor two ways — 10×12 in a
+  row of glyphs drawing 9–11 square, and a stroke computing to 0.93 device pixels, under one, so it
+  antialiased to grey. Neither is a size problem: scaling preserves aspect ratio, and a smaller slot
+  makes the stroke smaller with it. Only fewer elements buy the weight, so six became four and the
+  stroke became 1.57 pixels. What it costs is the anchor read at large sizes, which was the trade —
+  a mark that only works when it is large is not a mark.
 - **The bar's open-panel underline tracks what the widget paints.** `Bar.qml` looks for an
   `openPanelIndicatorWidth` on a module and otherwise falls back to 55% of the slot, a figure
   calibrated for a text label in a padded slot. Measured on the running bar: a 172px slot drew a
@@ -277,8 +284,8 @@ assuming it, so a machine without one shows the command exactly as before.
 
 - anchor.ryanio.com: build diary, changelog and `llms.txt`, on a deep-water palette with shared
   tokens in `theme/tokens.css` reused across the project rather than redefined.
-- An anchor mark that reads as an **A**, stroke-based on `currentColor`, legible at 16px, with a
-  square bar variant for rows of icons and a rounded tile for the favicon.
+- One mark that reads as an **A** and as an anchor's head, stroke-based on `currentColor`, square,
+  legible at 11px — three files that are the same drawing at three weights.
 - `scripts/check-contrast.ts` computes WCAG ratios from the tokens and fails CI — all 38 text,
   accent and component pairs clear AA in both themes, so a colour that looks good but is unreadable
   cannot land. The widget's colours cannot be reached from there, because they are the user's live

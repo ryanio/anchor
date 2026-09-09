@@ -335,6 +335,80 @@ const CASES = [
   },
 ];
 
+/**
+ * The bar item's states.
+ *
+ * Fewer than the panel's, because the bar says less on purpose — but the ones it has are the ones
+ * nobody sees: a fresh install's dim mark, a vertical bar's single dot, a deadline inside the hour.
+ * They reuse the readings above rather than defining a second set of fixtures.
+ */
+const BAR_CASES = [
+  {
+    id: "bar-setup",
+    category: "The bar",
+    title: "Bar — nothing configured",
+    looking:
+      "The mark alone, dimmed. This is the whole first impression on a fresh install: present, " +
+      "legible, obviously not finished, and never alarming.",
+    reading: byId("setup-fresh").reading,
+  },
+  {
+    id: "bar-ready",
+    category: "The bar",
+    title: "Bar — a value",
+    looking:
+      "The mark beside a number. Check the mark's drawn size and weight against the number's cap " +
+      "height — they share a baseline and neither should dominate.",
+    reading: byId("ready-quiet").reading,
+  },
+  {
+    id: "bar-offers",
+    category: "The bar",
+    title: "Bar — offers and a deadline",
+    looking: "Three facts in a strip 26px tall. Is the order right, and does anything crowd?",
+    reading: byId("ready-offers").reading,
+  },
+  {
+    id: "bar-urgent",
+    category: "The bar",
+    title: "Bar — closing inside the hour",
+    looking:
+      "The one place the theme's urgent colour appears on the bar. It has to read as urgent " +
+      "without reading as broken.",
+    reading: byId("ready-urgent").reading,
+  },
+  {
+    id: "bar-hidden",
+    category: "The bar",
+    title: "Bar — the value hidden",
+    looking: "Someone is screen-sharing. What is left should still be worth having on the bar.",
+    reading: byId("ready-quiet").reading,
+    settings: { showValue: false },
+  },
+  {
+    id: "bar-offline",
+    category: "The bar",
+    title: "Bar — offline, showing the last reading",
+    looking: "The number is old. The bar has one dim to say so with; is it enough, or too much?",
+    reading: byId("offline-warm").reading,
+  },
+  {
+    id: "bar-vertical",
+    category: "The bar",
+    title: "Bar — vertical, where the numbers do not fit",
+    looking:
+      "A vertical bar is 28px wide. The mark stays and a single dot says there is something to " +
+      "look at. Check that the dot is legible and that the mark is not squeezed.",
+    reading: byId("ready-offers").reading,
+    vertical: true,
+  },
+];
+
+function byId(id) {
+  for (let i = 0; i < CASES.length; i++) if (CASES[i].id === id) return CASES[i];
+  throw new Error("no such case: " + id);
+}
+
 function portfolio_stale() {
   const entry = portfolio();
   entry.receivedAt = NOW - 3600000;
@@ -343,5 +417,5 @@ function portfolio_stale() {
 }
 
 if (typeof module !== "undefined") {
-  module.exports = { CASES: CASES, NOW: NOW };
+  module.exports = { CASES: CASES, BAR_CASES: BAR_CASES, NOW: NOW };
 }

@@ -1,8 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none"
-     stroke="currentColor" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"
-     role="img" aria-label="Anchor">
-  <circle cx="32" cy="13.5" r="6.5"/>
-  <path d="M32 20L14 43"/>
-  <path d="M32 20l18 23"/>
-  <path d="M21.5 36h21"/>
-</svg>
