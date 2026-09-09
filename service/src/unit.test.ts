@@ -9,8 +9,8 @@
 
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { describe, test } from "node:test";
+import { fileURLToPath } from "node:url";
 import { renderUnit } from "./unit.ts";
 
 const packaged = readFileSync(
