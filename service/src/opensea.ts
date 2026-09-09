@@ -212,60 +212,6 @@ function describeFailure(err: unknown): string {
   return code ? `OpenSea request failed (${name}: ${code})` : `OpenSea request failed (${name})`;
 }
 
-/**
- * Guard a value the SDK is about to interpolate into a path.
- *
- * **This no longer encodes.** `@opensea/sdk` 12.1.1 applies its own `segment()` across `apiPaths.ts`,
- * so encoding here as well would double-encode — a slug containing a space would go out as `%2520`
- * rather than `%20`. The bump and the removal of our `encodeURIComponent` had to be one commit, and
- * the traversal test below caught it when they briefly were not: it failed with `%252F` where it
- * expected `%2F`. That test asserts the *behaviour*, which is why it survived the mechanism changing.
- *
- * **The rejection stays**, and is not redundant with the SDK's. It fails before the request is
- * built, and this service caches by path: a traversed path does not merely reach the wrong endpoint,
- * it poisons that endpoint's cache key.
- *
- *
- * **The SDK did not do this before 12.1.1.** `getCollectionStatsPath(slug)` was a template literal,
- * so a slug of `../../events/accounts/0xdead` produced a request to
- * `/api/events/accounts/0xdead/stats` — a different endpoint entirely, with a cache key that
- * collides with the real one. Slugs and addresses arrive from config and from local HTTP requests,
- * so neither is trusted.
- *
- * Do not reintroduce encoding here on the grounds that it is harmless for real values. It is
- * harmless for `[a-z0-9-]` slugs and hex or base58 addresses — and it is wrong for exactly the
- * hostile inputs this function exists to handle, which is the worst possible place to be wrong.
- *
- * ## Encoding is not sufficient — `.` and `..` must be refused
- *
- * OpenSea confirmed this while fixing the same bug in `apiPaths.ts`, and it defeats the obvious fix.
- * `encodeURIComponent` leaves `.` and `..` completely untouched, so they survive encoding and still
- * traverse:
- *
- *     `/api/v2/collections/../stats`  →  `/api/v2/stats`
- *     `/api/v2/collections/./stats`   →  `/api/v2/collections/stats`
- *
- * Percent-encoding the dots does not help either. The WHATWG URL parser decodes percent-escapes
- * *before* it removes dot segments, so `%2E%2E`, `%2e%2e` and `.%2e` all collapse identically.
- * There is no spelling of a bare dot segment that survives as a literal.
- *
- * So they are rejected rather than encoded. Rejection is also sufficient, not merely necessary:
- * after encoding, nothing else is still a dot segment — `"..."` stays `"..."`, and `"%2e%2e"`
- * becomes `"%252e%252e"`. Only the two bare forms need refusing.
- *
- * No legitimate collection slug or address is `.` or `..`, so this costs nothing real.
- */
-function segment(value: string): string {
-  if (value === "." || value === "..") {
-    throw new TypeError(
-      `path segment ${JSON.stringify(value)} is a relative path reference and cannot be used — ` +
-        "it would traverse to a different endpoint",
-    );
-  }
-  // Deliberately returned unchanged. See the note above the doc comment.
-  return value;
-}
-
 /** Carries the ttl into `get()` and the freshness metadata back out. See the module comment. */
 interface CallScope {
   ttl: number;
@@ -505,8 +451,8 @@ export class OpenSeaClient {
     // server-side by collection rather than by owner.
     return this.#call(ttl, "account", "/portfolio", (api) =>
       opts.collection === undefined
-        ? api.getNFTsByAccount(segment(address), opts.limit ?? 50, opts.next, chain)
-        : api.getNFTsByCollection(segment(opts.collection), opts.limit ?? 50, opts.next),
+        ? api.getNFTsByAccount(address, opts.limit ?? 50, opts.next, chain)
+        : api.getNFTsByCollection(opts.collection, opts.limit ?? 50, opts.next),
     );
   }
 
@@ -517,7 +463,7 @@ export class OpenSeaClient {
     opts: { eventTypes?: string[]; limit?: number; next?: string } = {},
   ) {
     return this.#call(ttl, "account", "/activity", (api) =>
-      api.getEventsByAccount(segment(address), {
+      api.getEventsByAccount(address, {
         eventType: opts.eventTypes,
         chain: this.primaryChain,
         limit: opts.limit ?? 50,
@@ -531,27 +477,25 @@ export class OpenSeaClient {
 
   /** GET /collections/{slug} */
   collection(slug: string, ttl: number) {
-    return this.#call(ttl, "public", "/collections/:slug", (api) => api.getCollection(segment(slug)));
+    return this.#call(ttl, "public", "/collections/:slug", (api) => api.getCollection(slug));
   }
 
   /** Floor price, volume, sales. GET /collections/{slug}/stats */
   collectionStats(slug: string, ttl: number) {
-    return this.#call(ttl, "public", "/collections/:slug/stats", (api) =>
-      api.getCollectionStats(segment(slug)),
-    );
+    return this.#call(ttl, "public", "/collections/:slug/stats", (api) => api.getCollectionStats(slug));
   }
 
   /** GET /listings/collection/{slug}/best */
   bestListings(slug: string, ttl: number, limit = 20) {
     return this.#call(ttl, "public", "/collections/:slug/listings", (api) =>
-      api.getBestListings(segment(slug), limit),
+      api.getBestListings(slug, limit),
     );
   }
 
   /** GET /offers/collection/{slug} */
   collectionOffers(slug: string, ttl: number, limit = 20) {
     return this.#call(ttl, "public", "/collections/:slug/offers", (api) =>
-      api.getCollectionOffers(segment(slug), limit),
+      api.getCollectionOffers(slug, limit),
     );
   }
 
@@ -562,7 +506,7 @@ export class OpenSeaClient {
   /** Net worth and P&L across every configured chain. GET /account/{address}/portfolio */
   portfolioStats(address: string, ttl: number, timeframe?: "HOUR" | "DAY" | "WEEK" | "MONTH") {
     return this.#call(ttl, "account", "/portfolio/value", (api) =>
-      api.getPortfolioStats(segment(address), {
+      api.getPortfolioStats(address, {
         ...(timeframe === undefined ? {} : { timeframe }),
         chains: [...this.#chains],
       }),
@@ -577,7 +521,7 @@ export class OpenSeaClient {
    */
   portfolioHistory(address: string, ttl: number, timeframe?: "HOUR" | "DAY" | "WEEK" | "MONTH") {
     return this.#call(ttl, "account", "/portfolio/history", (api) =>
-      api.accounts.getPortfolioHistory(segment(address), {
+      api.accounts.getPortfolioHistory(address, {
         ...(timeframe === undefined ? {} : { timeframe }),
         ...({ chains: [...this.#chains] } as object),
       }),
@@ -587,7 +531,7 @@ export class OpenSeaClient {
   /** Fungible balances across every configured chain. GET /account/{address}/tokens */
   tokenBalances(address: string, ttl: number, opts: { limit?: number; cursor?: string } = {}) {
     return this.#call(ttl, "account", "/balances", (api) =>
-      api.getAccountTokens(segment(address), {
+      api.getAccountTokens(address, {
         chains: [...this.#chains],
         limit: opts.limit ?? 50,
         ...(opts.cursor === undefined ? {} : { cursor: opts.cursor }),
@@ -611,16 +555,14 @@ export class OpenSeaClient {
 
   /** One token on the primary chain. GET /chain/{chain}/token/{address} */
   token(address: string, ttl: number) {
-    return this.#call(ttl, "public", "/tokens/:address", (api) =>
-      api.getToken(this.primaryChain, segment(address)),
-    );
+    return this.#call(ttl, "public", "/tokens/:address", (api) => api.getToken(this.primaryChain, address));
   }
 
   /** Price history on the primary chain. GET /chain/{chain}/token/{address}/price_history */
   tokenPriceHistory(address: string, ttl: number, opts: { startTime: string; endTime?: string }) {
     const chain = toSdkChain(this.primaryChain);
     return this.#call(ttl, "public", "/tokens/:address/price_history", (api) =>
-      api.getTokenPriceHistory(chain, segment(address), {
+      api.getTokenPriceHistory(chain, address, {
         startTime: opts.startTime,
         ...(opts.endTime === undefined ? {} : { endTime: opts.endTime }),
       }),

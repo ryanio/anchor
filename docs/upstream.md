@@ -1,18 +1,32 @@
-# Upstream workarounds
+# Upstream
 
 Code in this repository that exists **only** because something is missing or wrong in a dependency —
-almost always [`@opensea/sdk`](https://github.com/ProjectOpenSea/opensea-js) or
-[`@opensea/api-types`](https://www.npmjs.com/package/@opensea/api-types).
+almost always [`@opensea/sdk`](https://github.com/ProjectOpenSea/opensea-js),
+[`@opensea/api-types`](https://www.npmjs.com/package/@opensea/api-types) or
+[`@opensea/wallet-adapters`](https://github.com/ProjectOpenSea/wallet-adapters).
 
-Each entry names what we wrote, why, and **what to delete when upstream fixes it**. Without this
-file, a workaround quietly becomes architecture: nobody remembers it was temporary, and the upstream
+Each open entry names what we wrote, why, and **what to delete when upstream fixes it**. Without this
+file a workaround quietly becomes architecture: nobody remembers it was temporary, and the upstream
 fix lands with no one noticing it made our code redundant — or worse, actively wrong.
 
-Findings were reported upstream on **2026-09-07**, and this file was last checked against
-`@opensea/sdk@12.5.0`, `@opensea/api-types@0.10.0` and `@opensea/wallet-adapters@1.2.0`. Re-check this file whenever either package is bumped;
-`scripts/check-versions.ts` does not check it, because "is this still needed" is a judgement call.
+Checked against `@opensea/sdk@12.5.0`, `@opensea/api-types@0.10.0`, `@opensea/wallet-adapters@1.2.0`.
 
----
+**Numbers are permanent.** Entries are referenced by number from code comments and commit messages,
+so they are never renumbered and never reused — only regrouped.
+
+## Reported so far
+
+Everything below, open and closed, has been **sent upstream as of 2026-09-09**. A new finding goes
+under *Unreported* first, so the next message is only what is new; nobody wants the same list twice.
+Move it down here once it has been sent.
+
+## Unreported
+
+*Nothing pending.* Add new findings here as its own `## N.` entry, continuing the numbering.
+
+## Open
+
+Live workarounds. Each one is code that deletes itself when the entry closes.
 
 ## 0. The live API answers in camelCase; the generated types declare snake_case
 
@@ -47,46 +61,6 @@ the outside. The missing `status` field should be reported separately — it is 
 in the schema and does not appear in responses.
 
 ---
-
-## 1. Percent-encoding path segments before the SDK sees them
-
-**Upstream problem.** `lib/api/apiPaths.js` builds every path with a bare template literal. Sixty-one
-builders take a parameter and none encode it, so a collection slug of `../../events/accounts/0xdead`
-retargets the request at a different endpoint and collides that endpoint's cache key. The helper
-already exists in the same package — `lib/api/walletAuth.js:4` defines
-`segment = (value) => encodeURIComponent(String(value))` — and `lib/api/accounts.js:42` uses
-`encodeURIComponent` at exactly one call site.
-
-**What we wrote.** `segment()` in `service/src/opensea.ts:166`, applied at eleven call sites before
-any value is handed to the SDK.
-
-**Status: fixed upstream and consumed.** Landed in `@opensea/sdk` 12.1.1 / `@opensea/api-types` 0.9.2. OpenSea exported `segment()` from `apiPaths.ts` and applied
-it to all 100 interpolation sites (61 of 88 builders took a parameter), and dropped the duplicate
-helper in `walletAuth.ts` plus the now-double-encoding wrapper at the one call site in `accounts.ts`.
-It reaches npm on the next SDK release. **Do not bump and delete in separate commits** — see below.
-
-**Encoding alone was not enough, on either side.** `encodeURIComponent` leaves `.` and `..` untouched,
-so they survive encoding and still traverse, and percent-encoding them does not help because the
-WHATWG URL parser strips escapes *before* removing dot segments. Both `segment()` implementations now
-reject the two bare forms rather than encoding them. Rejection is sufficient as well as necessary:
-after encoding, nothing else is still a dot segment. Ours is in `service/src/opensea.ts` with tests
-covering both the refusal and the near-misses (`"..."`, `"%2e%2e"`, `".%2e"`).
-
-**Done, and the trap was real.** Bumping without removing our encoding produced exactly the
-double-encode this entry warned about, and `opensea.test.ts` caught it — the traversal test failed
-with `%252F` where it expected `%2F`. The bump and the removal were one commit. `segment()` still
-exists and still **rejects** `.` and `..`; it just no longer encodes.
-
-Historical note on why deletion had to be atomic: do **not** simply delete `segment()` the moment the
-SDK starts encoding. We would then encode twice, and a slug containing a space would go out as `%2520`
-rather than `%20`. In practice this is narrow: for ordinary slugs and for hex or base58 addresses
-`encodeURIComponent` is the identity, so double-encoding is a no-op — it bites only on exactly the
-inputs the upstream fix exists to protect.
-
-So the removal has to be atomic with the upgrade: bump the SDK and drop the `segment()` calls in the
-same commit, and keep `service/src/opensea.test.ts`'s traversal case, which asserts the *behaviour*
-(a `../` slug does not reach another endpoint) rather than the mechanism. That test should pass
-before and after.
 
 ## 2. Subclassing `OpenSeaAPI` to get a transport seam
 
@@ -159,32 +133,6 @@ several arg types, but not to `GetTokensArgs`, which still carries only `limit`,
 **When it's fixed.** Surface them. This is the only entry that is a *missing feature* rather than
 compensating code, which is why there is nothing to delete.
 
-## 6. No status code on SDK errors
-
-**Status: fixed upstream and consumed** in `@opensea/sdk` 12.1.1. All four throw sites now go through one
-builder, so `statusCode` is set on every non-OK response and `responseBody` comes along whenever a
-body parsed. The type is `OpenSeaApiError`; `OpenSeaRateLimitError` remains as an alias with the
-identical shape, so existing rate-limit handling compiles unchanged.
-
-The retry ladder now exists in `ReadOnlyOpenSeaAPI.get()`: 502/503/504 and status-less transport
-errors are retried twice with jittered exponential backoff, outside the shared rate limiter so a
-sleeping request cannot hold a slot. **500 is deliberately excluded** — entry 7 below is a measured
-counter-example of a deterministic one, and retrying it only delays the stale-cache fallback. 429 is
-left to the SDK's own `Retry-After` ladder.
-
-**Upstream problem.** Only `_createRateLimitError` attached `statusCode` (429 and 599). Every other
-failure threw a bare `Error` whose message was built from a remote-controlled response body —
-`api.js:1013` carried no status at all, `api.js:1015` put it in prose only.
-
-**What we wrote.** Nothing that recovers the status, because there is nothing to recover it from.
-The consequence is a **missing capability**: the service has no 5xx retry ladder, since it cannot
-distinguish a retryable failure from a permanent one. Errors are scrubbed to a status-derived
-message before they leave the service (a remote body must never be echoed), so the SDK's message
-text is discarded.
-
-**When it's fixed.** Add the retry ladder. Note that this is the one entry where the workaround is an
-absence — easy to forget precisely because there is no code to find.
-
 ## 7. `/account/{address}/portfolio` 500s on the obvious call
 
 **Upstream problem.** A live server bug, not a package one. The bare route returns
@@ -197,33 +145,6 @@ when filtered, fine when small, fails when large and unfiltered.
 
 **When it's fixed.** Nothing to delete. If it persists, the workaround is to always send a
 parameter, and that belongs here as its own entry when we write it.
-
-## 8. No Solana adapter in `@opensea/wallet-adapters`
-
-**Status: fixed upstream and consumed** in `@opensea/wallet-adapters` 1.1.0. `PrivySvmAdapter` is
-now `PrivySolanaSigner`'s transport. Deleted from `executor/src/privy-api.ts`: `sendSolanaTransaction`,
-`SendSolanaTransactionArgs`, and their line on `PrivyWalletApi`.
-
-The existing wire-level tests passed unchanged across the swap — same `signAndSendTransaction` body,
-same base64, same documented CAIP-2 — which is the useful kind of evidence that the replacement is
-faithful rather than merely compiling.
-
-Two things the adapter does *not* close, and neither is a criticism of it:
-
-- It takes an already-serialized transaction, so Anchor still cannot **compile** one — that needs
-  associated token account derivation (ed25519 on-curve arithmetic) and a live blockhash.
-- It deliberately excludes policy mutation ("do not add `setPolicy`, `rotateOwner`, `addSigner`"), so
-  `getPolicy`, `replacePolicyRules`, `loadAuthorizationKey`, `signAuthorizationPayload` and
-  `canonicalize` stay ours. That is the right split: the thing that signs and the thing that decides
-  what may be signed should not be the same dependency.
-
-`solana.ts` stays regardless. Refusing a delegation is a security property Anchor owns, not something
-an adapter would provide.
-
-**Upstream problem (as originally filed).** [`ProjectOpenSea/wallet-adapters`](https://github.com/ProjectOpenSea/wallet-adapters)
-is the package Anchor would otherwise use for managed signing: adapters for Privy, Turnkey,
-Fireblocks, Bankr and local keys, with bridges for ethers and viem. Every one of them was EVM. There
-was no Solana adapter, no Solana bridge, and no non-EVM signing abstraction in the repository.
 
 ## 9. Privy's Solana policy engine cannot express an approval refusal
 
@@ -313,61 +234,6 @@ long-lived secret sitting in a keyring.
 
 ---
 
-## 14. The token names wallets the SDK cannot reach
-
-**Status: fixed upstream and consumed** in `@opensea/sdk` 12.5.0. `extractLinkedWallets(token)` is
-now the source of the wallet set, beside `extractOpenSeaScopes` and `extractWalletAddress`.
-
-Two things stayed ours, and both are stated in `walletsFromToken`: the **order**, because
-`wallets[0]` is the primary and the two routes that cannot fan out read it, and the **chain filter**,
-because the SDK deliberately applies no format validation and leaves that to the server. One thing
-had to be added: `extractLinkedWallets` answers `[]` for a non-JWT while `decodeJwtPayload` throws,
-and a startup path must degrade rather than crash.
-
-The doc comment that shipped names the trap directly — *"Combining it with the `wallet` claim
-double-counts the primary; using only the `wallet` claim under-reports every account that has linked
-more than one."* Our implementation predates it and avoided the first half by deduping, which is
-luck rather than design.
-
-**Upstream problem (as originally filed).** A wallet PAT's JWT carried `linked_wallets` and neither
-`@opensea/sdk` nor `@opensea/cli` mentioned the claim. The SDK issued a credential describing more
-wallets than the SDK could spend, so a consumer either ignored them — silently under-reporting a
-portfolio, which is what happened here — or decoded the JWT itself.
-
-## 15. No `fetchImpl` on `PrivyConfig`
-
-**Status: fixed upstream and consumed** in `@opensea/wallet-adapters` 1.2.0. The executor's Privy
-tests inject a stub rather than replacing `globalThis.fetch` and restoring it afterwards. A test that
-reaches for a global is a test that can leak into the one after it.
-
-**Upstream problem (as originally filed).** `PrivyConfig` took `appId`, `appSecret`, `walletId`,
-`baseUrl` and `authSigningKey`. `baseUrl` lets a test point at a local server; it does not let one
-assert on a request without running one, and `onRequest` observes a request rather than substituting
-the transport.
-
-## 12. `PrivySvmAdapter` cannot send an idempotency key
-
-**Status: fixed upstream and consumed** in `@opensea/wallet-adapters` 1.1.0, and fixed more
-thoroughly than reported. `idempotencyKey` is on both the EVM and SVM request types and reaches
-Privy as `privy-idempotency-key`. Beyond that:
-
-- `capabilities.idempotentSend` says whether a provider honours it.
-- `IdempotencyUnsupportedError` and `requireIdempotencySupport` make a provider that cannot honour a
-  key **throw rather than drop it**, so protection can never be silently absent.
-- `BlankIdempotencyKeyError`, because a blank key protects nothing.
-
-The last two are the part worth calling out: the bug that was reported was one adapter missing a
-header, and what shipped closes the whole class — a caller that asks for idempotency and does not
-get it now finds out.
-
-`PrivySolanaSigner` checks `idempotentSend` **at construction**. Discovering it while holding an
-approved action is discovering it too late.
-
-**Upstream problem (as originally filed).** 1.0.0 sent exactly two Privy headers — `privy-app-id`
-and `privy-authorization-signature`. There was no `privy-idempotency-key`, no way to add one, and
-`onRequest` observes a request rather than amending it. Privy caches a key's outcome for 24 hours,
-which is what makes a resubmitted approval a no-op instead of a second on-chain spend.
-
 ## 13. No per-collection holdings value
 
 **Upstream problem.** Anchor can show what a portfolio is worth by type, by wallet, by asset and by
@@ -414,13 +280,39 @@ worth keeping from having built it client-side: **per-address rows beside the su
 straight back to N requests for the breakdown; and **a partial answer that says which addresses are
 missing**, because a `200` carrying a quietly short total is the original bug moved server-side.
 
+## Closed
+
+Fixed upstream and consumed. Kept as a record of what shipped and what it let us delete — the
+"what to delete when fixed" instruction is spent, so the entry is one line.
+
+**1. Percent-encoding path segments before the SDK sees them** — `@opensea/sdk` 12.1.1 — `apiPaths` encodes every segment and refuses a bare `.` or `..`. **Deleted here:** the local `segment()` guard and its twelve call sites in `service/src/opensea.ts`. The behavioural test stays, asserting the refusal rather than our old wording.
+
+**6. No status code on SDK errors** — `@opensea/sdk` 12.1.1 — `statusCode` on every non-OK response, via one `OpenSeaApiError` builder. **Built on it:** the retry ladder in `ReadOnlyOpenSeaAPI.get()`. 500 is deliberately excluded; see entry 7.
+
+**8. No Solana adapter in `@opensea/wallet-adapters`** — `@opensea/wallet-adapters` 1.1.0 — `PrivySvmAdapter`. **Deleted here:** `sendSolanaTransaction`, `SendSolanaTransactionArgs` and their line on `PrivyWalletApi`. The policy half stays ours, correctly: the adapter excludes policy mutation by design.
+
+**12. `PrivySvmAdapter` cannot send an idempotency key** — `@opensea/wallet-adapters` 1.1.0 — `idempotencyKey` on both request types, plus `capabilities.idempotentSend`, `IdempotencyUnsupportedError` and `BlankIdempotencyKeyError`. Shipped broader than reported: a caller that asks for idempotency and cannot have it now finds out. `PrivySolanaSigner` checks the capability at construction.
+
+**14. The token names wallets the SDK cannot reach** — `@opensea/sdk` 12.5.0 — `extractLinkedWallets`. **Deleted here:** this service reading the `linked_wallets` claim itself. Order and the chain filter stayed ours, for reasons `walletsFromToken` states.
+
+**15. No `fetchImpl` on `PrivyConfig`** — `@opensea/wallet-adapters` 1.2.0. **Deleted here:** the executor's Privy tests replacing `globalThis.fetch` and restoring it afterwards.
+
 ## Reporting
 
-The full write-up handed to OpenSea on 2026-09-07 covers eight findings, of which findings 1-6 above
-affect this repository. Two others — the four wallet-scoped operations that 401 while declaring only
-`ApiKeyAuth`, and the absent `POST /api/v2/auth/tokens/exchange` — are documented in
+**Sent so far.** The first write-up went to OpenSea on 2026-09-07, and a second on 2026-09-09 raised
+what became entries 14, 15 and 16 alongside three asks that are not workarounds — money as a decimal
+string, `sortBy` on `GetTokensArgs`, and per-collection value.
+
+Two findings never became entries here: the four wallet-scoped operations that 401 while declaring
+only `ApiKeyAuth`, and the absent `POST /api/v2/auth/tokens/exchange`. Both are documented in
 `service/src/auth.ts` instead, because they shaped that module's whole design rather than leaving a
 removable workaround.
 
-When you hit a new one: fix it locally if you must, then **add it here and tell Ryan**. He works on
-these packages. An upstream fix helps everyone; a local workaround helps once and then drifts.
+**When you hit a new one:** fix it locally if you must, add it under *Unreported* above, and tell
+Ryan — he works on these packages. An upstream fix helps everyone; a local workaround helps once and
+then drifts.
+
+**When one closes:** delete the workaround the entry names, and check that it really is dead rather
+than merely unused. Entry 1 sat "fixed and consumed" for a week with its guard still in the tree and
+twelve live call sites, because the entry recorded the fix and nobody re-read the instruction under
+it.

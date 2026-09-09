@@ -293,13 +293,17 @@ describe("request shape", () => {
   // Encoding is necessary but not sufficient, which is the part that is easy to get wrong.
   // `encodeURIComponent` leaves `.` and `..` untouched, and the URL parser strips percent-escapes
   // before it removes dot segments, so no encoding of them survives. They have to be refused.
+  //
+  // The refusal is the SDK's since 12.1.1, and this service's own copy of it is gone. The test
+  // stays and asserts the *behaviour* rather than a message: a workaround being deleted is exactly
+  // when a property quietly stops being enforced, and this one is the difference between a slug and
+  // a different endpoint's cache key.
   test("a bare dot segment is refused rather than encoded", async () => {
     const h = harness(ok);
     await using(h, async () => {
       for (const probe of [".", ".."]) {
         await assert.rejects(
           () => h.client.collectionStats(probe, NO_TTL),
-          /relative path reference/,
           `${JSON.stringify(probe)} must be refused`,
         );
       }

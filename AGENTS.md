@@ -62,15 +62,20 @@ A change is done when all of these hold. Not before:
 - `npm run typecheck` passes in every workspace you touched.
 - `npm test` passes, and new behaviour has a test. Bug fixes get a regression test that fails without
   the fix.
-- The change is on a branch with a PR, and CI is green.
+- CI is green — on `main` after the push, or on the PR when the change took a branch.
 - `CHANGELOG.md` has an entry under `## Unreleased` if the change is user-visible.
 - Docs are updated in the same change, not "later". A doc that describes the old behaviour is a bug.
 
 ## How to work
 
-- **Branch per change**, named `type/short-description` — `feat/`, `fix/`, `docs/`, `refactor/`, `test/`.
-- **Small PRs.** One idea each. A PR that needs a paragraph to explain why it touches six areas should
-  be several PRs.
+- **Work on `main` by default.** One agent, one machine, one change at a time: commit to `main`, run
+  the gates, push. A branch and a PR for every small change is ceremony that buys nothing when nobody
+  else is holding the tree, and it leaves a trail of merged branches to clean up afterwards.
+- **Branch when the work is big, long-running, or risky** — something you would not want half-done on
+  `main`, something that needs review before it lands, or anything touching the executor, policy,
+  signing or keys. Name it `type/short-description` — `feat/`, `fix/`, `docs/`, `refactor/`, `test/`.
+- **One idea per commit**, and per PR when there is one. A change that needs a paragraph to explain
+  why it touches six areas should be several changes.
 - **Conventional commit subjects**, imperative mood, explaining *why* in the body. The diff shows what.
 - **Never force-push `main`.** Never rewrite published history.
 - Prefer the standard library, and prefer **OpenSea's own packages** over a hand-rolled copy of its
@@ -175,13 +180,21 @@ is not rigour — the finding is the achievement.
 Several agents may work this repo at once. Every rule here comes from a collision that actually
 happened, not a hypothetical.
 
-**One worktree per agent. Never share a working tree.** `git checkout -b` changes the tree for
-everyone in it — three agents once branched under each other, and one agent's commit landed on
-another's branch. Claim your own:
+**When another agent is working here, take a worktree.** That is what they are for: `git checkout`
+changes the tree for everyone in it, and three agents once branched under each other with one
+agent's commit landing on another's branch. Alone on the machine, skip it and use `main` — a
+worktree per trivial edit is how this repo ended up with fifteen of them pinning fifteen branches
+that had all been merged.
 
 ```bash
 git worktree add /tmp/<task-name> -b <type>/<slug> origin/main
 ```
+
+**Remove it when you are done** — `git worktree remove <path>`, then `git branch -d` — in the same
+turn you merge, not "later". A worktree also *pins* its branch: `git branch -D` refuses while one
+holds it, so an abandoned worktree keeps a dead branch alive and keeps `main` un-checkout-able if it
+happens to hold `main`. `git worktree list` before you finish, and `git worktree prune` after
+removing anything by hand.
 
 **Declare file ownership before starting, and stay inside it.** Two agents editing one file is a merge
 conflict you will resolve badly at the end instead of avoiding at the start. If you need a file
@@ -191,8 +204,9 @@ another task owns, say so and let a human sequence it.
 touched by nearly every change. Prefer adding your entry rather than restructuring around it, and
 expect to merge `origin/main` before pushing.
 
-**Branch and PR. Never push to `main`, never force-push a published branch.** Merge `origin/main` into
-your branch rather than rebasing once it is pushed.
+**Never force-push `main`, and never rewrite published history.** Pushing *to* `main` is the default
+now (see above); rewriting what is already there is not, and it needs a human's word. Once a branch
+is pushed, merge `origin/main` into it rather than rebasing.
 
 **A new workspace is not tested until CI runs it.** `devices/` landed with 188 tests that CI never
 ran, and `check-versions.ts` skipped its engines and its version — both because the workspace list
