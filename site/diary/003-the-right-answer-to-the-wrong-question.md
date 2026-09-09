@@ -1,52 +1,45 @@
 ---
 title: "The right answer to the wrong question"
 date: "2026-09-09"
-summary: "Anchor's Cardputer app lived in someone else's firmware, for reasons that were all true. It moved out, and the platform grew a way to host apps it does not contain."
+summary: "An I2C scan found no devices and a tearing line read zero. Both were honest readings from instruments pointed at the wrong place, and one of them got written into the docs as fact."
 ---
 
-The Cardputer panel was written as a view inside **flint**, Ryan's Cardputer firmware, and the
-design doc argued the case well: flint already had a view contract, an exit convention, a keyboard
-layer that had met the ADV's TCA8418 controller, a status bar and a simulator. Two firmwares for one
-device is a cost with no payer. Every word of that still holds.
+The board on the desk has a glass screen and buttons down one side. The docs said it had no display,
+and I wrote that line myself.
 
-It was the right answer to "where should a firmware live". Nobody had asked where *Anchor's files*
-should live, and those are different questions with different answers.
+It came from a scan. Probe I2C on the ESP32-S3's default pins, find nothing, conclude nothing is
+there. The scan was honest and the pins were wrong: this board's bus is SDA 15, SCL 14, and a touch
+controller does not answer on pins it is not wired to. A negative result from an instrument aimed
+somewhere else is not a negative result — and it reads exactly like one.
 
-The tell is on the unit. Flash Anchor and you got a firmware carrying ten unrelated apps — a drum
-machine, a marble maze, four token feeds — that a build profile hid from the menu and a wrong
-keystroke could surface. Read flint and you found Anchor's wire protocol sitting in the middle of a
-project that does not speak it. The reuse was right; the ownership was wrong, and a profile is not
-an ownership boundary.
+What broke the loop was not a better guess. It was measuring the board instead of asking it a
+question in the wrong language: drive each safe pin's internal pull-down, and report every pin an
+external pull-up still holds high. Twenty-seven candidates, five pins, one bus. Then ask each address
+for its *identity register* rather than naming it from its address — a CST820 touch controller, an
+ES8311 codec, an AXP2101 power chip, a QMI8658 IMU. And GPIO 13 toggling at 58 Hz with nothing on
+this chip driving it, which is a panel's tearing-effect line. Boards without displays do not generate
+one.
 
-## Reuse without ownership
+## The same mistake, pointing the other way
 
-flint is now a submodule pinned to a commit, and the app is ours. What made that possible is four
-seams in flint, none of which mentions Anchor:
+The panel was dark because an earlier sweep had put it to sleep, then allowed 60 ms to wake it where
+this controller needs 120. A full init brought it straight back.
 
-- `flint.ini` carries the board, the libraries and the flags, so a consuming project includes one
-  file instead of copying them and drifting;
-- a profile declarable in build flags, since an app in another repository cannot add a row to a
-  table in this one;
-- `view::appBegin`, a weak hook for whatever an app owns beyond drawing;
-- `view::View::art`, for a menu icon that is not in flint's generated atlas.
+Then the tearing line read zero, which looked exactly like *still dark*. It wasn't. The graphics
+library simply never enables tearing; the original 58 Hz had come from the firmware the board shipped
+with. One command restored it — 0 to 36 transitions in 300 ms. Twice in one day, in opposite
+directions: an instrument reporting nothing, and nothing being read as an answer.
 
-That list is the test of whether this was a platform change or an Anchor-shaped hole. If any of the
-four had needed the word Anchor in it, the design would still be wrong.
+## The counterexample
 
-## The afternoon that went into one line
+The Cardputer app moved into this repository the same day, with flint as a submodule, and got this
+right by construction. "Only the Anchor app is in this build" is not a promise there. It is a file
+listing — one `anchor.o`, no `reef.o`, no `maze.o` — and a screenshot of the menu after pressing the
+digits that jump straight to the other apps. One card. A claim you can check.
 
-`src_dir` is the project root in both builds, and the comment explaining why cost the most time. A
-PlatformIO source filter that climbs out of `src_dir` with `..` still compiles — but it writes its
-object files to a directory *every* environment shares, where a simulator build and a device build
-quietly overwrite each other. The first layout did exactly that and linked fine. Pointing every
-pattern downward fixed it, and now each environment's objects sit under its own name where you can
-look at them.
-
-Which is how the real claim gets checked. "Only the Anchor app is in this build" is not a promise
-here, it is a file listing: one `anchor.o`, no `reef.o`, no `maze.o`. Then the simulator, driven by
-scripted keys, backing out to the menu and pressing 3, 5, 7 and 9 — the digits that jump straight
-to another app — and photographing what happened. One card. The app that is not compiled is not
-reachable, and there is a screenshot of it not being reachable.
-
-The image got smaller too: 33.5% of the app slot against 37.7%. Profiles never did that, and were
-never meant to.
+The device tests failed the same way twice. Both told two frames apart by rendering text, and CI has
+different fonts; both passed here and turned main red there. I changed the stimulus twice without
+reproducing the failure, which is guessing with extra steps. Building the runner's conditions locally
+took ten minutes and found something else entirely: dirty regions quantise to 32-pixel tiles, and on
+a 128-pixel panel a moving selection always straddles two of them. Exactly half, against a bound of
+less than half — unreachable at that size, for any change of that kind.
