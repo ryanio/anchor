@@ -17,6 +17,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The Cardputer app builds against flint, which is a submodule. Without this the firmware
+          # step fails on a missing directory rather than on anything it is meant to catch.
+          submodules: true
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           # .node-version is the single source of truth — mise reads it locally too.
@@ -93,6 +97,18 @@ jobs:
       # that QML's engine loads, and the tests drive it through `require` under node --test.
       - name: Widget — test
         run: npm test --prefix widget
+
+      # The Cardputer app lives here and builds against flint, so nothing else in this repo would
+      # notice it breaking. The simulator target is the cheap one: `platform = native`, so it needs
+      # SDL and a host compiler rather than the ESP32 toolchain, and it exercises the app pack
+      # wiring — the build flags that select one app out of flint's ten — which is the part most
+      # likely to rot when either side moves.
+      - name: Cardputer app builds against flint
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y libsdl2-dev
+          pipx install platformio || pip install --user platformio
+          pio run -e sim-anchor -d devices/firmware/cardputer
 
       - name: Site builds
         run: node site/build.ts

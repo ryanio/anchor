@@ -1,3 +1,22 @@
+# Changelog
+
+All notable changes to Anchor are recorded here, following
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
+[Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+The build diary at [anchor.ryanio.com](https://anchor.ryanio.com) has the story behind these; this
+file has the facts.
+
+## [Unreleased]
+
+Everything below is the first release, still being assembled. Nothing is tagged yet — this heading
+becomes `## [0.1.0] - YYYY-MM-DD` at the moment the tag is pushed, and not before.
+
+### Added
+
+**Devices** — Anchor on physical hardware, starting with the Elgato Stream Deck. Opt-in: the
+workspace keeps its own dependency, so a machine with no device attached installs nothing.
+
 - ESP32 pulse firmware, **running on hardware**. The device half of the wire format is portable C99
   with no allocation and no platform calls; it is compiled and driven on every `npm test` against
   frames from the real host adapter, so the encoder is proved against a second implementation rather
