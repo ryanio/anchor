@@ -3,17 +3,28 @@
  *
  * `scripts/check-contrast.ts` holds the web surfaces to WCAG AA. Devices cannot use it — their
  * palette is not `theme/tokens.css` but whichever Omarchy theme the user is wearing — so the same
- * threshold is enforced here, against every stock theme on the machine.
+ * threshold is enforced here, against every theme this machine can put on a key.
  *
  * This exists because the first version of the key face used `inkDim` for labels. It looked
  * deliberate and measured 2.0-3.4:1 depending on the theme, which is unreadable, and the report
  * that it was unreadable came from a person looking at hardware rather than from any test.
+ *
+ * Two more lessons are recorded below, both of the same shape as that one — careful attention to
+ * the thing being looked at, none to the thing being looked *through*. Every assertion here used to
+ * compare a mark against `ground`, and the illegible marks were the ones on an *active* tile, a
+ * surface `ground` does not describe. And every palette used to arrive via `loadTokens`, which
+ * falls back to Tokyo Night for a name it cannot resolve — so a theme with no readable
+ * `colors.toml` was measured as Tokyo Night and passed. Both are covered now; neither was visible
+ * in a green test run.
  */
 
 import assert from "node:assert/strict";
-import { readdirSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
 import { describe, test } from "node:test";
-import { loadTokens, type Tokens, toRgb } from "./tokens.ts";
+import { fileURLToPath } from "node:url";
+import { activeFill, deviceTokens, onActive, parseFlatToml, type Tokens, toRgb } from "./tokens.ts";
 
 /** WCAG relative luminance. */
 function luminance(hex: string): number {
@@ -29,15 +40,53 @@ export function contrast(a: string, b: string): number {
   return ((lighter ?? 0) + 0.05) / ((darker ?? 0) + 0.05);
 }
 
-/** Stock themes, read from disk so a new one is covered the day it ships. */
-function stockThemes(): string[] {
+interface ThemeOnDisk {
+  readonly name: string;
+  readonly colors: Record<string, string>;
+}
+
+/** Every directory under `root` that actually carries a palette. */
+function themesIn(root: string): ThemeOnDisk[] {
+  let entries: string[];
   try {
-    return readdirSync("/usr/share/omarchy/themes", { withFileTypes: true })
+    entries = readdirSync(root, { withFileTypes: true })
       .filter((entry) => entry.isDirectory())
       .map((entry) => entry.name);
   } catch {
     return [];
   }
+  return entries.flatMap((name) => {
+    try {
+      const colors = parseFlatToml(readFileSync(join(root, name, "colors.toml"), "utf8"));
+      return Object.keys(colors).length === 0 ? [] : [{ name, colors }];
+    } catch {
+      return [];
+    }
+  });
+}
+
+/**
+ * Every theme that can end up on a key: the ones this repo ships, the ones the user installed, and
+ * the packaged set — in that precedence, which is the order Omarchy itself resolves them in.
+ *
+ * The repo's own themes are in here because CI has no Omarchy install and no
+ * `~/.config/omarchy/themes`, so a theme this project authors would be the one set nothing ever
+ * measured. That is exactly backwards: it is the set we are answerable for.
+ */
+function installedThemes(): ThemeOnDisk[] {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const roots = [
+    join(here, "../../themes"),
+    join(homedir(), ".config/omarchy/themes"),
+    "/usr/share/omarchy/themes",
+  ];
+  const byName = new Map<string, ThemeOnDisk>();
+  for (const root of roots) {
+    for (const theme of themesIn(root)) {
+      if (!byName.has(theme.name)) byName.set(theme.name, theme);
+    }
+  }
+  return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 
 describe("contrast", () => {
@@ -48,20 +97,32 @@ describe("contrast", () => {
   });
 });
 
+describe("the themes this repo ships", () => {
+  const shipped = themesIn(join(dirname(fileURLToPath(import.meta.url)), "../../themes"));
+
+  test("are found, and are palettes rather than empty files", () => {
+    // Without this the suite below would pass by checking nothing at all, which is the failure the
+    // file header describes: a theme that cannot be read is not a theme that passed.
+    assert.ok(shipped.length > 0, "no themes found under themes/ — the gate would be vacuous");
+    for (const theme of shipped) {
+      assert.ok(typeof theme.colors.background === "string", `${theme.name}: colors.toml has no background`);
+    }
+  });
+});
+
 describe("device palettes meet AA", () => {
-  const themes = stockThemes();
+  const themes = installedThemes();
 
   test("there are themes to check", () => {
-    // Without this the suite below would pass vacuously on a machine with no Omarchy install.
     if (themes.length === 0) {
       console.log("no Omarchy themes installed; palette checks skipped");
     }
     assert.ok(true);
   });
 
-  for (const theme of themes) {
-    test(`${theme}: key labels and icons are legible`, () => {
-      const tokens: Tokens = loadTokens(theme);
+  for (const { name: theme, colors } of themes) {
+    test(`${theme}: key labels and readings are legible`, () => {
+      const tokens: Tokens = deviceTokens(theme, colors);
       // 4.5:1 is the AA floor for body text, which is what a key label is.
       assert.ok(
         contrast(tokens.ink, tokens.ground) >= 4.5,
@@ -69,13 +130,68 @@ describe("device palettes meet AA", () => {
       );
       assert.ok(
         contrast(tokens.inkStrong, tokens.ground) >= 4.5,
-        `${theme}: active label ${tokens.inkStrong} is ${contrast(tokens.inkStrong, tokens.ground).toFixed(2)}:1`,
+        `${theme}: strong label ${tokens.inkStrong} is ${contrast(tokens.inkStrong, tokens.ground).toFixed(2)}:1`,
       );
-      // 3:1 is the AA floor for large text and UI boundaries, which is what an icon and the
-      // accent underline are.
+      // Text contrast, not the 3:1 an icon or a rule would need, because every toned colour is also
+      // drawn as a tile's *reading* — a portfolio total or a P&L, which `autoSize` shrinks to 13px
+      // to keep its last digits. A number that small cannot claim the large-text exemption.
+      for (const role of ["accent", "positive", "negative", "warning"] as const) {
+        const value = tokens[role];
+        assert.ok(
+          contrast(value, tokens.ground) >= 4.5,
+          `${theme}: ${role} ${value} on ${tokens.ground} is ${contrast(value, tokens.ground).toFixed(2)}:1`,
+        );
+      }
+    });
+
+    /**
+     * The assertion that was measuring the wrong surface.
+     *
+     * An active key is not drawn on `ground`. It is filled with its tone, and the icon and label go
+     * on top of *that*. The old face tinted the tile 30% toward the tone and then drew the tone on
+     * it, which came out at 2.25:1 on `rose-pine` and 2.63:1 on `catppuccin-latte` — an "on" key
+     * less legible than an "off" one. It was plain in a preview and invisible to this file.
+     */
+    test(`${theme}: an active key's marks are legible on its own fill`, () => {
+      const tokens: Tokens = deviceTokens(theme, colors);
+      for (const role of ["accent", "positive", "negative", "warning"] as const) {
+        const fill = activeFill(tokens, tokens[role]);
+        const mark = onActive(tokens, fill);
+        assert.ok(
+          contrast(mark, fill) >= 4.5,
+          `${theme}: ${role} active mark ${mark} on ${fill} is ${contrast(mark, fill).toFixed(2)}:1`,
+        );
+        // An "on" key that looks like an "off" key is not a state, whatever its label says.
+        assert.ok(
+          contrast(fill, tokens.ground) >= 1.5,
+          `${theme}: ${role} active fill ${fill} is ${contrast(fill, tokens.ground).toFixed(2)}:1 off ground`,
+        );
+      }
+    });
+
+    /**
+     * Depth instead of dividers (`theme/README.md` principle 5) only works when the layers differ.
+     * Five stock themes set `lighter_background` to their own `background`, so a pressed key flashed
+     * at 1.02:1 — through the deck's diffuser, no feedback at all — and nine put the gap between
+     * keys within 1.02:1 of the key itself, which leaves the grid as one unbroken slab.
+     */
+    test(`${theme}: the three surfaces and the tile edge are distinguishable`, () => {
+      const tokens: Tokens = deviceTokens(theme, colors);
+      const pairs: [string, string, string, number][] = [
+        ["pressed key", tokens.raised, tokens.ground, 1.18],
+        ["gap between keys", tokens.ground, tokens.sunken, 1.14],
+        ["tile edge", tokens.line, tokens.ground, 1.55],
+      ];
+      for (const [what, a, b, floor] of pairs) {
+        assert.ok(
+          contrast(a, b) >= floor,
+          `${theme}: ${what} ${a} on ${b} is ${contrast(a, b).toFixed(2)}:1, under ${floor}`,
+        );
+      }
+      // The edge must stay an edge. A boundary that reaches text contrast reads as content.
       assert.ok(
-        contrast(tokens.accent, tokens.ground) >= 3,
-        `${theme}: accent ${tokens.accent} on ${tokens.ground} is ${contrast(tokens.accent, tokens.ground).toFixed(2)}:1`,
+        contrast(tokens.line, tokens.ground) <= 4.5,
+        `${theme}: tile edge ${tokens.line} is ${contrast(tokens.line, tokens.ground).toFixed(2)}:1 — an edge, not a rule`,
       );
     });
   }

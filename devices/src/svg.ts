@@ -14,7 +14,7 @@
  */
 
 import { cellWidth, centerCorrection } from "./glyphs.ts";
-import { mix, type Tokens } from "./tokens.ts";
+import { activeFill, onActive, type Tokens } from "./tokens.ts";
 import type { Emphasis, SlotSpec, Surface, TokenName } from "./types.ts";
 
 /**
@@ -71,7 +71,7 @@ export function autoSize(text: string, maxWidth: number, maxSize: number, minSiz
 }
 
 function tileFill(tokens: Tokens, emphasis: Emphasis, tone: string): string {
-  if (emphasis === "active") return mix(tokens.ground, tone, 0.3);
+  if (emphasis === "active") return activeFill(tokens, tone);
   if (emphasis === "raised") return tokens.raised;
   return tokens.ground;
 }
@@ -157,9 +157,14 @@ function renderTile(surface: Extract<Surface, { kind: "tile" }>, tokens: Tokens,
   const { width: w, height: h } = slot;
   const tone = toneColor(tokens, surface.tone);
   const active = surface.emphasis === "active";
+  // Every mark on an active tile is drawn on the tone rather than on `ground`, so it resolves
+  // through `onActive` rather than through the token it would use anywhere else. That indirection
+  // is the fix for the bug this had: the old face drew the accent on a tile tinted 30% toward the
+  // accent, which measured 2.25:1 on `rose-pine`.
+  const mark = onActive(tokens, tone);
   // A hairline edge gives the tile a defined boundary against the gap, which is what stops a dark
-  // key reading as a hole. Active keys take the accent for it, so the state is legible from the
-  // shape of the key and not only from its fill.
+  // key reading as a hole. An active key is filled, so its own fill is the edge and the shape comes
+  // from the gap around it instead.
   const hasImage = typeof surface.image === "string" && surface.image !== "";
   const edge = active ? tone : tokens.line;
   const parts: string[] = [
@@ -183,7 +188,7 @@ function renderTile(surface: Extract<Surface, { kind: "tile" }>, tokens: Tokens,
         w / 2 + centerCorrection(surface.icon, iconSize),
         iconY,
         iconSize,
-        active ? tone : tokens.ink,
+        active ? mark : tokens.ink,
         surface.icon,
       ),
     );
@@ -215,11 +220,14 @@ function renderTile(surface: Extract<Surface, { kind: "tile" }>, tokens: Tokens,
     const maxSize = hasSlices ? Math.round(h * 0.15) : Math.round(h * 0.26);
     const width = hasSlices ? w * 0.34 : w - 14;
     const size = autoSize(value, width, maxSize, Math.round(h * 0.09));
-    parts.push(text(w / 2, hasSlices ? h * 0.44 : hasSpark ? h * 0.4 : h * 0.47, size, tone, value, true));
+    // Layout from the reading's own shape; colour through `onActive`, so a filled key's text is
+    // legible against the fill rather than against the ground it is no longer on.
+    const valueY = hasSlices ? h * 0.44 : hasSpark ? h * 0.4 : h * 0.47;
+    parts.push(text(w / 2, valueY, size, active ? mark : tone, value, true));
   }
 
   if (hasSpark) {
-    parts.push(sparkline(surface.spark ?? [], 12, h * 0.72, w - 24, h * 0.18, tone));
+    parts.push(sparkline(surface.spark ?? [], 12, h * 0.72, w - 24, h * 0.18, active ? mark : tone));
   }
   if (surface.label) {
     const size = Math.round(h * (hasValue ? 0.105 : 0.125));
@@ -232,7 +240,7 @@ function renderTile(surface: Extract<Surface, { kind: "tile" }>, tokens: Tokens,
         // at 2.0-3.4:1 against the tile — under the 4.5:1 AA floor `scripts/check-contrast.ts`
         // holds the rest of the project to, and unreadable in practice. `ink` is 6.3:1 or better
         // everywhere, and hierarchy still comes from weight and the icon above it.
-        active || hasImage ? tokens.inkStrong : tokens.ink,
+        active ? mark : hasImage ? tokens.inkStrong : tokens.ink,
         fit(surface.label, size, w - 16),
         active,
       ),
@@ -245,17 +253,18 @@ function renderTile(surface: Extract<Surface, { kind: "tile" }>, tokens: Tokens,
     const right = w - 16;
     const y = h - 26;
     parts.push(
-      `<rect x="${left}" y="${y}" width="${right - left}" height="8" rx="4" fill="${tokens.line}"/>`,
+      `<rect x="${left}" y="${y}" width="${right - left}" height="8" rx="4" fill="${active ? mark : tokens.line}" fill-opacity="${active ? 0.35 : 1}"/>`,
     );
     if (value > 0) {
       parts.push(
-        `<rect x="${left}" y="${y}" width="${Math.round((right - left) * value)}" height="8" rx="4" fill="${tone}"/>`,
+        `<rect x="${left}" y="${y}" width="${Math.round((right - left) * value)}" height="8" rx="4" fill="${active ? mark : tone}"/>`,
       );
     }
-  } else if (active) {
-    // A bottom rule reads as "on" from across the room, where a tint alone does not.
-    parts.push(`<rect x="24" y="${h - 13}" width="${w - 49}" height="4" rx="2" fill="${tone}"/>`);
   }
+  // There is deliberately no underline on an active key any more. It existed because a 30% tint
+  // alone did not read as "on" from across the room; a filled tile does, and the rule on top of it
+  // came out as a white bar across a light grey key on `vantablack` — a mark competing with the
+  // state it was there to announce.
 
   if (surface.badge) {
     const r = Math.round(h * 0.11);

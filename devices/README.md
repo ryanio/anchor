@@ -173,9 +173,30 @@ widget follows (`theme/README.md` principle 8). Switch theme and the panel follo
 The font family is `monospace`, not a named font, so the device follows whatever `omarchy font set`
 wrote. Hierarchy comes from size, weight and colour within that family.
 
-Marks are held to WCAG AA against the tile: 4.5:1 for labels, 3:1 for icons and rules, over every
-installed theme, gated by `src/contrast.test.ts`. A theme whose accent does not clear the bar is
-nudged toward its own foreground until it does rather than being drawn illegibly.
+Marks are held to WCAG AA against the surface they are actually drawn on, over every theme installed
+on the machine *and* every theme in [`../themes`](../themes), gated by `src/contrast.test.ts`. That
+test reads each `colors.toml` from disk rather than resolving it through `omarchy theme dir`,
+because a name that does not resolve falls back to Tokyo Night — right at paint time, and in a gate
+it means an unreadable palette gets measured as Tokyo Night and passes.
+
+`tokens.ts` corrects a theme in three places, and only where the theme said nothing usable:
+
+- **Tones** — `accent`, `positive`, `negative`, `warning` — clear 4.5:1 on the key. Text contrast
+  rather than the 3:1 a mark would need, because each is also drawn as a tile's *reading*, and
+  `autoSize` shrinks a long one to 13px to keep its last digits. The correction slides the colour's
+  lightness and leaves its hue alone: blending toward the theme's foreground is a hue change, and
+  rescuing `rose-pine`'s teal that way produced a slate purple that was legible and no longer Rose
+  Pine.
+- **Surfaces** — `raised`, `sunken` and the tile edge are real steps off the ground, derived from it
+  when the theme's own value is not one, reversing direction where the ground has no headroom. Five
+  stock themes set `lighter_background` to their own `background`, which made a key press flash at
+  1.02:1. This is the rule `widget/PulseModel.js` already used for the panel.
+- **Active keys** carry their tone as a *fill*, and `onActive` picks the marks. A key that is on
+  should be lit; the previous 30% tint with the tone drawn back on top measured 2.25:1 on
+  `rose-pine`, because a fixed blend fraction barely moves a near-black ground and halves the
+  contrast of a near-white one.
+
+A theme authored for a key needs none of this. See [`../themes`](../themes) for what that takes.
 
 ## Rendering
 

@@ -1,0 +1,38 @@
+# Lantern — a warm light in the dark, the counterpart to Harbor.
+#
+# Same construction as Harbor and the same two rules: a ground with luminance of its own so the gap
+# between keys has somewhere to go, and a `selection` far enough off that ground to draw an edge.
+# The warmth is in the ground rather than only in the accent, which is what stops an amber key from
+# looking like a warning on a neutral grey desk.
+
+mode = "dark"
+
+accent = "#ffab4d"
+selection = "#5a4b32"
+muted = "#6b5b3f"
+
+background = "#241e17"
+dark_background = "#1e1913"
+darker_background = "#060504"
+lighter_background = "#322a1c"
+
+foreground = "#e3d7c4"
+dark_foreground = "#9c8c76"
+light_foreground = "#c8bba6"
+bright_foreground = "#fdf6ea"
+
+red = "#ff7566"
+yellow = "#f5cb50"
+orange = "#ff9a45"
+green = "#a9cf6b"
+cyan = "#6fcfc4"
+blue = "#7fb2e8"
+magenta = "#dd97d8"
+brown = "#a8703f"
+
+bright_red = "#ff988c"
+bright_yellow = "#ffdc7e"
+bright_green = "#c3de92"
+bright_cyan = "#96dfd7"
+bright_blue = "#a4c9f0"
+bright_magenta = "#ebb6e7"

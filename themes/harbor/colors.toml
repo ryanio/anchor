@@ -1,0 +1,41 @@
+# Harbor — deep water, running lights.
+#
+# Authored against a 120x120 backlit key as well as a screen. Two things follow from that and are
+# the reason this is not just another blue theme:
+#
+#   * The ground is not black. A key whose face is #000000 reads as a dead key on a lit deck, and a
+#     ground with no luminance of its own leaves nowhere for the gap between keys to go.
+#   * `selection` is a real edge, not a whisper. It is what gives a key its outline, so it sits well
+#     clear of the ground rather than one step off it.
+
+mode = "dark"
+
+accent = "#4fbde8"
+selection = "#3b566d"
+muted = "#4a6479"
+
+background = "#17242f"
+dark_background = "#131e28"
+darker_background = "#05080a"
+lighter_background = "#20303e"
+
+foreground = "#c3d5e2"
+dark_foreground = "#7b93a4"
+light_foreground = "#a7bccb"
+bright_foreground = "#eaf4fb"
+
+red = "#ff7b86"
+yellow = "#f0c264"
+orange = "#f79a5e"
+green = "#57d6a2"
+cyan = "#5ad6cf"
+blue = "#4fbde8"
+magenta = "#c49bf5"
+brown = "#8a6244"
+
+bright_red = "#ff9aa3"
+bright_yellow = "#f7d489"
+bright_green = "#7ee3ba"
+bright_cyan = "#87e4de"
+bright_blue = "#7fd1f0"
+bright_magenta = "#d5b6f8"
