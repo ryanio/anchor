@@ -20,27 +20,79 @@ export interface RasterSize {
 
 export class RasterError extends Error {}
 
+/** One argument list, so the capability probe below renders exactly what a key face does. */
+const RENDER_ARGS = [
+  "-background",
+  "none",
+  "svg:-",
+  "-alpha",
+  "remove",
+  "-alpha",
+  "off",
+  "-depth",
+  "8",
+  "RGB:-",
+];
+
 const CACHE_LIMIT = 256;
 const cache = new Map<string, Buffer>();
 
 /** ImageMagick 7 is `magick`; 6 exposes `convert`. Resolved on first use and remembered. */
 let binary: string | null = null;
 
+const PROBE_SVG =
+  '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1">' +
+  '<rect width="1" height="1" fill="#ff0000"/></svg>';
+
+/**
+ * Prove a candidate can rasterise, rather than that it exists.
+ *
+ * `-version` only proves a binary is installed, and installed is not the same as working: Debian's
+ * ImageMagick 6 does not rasterise SVG itself, it shells out to `rsvg-convert`. Without librsvg the
+ * version check passes and every render fails with ``delegate failed `'rsvg-convert' -o '%o' '%i'``
+ * — an error about a delegate, from a machine that looks correctly configured. CI found this the
+ * first time it ran these tests.
+ *
+ * So the probe is a real render of a 1x1 red pixel, and the answer has to be the three bytes that
+ * describes. Anything else and the candidate is not a rasteriser as far as this module is concerned.
+ */
+function canRasterise(candidate: string): boolean {
+  try {
+    const out = execFileSync(candidate, RENDER_ARGS, {
+      input: PROBE_SVG,
+      timeout: 10_000,
+      maxBuffer: 1 << 16,
+      stdio: ["pipe", "pipe", "ignore"],
+    });
+    return out.length === 3 && out[0] === 255 && out[1] === 0 && out[2] === 0;
+  } catch {
+    return false;
+  }
+}
+
 function resolveBinary(): string {
   if (binary !== null) return binary;
   for (const candidate of ["magick", "convert"]) {
-    try {
-      execFileSync(candidate, ["-version"], { stdio: "ignore", timeout: 5000 });
+    if (canRasterise(candidate)) {
       binary = candidate;
       return binary;
-    } catch {
-      // try the next one
     }
   }
   throw new RasterError(
-    "no SVG rasteriser found: install imagemagick (provides `magick`). Devices render key faces " +
-      "from SVG, so this is required to paint anything.",
+    "no working SVG rasteriser: install imagemagick *and* librsvg. ImageMagick 6 delegates SVG to " +
+      "`rsvg-convert`, so imagemagick alone passes a version check and then fails every render. " +
+      "Devices paint key faces from SVG, so this is required to paint anything.",
   );
+}
+
+/** Whether a working rasteriser is present. For tests that need one; never for a paint path. */
+export function rasteriserAvailable(): boolean {
+  try {
+    resolveBinary();
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function renderOnce(svg: string, size: RasterSize): Promise<Buffer> {
@@ -48,7 +100,7 @@ function renderOnce(svg: string, size: RasterSize): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const child = execFile(
       bin,
-      ["-background", "none", "svg:-", "-alpha", "remove", "-alpha", "off", "-depth", "8", "RGB:-"],
+      RENDER_ARGS,
       { encoding: "buffer", maxBuffer: 1 << 26, timeout: 15000 },
       (error, stdout) => {
         if (error) {

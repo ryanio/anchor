@@ -28,6 +28,7 @@ jobs:
           npm ci
           npm ci --prefix service
           npm ci --prefix executor
+          npm ci --prefix devices
 
       - name: Versions are consistent
         run: node scripts/check-versions.ts
@@ -47,6 +48,23 @@ jobs:
         run: |
           npx --prefix executor tsc --noEmit --project executor
           npm test --prefix executor
+
+      # System dependencies, not npm ones: devices paint key faces by rasterising SVG. Two packages,
+      # not one — ImageMagick 6 does not rasterise SVG itself, it shells out to `rsvg-convert`, so
+      # imagemagick alone passes a version check and fails every render. CI found that the first
+      # time it ran these tests, which is what the previous commit was for.
+      - name: Devices — install a rasteriser
+        run: |
+          sudo apt-get update -qq
+          # Not --no-install-recommends: on Ubuntu the SVG delegate lives in
+          # libmagickcore-6.q16-6-extra, which is a *recommend* of imagemagick rather than a
+          # depend. Without it `convert` runs the delegate and cannot read its own output.
+          sudo apt-get install -y imagemagick librsvg2-bin libmagickcore-6.q16-6-extra
+
+      - name: Devices — typecheck and test
+        run: |
+          npx --prefix devices tsc --noEmit --project devices
+          npm test --prefix devices
 
       # No install step: the widget has no dependencies at all. Its logic lives in a plain script
       # that QML's engine loads, and the tests drive it through `require` under node --test.

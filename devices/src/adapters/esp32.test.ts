@@ -9,6 +9,7 @@
 
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
+import { rasteriserAvailable } from "../raster.ts";
 import { toTokens } from "../tokens.ts";
 import type { Frame, Surface } from "../types.ts";
 import {
@@ -181,7 +182,13 @@ describe("handshake", () => {
   });
 });
 
-describe("paint", () => {
+// Painting rasterises SVG, so this needs the real tool. Skipped with a reason rather than failed
+// where it is absent — see raster.test.ts for why that is the honest shape.
+const noRasteriser = rasteriserAvailable()
+  ? false
+  : "no working SVG rasteriser — install imagemagick and librsvg";
+
+describe("paint", { skip: noRasteriser }, () => {
   test("the first paint covers the whole panel, and ends with exactly one commit", async () => {
     const { link, device } = await connect();
     await device.paint(frameFor(tile("ready")));
