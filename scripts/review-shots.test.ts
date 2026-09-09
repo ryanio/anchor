@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { SurfaceMeta } from "./review-page.ts";
-import { fileFor, type Placed, shotsFor } from "./review-shots.ts";
+import { clearFor, clearKey, fileFor, type Placed, shotsFor } from "./review-shots.ts";
 
 const surface = (id: string, extra: Partial<Placed> = {}): Placed => ({
   id,
@@ -89,4 +89,50 @@ test("surface metadata is carried through untouched", () => {
   const meta: SurfaceMeta = shots[0]!.surface;
   assert.equal(meta.strip, true);
   assert.equal(meta.title, "Panel — bar");
+});
+
+/**
+ * Clearing a batch.
+ *
+ * A stale shot must never survive the capture that was meant to replace it, so `review.ts` removes
+ * each file just before retaking it. For a batch that is a bug: the first of thirty-three device
+ * frames triggers a render that writes all thirty-three, and frame two then throws away its own
+ * freshly-written PNG and waits on a promise that has already resolved. Thirty-two came out as "the
+ * tool reported success but wrote no file", on a page that otherwise looked finished — which is the
+ * same failure `shotsFor` above exists to prevent, one layer down.
+ */
+const BATCHED: Placed[] = [
+  surface("solo", { group: "widget" }),
+  surface("a", { batch: "devices", fileName: "devices/a.png" }),
+  surface("b", { batch: "devices", fileName: "devices/b.png" }),
+  surface("c", { batch: "panel", fileName: "panel/c.png" }),
+];
+
+test("a surface with no batch names only its own shot", () => {
+  assert.deepEqual(clearFor(BATCHED[0]!, BATCHED), ["solo.png"]);
+});
+
+test("either member of a batch names the whole batch", () => {
+  assert.deepEqual(clearFor(BATCHED[1]!, BATCHED), ["devices/a.png", "devices/b.png"]);
+  assert.deepEqual(clearFor(BATCHED[2]!, BATCHED), ["devices/a.png", "devices/b.png"]);
+});
+
+test("a batch is emptied once per run, so a member cannot throw away a fresh shot", () => {
+  // The loop `review.ts` runs, in miniature.
+  const gone: string[] = [];
+  const already = new Set<string>();
+  for (const item of BATCHED) {
+    const key = clearKey(item);
+    if (already.has(key)) continue;
+    already.add(key);
+    gone.push(...clearFor(item, BATCHED));
+  }
+  assert.deepEqual(gone, ["solo.png", "devices/a.png", "devices/b.png", "panel/c.png"]);
+  assert.equal(new Set(gone).size, gone.length, "a shot was named twice");
+});
+
+test("a scoped run names only the members it is capturing", () => {
+  // `review.ts devices` must leave the panel's shots alone, batch or no batch.
+  const wanted = BATCHED.filter((item) => item.batch === "devices");
+  assert.deepEqual(clearFor(wanted[0]!, wanted), ["devices/a.png", "devices/b.png"]);
 });

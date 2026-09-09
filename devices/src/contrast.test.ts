@@ -19,12 +19,11 @@
  */
 
 import assert from "node:assert/strict";
-import { readdirSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { activeFill, deviceTokens, onActive, parseFlatToml, type Tokens, toRgb } from "./tokens.ts";
+import { installedThemes, themesIn } from "./themes.ts";
+import { activeFill, deviceTokens, onActive, type Tokens, toRgb } from "./tokens.ts";
 
 /** WCAG relative luminance. */
 function luminance(hex: string): number {
@@ -38,55 +37,6 @@ function luminance(hex: string): number {
 export function contrast(a: string, b: string): number {
   const [lighter, darker] = [luminance(a), luminance(b)].sort((x, y) => y - x);
   return ((lighter ?? 0) + 0.05) / ((darker ?? 0) + 0.05);
-}
-
-interface ThemeOnDisk {
-  readonly name: string;
-  readonly colors: Record<string, string>;
-}
-
-/** Every directory under `root` that actually carries a palette. */
-function themesIn(root: string): ThemeOnDisk[] {
-  let entries: string[];
-  try {
-    entries = readdirSync(root, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => entry.name);
-  } catch {
-    return [];
-  }
-  return entries.flatMap((name) => {
-    try {
-      const colors = parseFlatToml(readFileSync(join(root, name, "colors.toml"), "utf8"));
-      return Object.keys(colors).length === 0 ? [] : [{ name, colors }];
-    } catch {
-      return [];
-    }
-  });
-}
-
-/**
- * Every theme that can end up on a key: the ones this repo ships, the ones the user installed, and
- * the packaged set — in that precedence, which is the order Omarchy itself resolves them in.
- *
- * The repo's own themes are in here because CI has no Omarchy install and no
- * `~/.config/omarchy/themes`, so a theme this project authors would be the one set nothing ever
- * measured. That is exactly backwards: it is the set we are answerable for.
- */
-function installedThemes(): ThemeOnDisk[] {
-  const here = dirname(fileURLToPath(import.meta.url));
-  const roots = [
-    join(here, "../../themes"),
-    join(homedir(), ".config/omarchy/themes"),
-    "/usr/share/omarchy/themes",
-  ];
-  const byName = new Map<string, ThemeOnDisk>();
-  for (const root of roots) {
-    for (const theme of themesIn(root)) {
-      if (!byName.has(theme.name)) byName.set(theme.name, theme);
-    }
-  }
-  return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 
 describe("contrast", () => {

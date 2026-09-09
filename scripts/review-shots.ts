@@ -29,10 +29,45 @@ import type { Shot, SurfaceMeta } from "./review-page.ts";
 export interface Placed extends SurfaceMeta {
   /** Where the shot lands under `review/`, when it is not `<id>.png`. */
   fileName?: string;
+  /**
+   * Surfaces produced together by one pass, named so they can be cleared together.
+   *
+   * Fifteen panel states come out of one Quickshell launch and thirty-odd device frames out of one
+   * render, so their `capture` functions all wait on the same promise and only the first one does
+   * any work. Undefined for a surface that is photographed on its own.
+   */
+  batch?: string;
 }
 
 /** Where a surface's shot lands under `review/`. */
 export const fileFor = (surface: Placed): string => surface.fileName ?? `${surface.id}.png`;
+
+/**
+ * The shots to delete immediately before `surface` is captured.
+ *
+ * ## The bug this is the fix for
+ *
+ * A stale shot must never survive the capture that was supposed to replace it, so `review.ts`
+ * deletes each file just before it is retaken. That is right for a surface photographed on its own
+ * and wrong for a batch: the first of fifteen panel states triggers a run that writes all fifteen,
+ * and then state two deletes its own freshly written PNG and waits on an already-resolved promise
+ * that will not write it again. Fourteen of fifteen states came out as "the tool reported success
+ * but wrote no file" — a review page with one card on it, which is the exact shape of the failure
+ * `shotsFor` above already exists to prevent.
+ *
+ * So a batch is cleared once, in full, before the first of its members runs. The caller remembers
+ * which batches it has already cleared; everything about *what* to clear is here, where a test can
+ * reach it.
+ */
+export function clearFor(surface: Placed, wanted: readonly Placed[]): string[] {
+  if (surface.batch === undefined) return [fileFor(surface)];
+  return wanted.filter((other) => other.batch === surface.batch).map(fileFor);
+}
+
+/** The key a caller remembers a clear by: the batch, or the surface's own file. */
+export function clearKey(surface: Placed): string {
+  return surface.batch === undefined ? `file:${fileFor(surface)}` : `batch:${surface.batch}`;
+}
 
 /**
  * Pair every surface with the shot on disk for it.

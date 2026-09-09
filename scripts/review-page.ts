@@ -40,6 +40,15 @@ export interface SurfaceMeta {
   looking: string;
   /** A bar strip rather than a panel. Laid out along the page rather than down a column. */
   strip?: boolean;
+  /**
+   * The card takes the whole row, without being a bar strip.
+   *
+   * Two different things used to hang off `strip`: how wide the card should be, and what shape the
+   * contact-strip thumbnail should be. A Stream Deck frame is 840px wide and wants the row — and in
+   * a 210x36 bar-shaped thumbnail it is a smear. So the card width is its own flag now, and `strip`
+   * means only what it says.
+   */
+  wide?: boolean;
 }
 
 /**
@@ -88,6 +97,38 @@ const CHAPTERS: Array<{ name: string; premise: string }> = [
     name: "The bar, live",
     premise: "The same strip in its real neighbourhood, beside other people's icons.",
   },
+  {
+    name: "Every device",
+    premise: "One page, six geometries. What survives 120x120 and what survives 80x35.",
+  },
+  {
+    name: "A day on the deck",
+    premise: "The four pages a Stream Deck actually pages through, all answering.",
+  },
+  {
+    name: "Before it knows anything",
+    premise: "No service, no wallet, nothing fetched yet. The states a fresh install opens in.",
+  },
+  {
+    name: "When the data is wrong",
+    premise: "Down, refused, stale, half-loaded. Each one has to say which of those it is.",
+  },
+  {
+    name: "The awkward cases",
+    premise: "Long labels, seven-figure numbers, a held key. Where the layout has to give.",
+  },
+  {
+    name: "Wearing the theme",
+    premise: "Light, white, black, and one of ours. The palette is the user's, not the project's.",
+  },
+  {
+    name: "Blanked by the lock",
+    premise: "The session locked and the device must be showing nothing. An empty frame is correct.",
+  },
+  {
+    name: "Surfaces with no producer yet",
+    premise: "Declared in the contract, drawn by nothing. Nobody has looked at these.",
+  },
 ];
 
 const esc = (s: string): string =>
@@ -103,7 +144,15 @@ function chaptersOf(shots: Shot[]): Array<{ name: string; premise: string; shots
     const key = shot.surface.category ?? shot.surface.group;
     grouped.set(key, [...(grouped.get(key) ?? []), shot]);
   }
-  const known = CHAPTERS.filter((c) => grouped.has(c.name));
+  // Deduplicated by name, because two entries with the same name would render the chapter twice
+  // with the same shots in it, and the tally would count each of them — a review that says 46 of 23.
+  const seen = new Set<string>();
+  const known: typeof CHAPTERS = [];
+  for (const chapter of CHAPTERS) {
+    if (!grouped.has(chapter.name) || seen.has(chapter.name)) continue;
+    seen.add(chapter.name);
+    known.push(chapter);
+  }
   const rest = [...grouped.keys()]
     .filter((name) => !CHAPTERS.some((c) => c.name === name))
     .map((name) => ({ name, premise: "" }));
@@ -148,8 +197,10 @@ export function page(shots: Shot[]): string {
         <div class="pins"></div>
       </div>`;
     // A bar strip takes the whole row rather than a column it would have to shrink into, which is
-    // the one thing you cannot do to a shot of a 26px bar.
-    const wide = surface.strip ? " wide" : "";
+    // the one thing you cannot do to a shot of a 26px bar. A device frame asks for the same room
+    // for the opposite reason: at 840px it is wider than a column, and scaling it down is exactly
+    // the treatment that hides a 1px misalignment.
+    const wide = surface.strip === true || surface.wide === true ? " wide" : "";
     const actions =
       file === null
         ? ""

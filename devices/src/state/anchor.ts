@@ -190,7 +190,10 @@ export const EMPTY_PORTFOLIO: PortfolioSnapshot = {
   nfts: [],
   ageSeconds: null,
   stale: false,
-  detail: "not loaded",
+  // What the strip says before the first fetch lands, so it has to be addressed to a person rather
+  // than to us. "not loaded" is a fact about our variable; on a panel beside four em dashes it reads
+  // as a failure, and the state it actually describes is the two seconds after a cold start.
+  detail: "loading…",
 };
 
 function str(value: unknown): string | null {
