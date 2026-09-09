@@ -387,6 +387,33 @@ exactly what this widget exists not to do.
 `group_by=collection` on it — becomes a fifth tab and about thirty lines of model code. The rendering
 is already there; only the number is missing.
 
+## 16. A portfolio is per-address, so a multi-wallet account costs N requests
+
+**Upstream problem.** `/account/{address}/portfolio` answers for one address. An account whose token
+resolves nine wallets — which is what `linked_wallets` gives, see entry 14 — needs nine requests
+through one rate limiter, and the **caller** sums the money.
+
+**What we wrote.** `service/src/aggregate.ts`, about 120 lines: fan out sequentially so a portfolio
+refresh cannot starve the health check behind it, sum with BigInt at a common scale because these
+are dollars, and label a partial answer with an `incomplete` list rather than trimming a wallet that
+failed. Plus `service/src/wallets.test.ts`, which walks `WALLET_ROUTES` so a route added later cannot
+quietly read only the first wallet again.
+
+**Attempted upstream and withdrawn.** An `addresses[]` parameter was started and reverted: taking a
+list of addresses raises an authorization question a single-address route does not, since the route
+is otherwise reading public data one address at a time.
+
+That constraint may be pointing somewhere better. The request already carries a token, and the token
+already knows which wallets belong to the account — so the shape with no authorization question is
+**not** `addresses[]` at all but an address-less "my portfolio", summed server-side over exactly the
+wallets the token names. Nothing to authorize, nothing to enumerate, and no cap to negotiate against
+the size of `linked_wallets`.
+
+**When it's fixed.** `aggregate.ts` mostly deletes itself. Whatever the shape, two properties are
+worth keeping from having built it client-side: **per-address rows beside the sum**, or callers go
+straight back to N requests for the breakdown; and **a partial answer that says which addresses are
+missing**, because a `200` carrying a quietly short total is the original bug moved server-side.
+
 ## Reporting
 
 The full write-up handed to OpenSea on 2026-09-07 covers eight findings, of which findings 1-6 above
