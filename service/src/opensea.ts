@@ -518,12 +518,12 @@ export class OpenSeaClient {
   ) {
     return this.#call(ttl, "account", "/activity", (api) =>
       api.getEventsByAccount(segment(address), {
-        // `GetEventsArgs.eventType` is typed as a single value, but the endpoint takes a repeatable
-        // `event_type` and the SDK's query builder already appends arrays element by element. The
-        // cast is the type being narrower than the API, not us going around the SDK.
-        ...({ eventType: opts.eventTypes } as { eventType?: string }),
+        eventType: opts.eventTypes,
         chain: this.primaryChain,
         limit: opts.limit ?? 50,
+        // `next` here, `cursor` on the token endpoints. Not a style choice: 12.4.1 deprecated
+        // `GetTokensArgs.next` because those endpoints never read it, while `GetEventsArgs.next` is
+        // the real parameter. `tokenBalances` below sends `cursor` for that reason.
         next: opts.next,
       }),
     );
@@ -562,11 +562,9 @@ export class OpenSeaClient {
   /** Net worth and P&L across every configured chain. GET /account/{address}/portfolio */
   portfolioStats(address: string, ttl: number, timeframe?: "HOUR" | "DAY" | "WEEK" | "MONTH") {
     return this.#call(ttl, "account", "/portfolio/value", (api) =>
-      // `PortfolioArgs` omits `chains`, though the endpoint documents and accepts it. The SDK
-      // forwards args verbatim to the query builder, so widening the object is enough.
       api.getPortfolioStats(segment(address), {
         ...(timeframe === undefined ? {} : { timeframe }),
-        ...({ chains: [...this.#chains] } as object),
+        chains: [...this.#chains],
       }),
     );
   }
@@ -585,15 +583,14 @@ export class OpenSeaClient {
   /** GET /tokens/trending */
   trendingTokens(ttl: number, limit = 20) {
     return this.#call(ttl, "account", "/tokens/trending", (api) =>
-      // As with portfolio: `GetTokensArgs` omits the `chains` the endpoint documents.
-      api.getTrendingTokens({ limit, ...({ chains: [...this.#chains] } as object) }),
+      api.getTrendingTokens({ limit, chains: [...this.#chains] }),
     );
   }
 
   /** GET /tokens/top */
   topTokens(ttl: number, limit = 20) {
     return this.#call(ttl, "account", "/tokens/top", (api) =>
-      api.getTopTokens({ limit, ...({ chains: [...this.#chains] } as object) }),
+      api.getTopTokens({ limit, chains: [...this.#chains] }),
     );
   }
 
