@@ -33,6 +33,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { capturePanelStates, panelCases } from "./panel-states.ts";
 
 const run = promisify(execFile);
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -44,6 +45,8 @@ interface Surface {
   id: string;
   group: string;
   title: string;
+  /** Where the shot lands under `review/`, when it is not `<id>.png`. */
+  fileName?: string;
   /** What a reviewer should be looking for. Shown beside the shot. */
   looking: string;
   capture: (file: string) => Promise<void>;
@@ -290,30 +293,16 @@ async function screenWidth(): Promise<number> {
 }
 
 /**
- * Open the widget panel, capture it, close it again.
+ * Render every panel state, once per run.
  *
- * Captures the closed state first, opens the panel, captures again, and crops to whatever changed.
- * A layer-shell surface cannot be captured by window and does not expose its geometry, so diffing is
- * the only way to get a tight crop rather than a screenful of wallpaper.
- *
- * Always toggles back, even on failure — leaving someone's desktop with a panel stuck open is rude.
+ * Fifteen surfaces come out of one Quickshell launch, so the first of them to be captured does the
+ * work and the rest wait on the same promise. A failure is remembered too — otherwise fourteen
+ * surfaces each retry a launch that has already been shown not to work.
  */
-async function panelShot(file: string): Promise<void> {
-  if (!have("omarchy-shell")) throw new Error("omarchy-shell not on PATH");
-  const width = await screenWidth();
-  const region = `${Math.max(0, width - 1200)},0 1200x700`;
-  const closed = `${file}.closed.png`;
-
-  await grim(region, closed);
-  await run("omarchy-shell", ["anchor.pulse", "toggle"]);
-  try {
-    await new Promise((r) => setTimeout(r, 1200));
-    await grim(region, file);
-  } finally {
-    await run("omarchy-shell", ["anchor.pulse", "toggle"]).catch(() => undefined);
-  }
-  await cropToDiff(closed, file, file);
-  rmSync(closed, { force: true });
+let panelStates: Promise<string[]> | null = null;
+function ensurePanelStates(): Promise<void> {
+  panelStates ??= capturePanelStates();
+  return panelStates.then(() => undefined);
 }
 
 // ── the surfaces ────────────────────────────────────────────────────────────────────────────────
@@ -337,44 +326,16 @@ const SURFACES: Surface[] = [
       await magnify(file, 4);
     },
   },
-  {
-    id: "panel",
-    group: "widget",
-    title: "Panel — the whole surface",
-    looking:
-      "Is there one obvious thing to do? Does anything read as decoration? Check the vertical rhythm " +
-      "between blocks, and whether prose is set in a face meant for prose.",
-    capture: panelShot,
-  },
-  {
-    id: "site-home",
-    group: "site",
-    title: "anchor.ryanio.com — home",
-    looking: "First impression, hierarchy, and whether the diary countdown reads as calm or urgent.",
-    capture: (file) => shot("https://anchor.ryanio.com", file, 1280, 1000),
-  },
-  {
-    id: "site-diary",
-    group: "site",
-    title: "The diary entry",
-    looking: "Measure, paragraph rhythm, and whether the pull quotes earn their space.",
-    capture: (file) => shot("https://anchor.ryanio.com/diary/001-day-one.html", file, 1280, 1400),
-  },
-  {
-    id: "docs-index",
-    group: "docs",
-    title: "~/Documents/Index.html",
-    looking: "Tile grid, the wash behind the header, and whether Elsewhere reads as separate.",
-    capture: (file) => shot(`file://${process.env.HOME}/Documents/Index.html`, file, 1100, 780),
-  },
-  {
-    id: "docs-field-notes",
-    group: "docs",
-    title: "Field notes",
-    looking: "Long-form readability, the sticky contents column, and the status pills.",
-    capture: (file) =>
-      shot(`file://${process.env.HOME}/Documents/omarchy-field-notes.html`, file, 1400, 1100),
-  },
+  ...panelCases().map(
+    (state): Surface => ({
+      id: state.id,
+      group: "panel",
+      title: state.title,
+      looking: state.looking,
+      fileName: state.file,
+      capture: ensurePanelStates,
+    }),
+  ),
 ];
 
 // ── page ────────────────────────────────────────────────────────────────────────────────────────
@@ -702,7 +663,7 @@ mkdirSync(OUT, { recursive: true });
 
 const results: Array<{ surface: Surface; file: string | null; reason?: string }> = [];
 for (const surface of wanted) {
-  const name = `${surface.id}.png`;
+  const name = surface.fileName ?? `${surface.id}.png`;
   try {
     await surface.capture(join(OUT, name));
     if (!existsSync(join(OUT, name))) throw new Error("the tool reported success but wrote no file");

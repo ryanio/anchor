@@ -156,6 +156,11 @@ deadlines and an activity count, in the Omarchy top bar, read from the local ser
   you can press. Each step says what it gets you rather than what it configures. The "Set up
   Anchor · step 2 of 3" header was removed: between it, the counter, the segments and the numbered
   discs, the panel was saying one fact four ways.
+- **Every panel state can be looked at.** The panel has fifteen — starting, four setup steps,
+  offline cold and warm, stale, a rejected key, a collection that failed, and the working ones — and
+  a live machine is in exactly one of them, so its error screens had never been reviewed by anyone.
+  `PanelContent.qml` renders from a single reading and takes no action itself, so `widget/gallery/`
+  mounts it against a fixture per state and photographs all fifteen with no service, bar or desktop.
 - **The mark has a square variant, because the bar is a row of squares.** Fitted to a bar slot the
   full mark drew 10×12 against neighbours drawing 9–11 square, and read as the one tall, narrow
   thing in the row. Shrinking it could not fix that — scaling preserves aspect ratio — so

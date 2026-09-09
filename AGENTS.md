@@ -295,8 +295,16 @@ something is broken — several times it turned out to be deliberate.
 
 ```bash
 node scripts/review.ts          # capture every surface
-node scripts/review.ts widget   # or one group: widget, site, docs
+node scripts/review.ts widget   # or one group: widget, panel
+node scripts/panel-states.ts    # just the panel gallery
 ```
+
+**The panel has fifteen states and a live machine is in one of them.** Its error and warning screens
+went unreviewed for exactly that reason — there was no way to see them without arranging for the
+condition. `widget/PanelContent.qml` renders from a single reading and takes no action of its own,
+so `widget/gallery/` mounts it against a fixture per state and photographs all fifteen with no
+service, no bar and no desktop behind it. Add a state there when you add one to the model; a state
+nobody can look at is a state nobody has designed.
 
 It writes `review/index.html`, where you click a screenshot to drop a pin and say what should change.
 Notes save to `localStorage`; **Copy all notes** puts the review on the clipboard as markdown to hand
