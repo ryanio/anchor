@@ -53,13 +53,29 @@ jobs:
       # not one — ImageMagick 6 does not rasterise SVG itself, it shells out to `rsvg-convert`, so
       # imagemagick alone passes a version check and fails every render. CI found that the first
       # time it ran these tests, which is what the previous commit was for.
-      - name: Devices — install a rasteriser
+      # System dependencies, not npm ones: devices paint key faces by rasterising SVG.
+      #
+      # Three packages, and the third is the one that bites. ImageMagick 6 does not rasterise SVG
+      # itself — it shells out to `rsvg-convert` — and on Ubuntu that delegate lives in
+      # libmagickcore-6.q16-6-extra, a *recommend* of imagemagick rather than a depend.
+      #
+      # The step then proves it works, and fails if it does not. Without that the suites skip
+      # themselves and `node --test` reports a whole skipped describe as no tests at all: the run
+      # goes green having quietly not run thirty of them, which is the failure this workspace was
+      # added to CI to stop.
+      - name: Devices — install a rasteriser, and prove it rasterises
         run: |
           sudo apt-get update -qq
-          # Not --no-install-recommends: on Ubuntu the SVG delegate lives in
-          # libmagickcore-6.q16-6-extra, which is a *recommend* of imagemagick rather than a
-          # depend. Without it `convert` runs the delegate and cannot read its own output.
           sudo apt-get install -y imagemagick librsvg2-bin libmagickcore-6.q16-6-extra
+          svg='<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"><rect width="1" height="1" fill="#ff0000"/></svg>'
+          for bin in magick convert; do
+            command -v "$bin" >/dev/null || continue
+            bytes=$(printf '%s' "$svg" | "$bin" -background none svg:- -alpha remove -alpha off -depth 8 RGB:- | wc -c)
+            echo "$bin rendered $bytes bytes (want 3)"
+            [ "$bytes" = "3" ] && exit 0
+          done
+          echo "::error::no working SVG rasteriser after install — the devices paint tests would skip silently"
+          exit 1
 
       - name: Devices — typecheck and test
         run: |
