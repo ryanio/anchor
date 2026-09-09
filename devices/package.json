@@ -1,0 +1,25 @@
+{
+  "name": "@anchor/devices",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Physical devices for Anchor. Opt-in: nothing here is installed unless you own one.",
+  "engines": {
+    "node": ">=26.0.0"
+  },
+  "bin": {
+    "anchor-devices": "src/cli.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "@elgato-stream-deck/node": "7.6.3"
+  },
+  "devDependencies": {
+    "@types/node": "26.0.1",
+    "typescript": "5.9.3"
+  },
+  "license": "MIT"
+}

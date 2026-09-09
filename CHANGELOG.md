@@ -14,6 +14,25 @@ becomes `## [0.1.0] - YYYY-MM-DD` at the moment the tag is pushed, and not befor
 
 ### Added
 
+**Devices** — Anchor on physical hardware, starting with the Elgato Stream Deck. Opt-in: the
+workspace keeps its own dependency, so a machine with no device attached installs nothing.
+
+- A device contract (`AnchorDevice`) that panels are written against rather than a Stream Deck
+  program: devices declare named slots, Anchor paints medium-neutral surfaces into them and receives
+  input back. A `VirtualDevice` is the second implementation, so panels render and are reviewable
+  with no hardware attached.
+- Colour resolves through the live Omarchy theme, never a literal, and the font family stays
+  `monospace` so a device follows `omarchy font set`. Marks are held to WCAG AA over every installed
+  theme; a theme whose accent misses the 3:1 floor is nudged toward its own foreground rather than
+  drawn illegibly.
+- Key faces are authored as SVG and rasterised straight to raw RGB by ImageMagick, so rendering adds
+  no dependency. Glyph ink is measured through the same rasteriser and cached per font, because Nerd
+  Font symbols advance 0.6em but paint up to 1.04em wide.
+- No device action can sign, spend or approve. The vocabulary has no such verb and a test asserts it.
+- Two pages ship: Omarchy desktop control (workspaces, theme, night light, screenshot, volume and
+  workspace dials) and an Anchor page showing service reachability and whether a wallet is
+  configured.
+
 **The data service** — the foundation everything else reads from, so there is one cache, one
 outbound rate limit, and one place where freshness is tracked.
 
@@ -26,6 +45,12 @@ outbound rate limit, and one place where freshness is tracked.
   Every call goes through the SDK and every response is typed from the generated OpenAPI types.
 - Loopback-only, and it requires a loopback `Host` header — binding to `127.0.0.1` stops the network
   reaching it but not a browser whose DNS rebinds to it.
+- When no wallet is configured, the address is derived from the wallet PAT's `wallet` claim via
+  `@opensea/sdk`'s `extractWalletAddress` — a local decode, so it needs no scope and cannot 401. A
+  configured wallet always wins; a token that is opaque, carries no wallet claim, or names an
+  address for a chain that is not configured contributes nothing and says which. `/health` reports
+  `walletSource`, because a wallet nobody typed in should name its source rather than just appear.
+  The SDK's warning that `sub` is an account identifier and never a wallet is pinned by a test.
 - Credentials live in the OS keyring, never in config, argv or logs. Errors are rebuilt from a status
   code, so a remote response body can never carry a credential back out.
 
@@ -167,11 +192,14 @@ deadlines and an activity count, in the Omarchy top bar, read from the local ser
   a live machine is in exactly one of them, so its error screens had never been reviewed by anyone.
   `PanelContent.qml` renders from a single reading and takes no action itself, so `widget/gallery/`
   mounts it against a fixture per state and photographs all fifteen with no service, bar or desktop.
-- **The mark has a square variant, because the bar is a row of squares.** Fitted to a bar slot the
-  full mark drew 10×12 against neighbours drawing 9–11 square, and read as the one tall, narrow
-  thing in the row. Shrinking it could not fix that — scaling preserves aspect ratio — so
-  `site/brand/anchor-bar.svg` is the same anchor-as-A redrawn to 38×38 on its own grid: ring lower,
-  shank shorter, legs wider. It fills the slot in both directions at 11px, and the row is even.
+- **The mark has a bar variant, because a bar breaks it two ways.** Fitted to a bar slot the full
+  mark drew 10×12 against neighbours drawing 9–11 square — the one tall, narrow thing in the row —
+  and its stroke computed to 0.93 device pixels, under one, so it antialiased to grey. Neither is a
+  size problem: scaling preserves aspect ratio, and a thinner slot makes the stroke thinner still.
+  So `site/brand/anchor-bar.svg` is the top of the anchor — the ring and the branches off it, flukes
+  cropped — on square bounds of 36×36 at stroke 6, which draws 1.57 pixels and fills the slot both
+  ways. It reads as a monogram rather than an anchor, which is the trade a 16px glyph is worth; the
+  full mark stays the logo everywhere it has room.
 - **The bar's open-panel underline tracks what the widget paints.** `Bar.qml` looks for an
   `openPanelIndicatorWidth` on a module and otherwise falls back to 55% of the slot, a figure
   calibrated for a text label in a padded slot. Measured on the running bar: a 172px slot drew a
@@ -235,7 +263,7 @@ assuming it, so a machine without one shows the command exactly as before.
 - anchor.ryanio.com: build diary, changelog and `llms.txt`, on a deep-water palette with shared
   tokens in `theme/tokens.css` reused across the project rather than redefined.
 - An anchor mark that reads as an **A**, stroke-based on `currentColor`, legible at 16px, with a
-  square variant for rows of icons and a rounded tile for the favicon.
+  square bar variant for rows of icons and a rounded tile for the favicon.
 - `scripts/check-contrast.ts` computes WCAG ratios from the tokens and fails CI — all 38 text,
   accent and component pairs clear AA in both themes, so a colour that looks good but is unreadable
   cannot land. The widget's colours cannot be reached from there, because they are the user's live

@@ -12,6 +12,7 @@ import { MissingPatError, WalletTokenError } from "./auth.ts";
 import type { CacheEntry } from "./cache.ts";
 import type { Config } from "./config.ts";
 import { MissingApiKeyError, type OpenSeaClient } from "./opensea.ts";
+import type { WalletSource } from "./wallet-token.ts";
 
 const HOST = "127.0.0.1";
 
@@ -42,6 +43,10 @@ const WALLET_ROUTES = new Set(["/portfolio", "/portfolio/value", "/balances", "/
 export interface ServerDeps {
   /** Which credentials are present. Local only — no network call, so `/health` stays cheap. */
   credentials?: () => Promise<{ apiKey: boolean; pat: boolean }>;
+  /** Where `config.wallets` came from, so a caller can tell a typed address from a derived one. */
+  walletSource?: WalletSource;
+  /** Why no wallet was derived, when none was. Never contains the token. */
+  walletDetail?: string;
 }
 
 /**
@@ -125,6 +130,13 @@ export function createApp(config: Config, client: OpenSeaClient, deps: ServerDep
             collections: config.collections,
             tokens: config.tokens,
             credentials: (await deps.credentials?.()) ?? { apiKey: false, pat: false },
+            /**
+             * Provenance, not reassurance. A wallet derived from the PAT is not wrong, but it is a
+             * different claim from one the user typed, and a reader cannot check a number whose
+             * source is unstated (`theme/README.md` principle 6).
+             */
+            walletSource: deps.walletSource ?? "config",
+            ...(deps.walletDetail ? { walletDetail: deps.walletDetail } : {}),
           },
           headOnly,
         );
