@@ -8,7 +8,7 @@ shrunk to a favicon.
 | `anchor.svg` | The mark. `stroke="currentColor"` — it takes the colour of its context |
 | `anchor-solid.svg` | Heavier stroke, for stamping on a solid fill (OG cards, stickers, print) |
 | `anchor-bar.svg` | Square variant, for a status bar or any row of icons. See below |
-| `favicon.svg` | Rounded tile, heavier stroke, adapts to the OS light/dark preference |
+| `favicon.svg` | The bar mark on a rounded tile, adapting to the OS light/dark preference |
 
 ## Inline it, never `<img src>`
 
@@ -50,8 +50,14 @@ The mark carries no colour of its own. Set it on the parent:
 
 ## Clear space and size
 
-Keep clear space of at least the ring's diameter on every side. Minimum 16px — below that use
-`favicon.svg`, whose heavier stroke is the whole reason it exists.
+Keep clear space of at least the ring's diameter on every side.
+
+**Minimum 16px for `anchor.svg`** — and at 16px prefer one of the other two, because a favicon and a
+bar slot are the same problem: `favicon.svg` on a tile, `anchor-bar.svg` bare. Both carry the square
+geometry, so the system is one rule — **the full anchor where there is room, the crown where there
+is not** — rather than three unrelated drawings.
+
+The tile is its own clear space, so the ring-diameter rule does not apply inside it.
 
 ## Generated assets
 
