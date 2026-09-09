@@ -9,16 +9,11 @@
     }
   </style>
   <rect class="bg" width="64" height="64" rx="14"/>
-  <!--
-    The bar mark's geometry (anchor-bar.svg), scaled to the tile. A favicon is a 16px glyph, which
-    is the case that drawing exists for: the full anchor's flukes have no pixels to live in at that
-    size, and its stroke lands under one device pixel. Four elements instead of six is what buys
-    the weight.
-  -->
-  <g class="fg" fill="none" stroke-width="6.7" stroke-linecap="round" stroke-linejoin="round">
-    <circle cx="32" cy="19" r="7.2"/>
-    <path d="M32 26.2L12 51.5"/>
-    <path d="M32 26.2l20 25.3"/>
-    <path d="M20.4 44.4h23.2"/>
+  <!-- anchor.svg's geometry, scaled to the tile. Same drawing, nothing else. -->
+  <g class="fg" fill="none" stroke-width="6.3" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="32" cy="18.3" r="6.3"/>
+    <path d="M32 24.6L18.3 52c-3.7-1.05-6.3-4.2-6.3-8.9"/>
+    <path d="M32 24.6l13.7 27.4c3.7-1.05 6.3-4.2 6.3-8.9"/>
+    <path d="M22 42.5h20"/>
   </g>
 </svg>

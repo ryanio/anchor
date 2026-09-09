@@ -167,10 +167,19 @@ test("the mark is square, so it fills a square slot in both directions", () => {
 });
 
 test("it is four elements, which is what pays for the stroke", () => {
-  // Ring, two branches, crossbar. The full anchor was six and its stroke computed to 0.93 device
-  // pixels at bar size; dropping to four is what bought 1.57. A fifth element spends that again.
+  // Ring, two arms, crossbar. The old anchor drew the flukes as two more strokes — six elements,
+  // and a stroke computing to 0.93 device pixels at bar size. Folding each fluke into the end of
+  // its own arm keeps the anchor and costs nothing, which is the whole design. A fifth `M` spends
+  // it again, so this is a real constraint and not a tidiness check.
   const moves = tokens(qmlPath()).filter((t) => t === "M").length;
   assert.equal(moves, 4);
+});
+
+test("each arm ends in a fluke, so the mark is an anchor and not a monogram", () => {
+  // Without these it is an A with a ring. It was, for one commit, and the flukes turned out to be
+  // free: a curve continuing an existing path adds no element and no weight cost.
+  const curves = tokens(qmlPath()).filter((t) => t === "c").length;
+  assert.equal(curves, 2, "expected one fluke curve per arm");
 });
 
 test("the drawn stroke clears one device pixel at bar size", () => {

@@ -1,7 +1,7 @@
 # Brand
 
-One mark, at every size: a ring, two branches off it, a crossbar. It reads as an **A** — and as the
-head of an anchor, which is the half of an anchor that survives being 11 pixels tall.
+One mark, at every size: a ring, two arms, a crossbar, and a fluke curling up at the end of each
+arm. An anchor that reads as an **A**.
 
 | File | Use |
 |---|---|
@@ -13,9 +13,9 @@ Three files, one geometry, three weights. There is no second drawing — there w
 and two marks for one product is a cost with no payer: the bar showed one thing and the site showed
 another.
 
-## Why the flukes are gone
+## Why it is drawn this way
 
-The mark used to be a whole anchor, flukes and all, and a status bar broke it two ways at once.
+The mark used to be six strokes, and a status bar broke it two ways at once.
 
 **Shape.** It was 32 wide by 45 tall on its 64-unit grid. Every neighbour in a bar is a glyph in a
 square slot, so fitted to an 11px slot it drew 10×12 and read as the one tall, narrow thing in the
@@ -25,16 +25,18 @@ row. Making it smaller cannot fix that — scaling preserves aspect ratio.
 to grey. Not styled thin: starved. And no change of size or geometry fixes it, because a smaller
 slot makes the stroke smaller with it.
 
-Only *fewer elements* buy the room for a heavier stroke. Six became four, the bounds became 36×36 —
-square — and the stroke became 1.57 device pixels at bar size. What it costs is the anchor read: at
-96px this is a monogram where the old one was unmistakably an anchor. That was the trade, made
-deliberately, because a mark that only works when it is large is not a mark.
+Only *fewer elements* buy the room for a heavier stroke — so the count is the constraint, and the
+design is what fits inside it. Six became four by **folding each fluke into the end of its own arm**
+as a curve rather than drawing it as a separate stroke. The flukes cost nothing: same four elements,
+stroke 6, **1.5 device pixels** at bar size, square bounds of 38×38.
+
+There was a version without them, for one commit. It was legible and it was not an anchor.
 
 ## Weights
 
 | Where | Stroke | Why |
 |---|---|---|
-| A bar, a tray, a favicon | 6 | 1.57 device pixels at 11px. Below this the stroke goes sub-pixel |
+| A bar, a tray, a favicon | 6 | 1.5 device pixels at 11px. Below this the stroke goes sub-pixel |
 | A hero, a header, print | 4.5 | Room to be lighter, so it is |
 
 ## Inline it, never `<img src>`
