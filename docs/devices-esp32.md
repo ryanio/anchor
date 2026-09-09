@@ -319,58 +319,64 @@ threat model here includes the device itself.
 
 ## Displays
 
-**A panel exists, and the first attempt to find it went wrong in an instructive way.**
+**The hardware is a Waveshare ESP32-S3-Touch-AMOLED-1.8, V2 revision**, and it is driving Anchor
+frames. Identifying it took correcting a wrong answer, and the wrong answer is the more useful half.
 
-The board on the desk is an ESP32-S3 N16R8 — ESP32-S3 (QFN56) rev v0.2, 16 MB quad flash, 8 MB
-embedded PSRAM, native USB-Serial/JTAG, MAC `28:84:85:3a:d3:f0` — and it is a finished product with a
-glass screen and buttons down one side, not a bare devkit. An earlier version of this section said it
-had no display. That was wrong, and the way it was reached matters more than the conclusion:
+An earlier version of this section said the board had no display. The firmware had scanned I2C on
+SDA=8/SCL=9 — the ESP32-S3 Arduino defaults — found nothing, and read the silence as a result.
 
-> The firmware scanned I2C on SDA=8/SCL=9 — the ESP32-S3 Arduino defaults — found nothing, and
-> concluded the board had no panel. **Zero devices on the wrong pins is not a negative result.** It is
-> the instrument reporting that it was pointed somewhere nothing lives. AGENTS.md says to check the
-> instrument rather than the reading; this is that failure exactly, and it survived a merge because
+> **Zero devices on the wrong pins is not a negative result.** It is the instrument reporting that it
+> was pointed somewhere nothing lives. AGENTS.md asks for attention to the thing you look *through*,
+> and a default constant is exactly what goes unlooked-at. The claim then survived a merge, because
 > the number it produced looked like data.
 
-`devices/firmware/esp32/probe/` replaces the assumption with a measurement. It does not take a pin
-map on faith: it drives each safe GPIO's internal pull-down and reports the pins that stay high, on
-the physical grounds that an I2C bus has external pull-ups of a few kilohms and almost nothing else
-does. That turns 27 candidate pins into five, and five into one bus.
+`devices/firmware/esp32/probe/` replaces the assumption with a measurement, and takes no pin map on
+faith. It drives each safe GPIO's internal pull-down (~45k) and reports every pin an external pull-up
+still holds high, on the physical grounds that an I2C bus carries pull-ups of a few kilohms and very
+little else does. Twenty-seven candidate pins become five, and five become one bus.
 
-**Measured, on the real bus at SDA=15/SCL=14**, with every chip asked for its identity register
-rather than guessed at from its address:
+**Measured on the real bus — SDA=15, SCL=14** — with every device asked for its identity register
+rather than named from its address:
 
 | Address | Identity register | What it is |
 |---|---|---|
-| 0x15 | chip 0xB7, vendor 0x41 | CST820-class capacitive touch controller |
+| 0x15 | chip 0xB7, vendor 0x41 | CST820 capacitive touch |
 | 0x18 | 0x83 0x11 | ES8311 audio codec |
 | 0x20 | in 0xCF, out 0x87, config 0x78 | TCA9554-class IO expander |
 | 0x34 | 0x4A | AXP2101 power-management unit |
 | 0x51 | — | PCF85063-class real-time clock |
-| 0x6B | WHO_AM_I 0x05, rev 0x7C | QMI8658 inertial measurement unit |
+| 0x6B | WHO_AM_I 0x05, rev 0x7C | QMI8658 IMU |
 
-And the finding that settles it: **GPIO 13 toggles at about 58 Hz with nothing on this chip driving
-it.** That is a display's tearing-effect line — a panel announcing the end of each refresh. A board
-with no display does not produce one.
+That fingerprint names the product *and its revision*: V2 pairs a CO5300 with a CST820, where V1 used
+an SH8601 with an FT3168. The touch controller identifies the display driver. The vendor's own
+`pin_config.h` then declares `IIC_SDA 15` and `IIC_SCL 14` — the physical probe and the vendor header
+agree independently, which is what makes this an identification rather than a plausible story.
 
-Three further things follow, and they are the reason the panel is still dark:
+The panel is **368x448**, on QSPI at CS=12, SCK=11, D0-D3 = 4, 5, 6, 7, with **no reset pin** — the
+vendor's example passes `GFX_NOT_DEFINED`. The old `amoled-466` guess in the geometry table named the
+right driver family and the wrong size.
 
-- **The panel's reset is behind the IO expander, not on a GPIO.** Its configuration register shows
-  four output lines. A display can therefore be present, powered and refreshing while remaining
-  invisible to any pin-level scan — which is the second half of why the original conclusion was easy
-  to reach.
-- **The QSPI pin map is not known.** `devices/firmware/esp32/panelsweep/` searches for it rather than
-  writing it from memory, using the tearing line as an oracle: the command phase of a QSPI AMOLED is
-  single-line, so the search is over three pins rather than six. Two exhaustive sweeps over 29 pins
-  found no combination that wakes the controller.
-- **That negative is bounded, and it is partly self-inflicted.** The first sweep silenced the tearing
-  line and then kept going, so it could not say which combination did it — and the panel has been
-  dark since. The most likely reading is that a swept pin is the panel's reset rather than its chip
-  select, in which case the controller is not asleep but reset, and no `SLPOUT` will ever wake it
-  because it needs a full initialisation sequence. **The board's own documentation is the next step,
-  not a wider guess.**
+### The tearing line, and an oracle that was switched off
 
-The table below remains vendor documentation for candidate panels, unverified. It is a shopping list.
+GPIO 13 carries the panel's tearing-effect signal at about 58 Hz. It is worth its own paragraph
+because it was the only instrument available while the pin map was unknown, and it produced both the
+best result here and the worst mistake.
+
+It proved a panel existed when a pin scan could not: a board with no display does not generate one.
+It is also an output *of the panel*, so a sweep could look for the pins that silence it. That sweep
+did find them — and then carried on past the hit instead of stopping, so it could not say which
+combination was responsible, and reported two thousand more "candidates" against a line that was
+already dead. The panel stayed asleep for the rest of that session. **A search whose success and
+whose failure look identical is not a search.**
+
+The second mistake was the mirror of the first. Once the pin map was known, a full initialisation
+brought the controller back — and the tearing line stayed at zero, which read exactly like a panel
+that was still dark. It was not: Arduino_GFX's init simply does not enable tearing, and the original
+58 Hz had come from the firmware that shipped on the board. One command (`0x35`) restored the signal.
+The panel had been refreshing the whole time, and the oracle was the thing that was off.
+
+Both are the same error in opposite directions, and both are cheap to make: an instrument that
+reports nothing is not the same as a world that contains nothing.
 
 | Candidate | Panel | Bus | Full frame (RLE, measured) | Notes |
 |---|---|---|---|---|
@@ -390,13 +396,17 @@ What actually decides it, and what to measure before committing:
 - **Refresh cost is dominated by the bus, not the link.** 17 KB over Wi-Fi is nothing; pushing a full
   466×466 framebuffer out over QSPI is the part to time. **Measure:** full-frame blit time, and dirty-
   rect blit time for a 3 KB rectangle.
-- **PSRAM was the constraint that bites, and it does not bite.** A 466×466 RGB565 framebuffer is
-  434,312 bytes, which does not fit in internal SRAM on an S3. **Measured on the board on this desk:**
-  8 MB of embedded PSRAM, and the framebuffer allocates out of it with room to spare — the firmware
-  prints total and free PSRAM, and the internal heap beside it, in its boot banner. The fallback is
-  still implemented and still right for a board without it: claim a smaller panel in HELLO, because
-  the host paints whatever geometry it is told. What is *not* yet measured is the same figure with
-  Wi-Fi and a TLS session up, which is the real budget for the networked build.
+- **PSRAM was the constraint that bites, and it does not bite.** **Measured on the board on this
+  desk:** 8 MB of embedded PSRAM, 7,943,664 bytes free at boot, and its 368×448 framebuffer —
+  329,728 bytes — allocates out of it with room to spare. A 466×466 panel would need 434,312 and
+  would also fit. The fallback is still implemented and still right for a board without PSRAM: claim
+  a smaller panel in HELLO, because the host paints whatever geometry it is told. What is *not* yet
+  measured is the same figure with Wi-Fi and a TLS session up, which is the real budget for the
+  networked build.
+- **The panel push is the cost, not the bus.** Pushing the whole framebuffer on every COMMIT cost
+  105 ms for a changed reading. The decoder already knew which rows had arrived and simply was not
+  reporting them; a band of whole rows is contiguous in the framebuffer, so pushing only those is one
+  block and no copy, and it brought the figure to 70 ms.
 - **Power.** Assume USB-C power for the first build. A battery-powered pulse display is a different
   project: it needs deep sleep between frames, and this protocol's persistent connection is the wrong
   shape for that. Say so rather than half-supporting it.
@@ -451,11 +461,11 @@ what made them contract changes instead of adapter workarounds.
    adapter that had *only* `blank()` would be skipped silently by a lock subscriber — the display
    stays lit and nothing reports a fault. Unblanking repaints rather than restoring brightness, since
    the frame was dropped when the panel went dark.
-3. **A screen-shaped page.** *Still open, and now clearly a design question rather than a plumbing
-   one.* A 466×466 round panel is not a strip, and a page whose only content is a row of bar segments
-   reads badly on it. That wants a `pulse` page type, answered with `scripts/review.ts` in front of
-   it rather than in a PR description. AGENTS.md: do not ship a visual change you have only reasoned
-   about — and note that this is the one item nobody can settle until a panel exists to look at.
+3. **A screen-shaped page.** *Still open, and now the only one of the three that is.* A 368×448
+   portrait panel is not a strip, and a page whose only content is a row of bar segments reads badly
+   on it. That wants a `pulse` page type, answered with `scripts/review.ts` in front of it rather
+   than in a PR description. AGENTS.md: do not ship a visual change you have only reasoned about —
+   and there is now a panel on the desk to look at, so there is no longer an excuse not to.
 
 Two surfaces the contract gained alongside these are what a screen device actually paints: `list`
 (rows, with panel-owned selection) and `detail` (a title, labelled lines, and a footer that is never
@@ -530,20 +540,21 @@ provisioning goes wrong and the reset button has not been wired yet.
 
 Kept separate on purpose. AGENTS.md: a control that cannot be made to fail is not evidence.
 
-**Measured on hardware — a bare ESP32-S3 N16R8 devkit, flashed and painted:**
+**Measured on hardware, with the panel actually presenting each frame:**
 
-- A 466×466 framebuffer is 434,312 bytes and **allocates in PSRAM**, of which the board reports
-  8,388,608 bytes with 7,943,664 free at boot. The arithmetic in this document was right and the
-  constraint it named does not bite on this part.
-- A full frame is **23,219 bytes on the wire** in 60 messages — 5.3% of the raw framebuffer, close
-  to the 4.0% the desktop encoder predicted.
-- **Full frame, end to end: ~190 ms** (84.5 ms to render and send, 104.5 ms until the device
-  acknowledges). **Dirty rect: 67 ms median.** Ping round trip: 1 ms. An unchanged frame costs
-  4.7 ms and **zero bytes**.
-- Against the falsification test below: the full frame passes, the dirty rect **misses** its 50 ms
-  threshold. The cost is host-side rasterisation, not the link — 22–41 ms of it is ImageMagick.
+- A 368×448 framebuffer is 329,728 bytes and **allocates in PSRAM**, of which the board reports
+  8,388,608 bytes with 7,943,664 free at boot. The constraint this document named does not bite.
+- A full frame is **23,219 bytes on the wire** in 60 messages — about 5% of the raw framebuffer,
+  close to the 4.0% the desktop encoder predicted.
+- **Full frame, end to end: ~213 ms** (74 ms to render and send, 139 ms until the device
+  acknowledges). **A changed reading: 70 ms median.** Ping round trip: 1 ms. An unchanged frame
+  costs 3 ms and **zero bytes**.
+- Against the falsification test below: the full frame passes, and a changed reading **still misses**
+  its 50 ms threshold. The cost is not the link. Host-side rasterisation is 22–41 ms of it, and the
+  panel push is most of the rest — pushing the whole 368×448 panel on every commit cost 105 ms until
+  the decoder started reporting which *rows* had changed, which brought it to 70 ms.
 - The instrument is the protocol's own PONG, which cannot come back before the frame is presented.
-  Details, and the five bugs the hardware found, are in `devices/firmware/esp32/README.md`.
+  Details, and the bugs the hardware found, are in `devices/firmware/esp32/README.md`.
 
 **Measured here, today, on this machine (Node 26.8.1, ImageMagick 7.1.2-30):**
 

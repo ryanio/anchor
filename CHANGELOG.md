@@ -17,16 +17,20 @@ becomes `## [0.1.0] - YYYY-MM-DD` at the moment the tag is pushed, and not befor
 **Devices** — Anchor on physical hardware, starting with the Elgato Stream Deck. Opt-in: the
 workspace keeps its own dependency, so a machine with no device attached installs nothing.
 
-- The ESP32 board does have a display, and the firmware that said otherwise was measuring the wrong
-  pins. `devices/firmware/esp32/probe/` finds a board's I2C bus physically — by driving each safe
-  GPIO's internal pull-down and reporting the pins an external pull-up still holds high — instead of
-  trusting the Arduino defaults. The real bus is SDA=15/SCL=14, and every device on it is identified
-  by its identity register rather than its address: a CST820 touch controller, an ES8311 codec, a
-  TCA9554-class IO expander, an AXP2101, a PCF85063-class RTC and a QMI8658. GPIO 13 carries a ~58Hz
-  tearing-effect signal, which is a panel refreshing. `panelsweep/` searches for the display's QSPI
-  bus using that tearing line as an oracle rather than writing a pin map from memory; two exhaustive
-  sweeps over 29 pins have not found it, so the panel is identified but not yet driven. Docs corrected
-  in the same change — `docs/devices.md` had shipped the claim that no display was attached.
+- **Anchor frames on a real display.** The ESP32 board is a Waveshare ESP32-S3-Touch-AMOLED-1.8 (V2):
+  a 368x448 CO5300 AMOLED, driven over the USB cable. The host renders and the device blits, so a
+  surface in the live Omarchy theme, in the user's fontconfig monospace, appears on a panel on the
+  desk with nothing drawn on the device. Measured with the panel presenting: a full frame is 23,219
+  bytes on the wire and ~213ms end to end, a changed reading is 70ms, and an unchanged frame costs
+  zero bytes. The decoder now reports which rows a frame touched, so the device pushes only the band
+  that changed — that alone took a changed reading from 105ms to 70ms.
+- The firmware previously reported that no display was attached, and `docs/devices.md` shipped that
+  claim. It had scanned I2C on the Arduino default pins; the real bus is SDA=15/SCL=14. Zero devices
+  on the wrong pins is not a negative result. `devices/firmware/esp32/probe/` now finds a board's bus
+  physically — by driving each safe GPIO's internal pull-down and reporting the pins an external
+  pull-up still holds high — and identifies every device by its identity register rather than its
+  address. That fingerprint named the board and its hardware revision: a CST820 touch controller is
+  what distinguishes V2 from V1's FT3168, and the revision determines the display driver.
 - ESP32 pulse firmware, **running on hardware**. The device half of the wire format is portable C99
   with no allocation and no platform calls; it is compiled and driven on every `npm test` against
   frames from the real host adapter, so the encoder is proved against a second implementation rather

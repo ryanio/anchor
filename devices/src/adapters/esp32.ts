@@ -79,14 +79,18 @@ export const DEFAULT_PORT = 8788;
 /**
  * Panels this adapter has been designed against.
  *
- * **None of these has been measured here — there is no hardware on this branch.** The dimensions
- * are what the vendors publish, and they are recorded so the arithmetic in the design doc is
- * checkable and so a wrong one is a visible wrong number rather than an assumption. The device
+ * **One of these has been measured; the rest are vendor documentation.** The dimensions are recorded
+ * so the arithmetic in the design doc is checkable and so a wrong one is a visible wrong number
+ * rather than an assumption — and the wrong number was real: `amoled-466` was a guess that named the
+ * right driver family and the wrong size for the board that turned up. The device
  * reports its own geometry in HELLO and that is what gets painted; this table is documentation and
  * a sanity check, never a source of truth. Same rule as the Stream Deck adapter, which reads
  * `CONTROLS` off the device instead of keeping a table of model constants.
  */
 export const PANELS: Readonly<Record<string, { width: number; height: number; note: string }>> = {
+  // The one panel here that has been driven. Waveshare ESP32-S3-Touch-AMOLED-1.8, V2 hardware:
+  // a CO5300 behind 368x448 on QSPI, identified from its I2C bus rather than from a model name.
+  "amoled-368x448": { width: 368, height: 448, note: "1.8in AMOLED, QSPI (CO5300) — measured" },
   "amoled-466": { width: 466, height: 466, note: "1.43in round AMOLED, QSPI (CO5300-class)" },
   "amoled-536": { width: 240, height: 536, note: "1.91in AMOLED strip, QSPI (RM67162-class)" },
   "lcd-320": { width: 170, height: 320, note: "1.9in IPS LCD, 8-bit parallel (ST7789-class)" },

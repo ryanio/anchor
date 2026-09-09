@@ -9,7 +9,8 @@ is a byte-fed state machine and a `memcpy`, and that is what `src/anchor_pulse.c
 
 ## The board
 
-Measured with esptool on this desk, not read off a label:
+**Waveshare ESP32-S3-Touch-AMOLED-1.8, V2 hardware.** Measured with esptool and the probe below, not
+read off a label:
 
 ```
 Chip type   ESP32-S3 (QFN56) revision v0.2
@@ -17,119 +18,107 @@ Features    Wi-Fi, BT 5 (LE), dual core + LP core, 240MHz, embedded PSRAM 8MB (A
 Flash       16MB, quad, 3.3V (manufacturer 20, device 4018)
 USB mode    USB-Serial/JTAG
 MAC         28:84:85:3a:d3:f0
+Panel       368x448 AMOLED, CO5300 controller, QSPI
 ```
 
-That is the N16R8 configuration, and it is **not** an M5Stack Cardputer — the Cardputer is an
-ESP32-S3FN8 with 8 MB of flash and no PSRAM, and has its own adapter and design doc. Both enumerate
-as `303a:1001` "USB JTAG/serial debug unit", so the USB descriptor cannot tell them apart. Ask the
-ROM.
+It is **not** an M5Stack Cardputer, which is an ESP32-S3FN8 with 8 MB of flash and no PSRAM. Both
+enumerate as `303a:1001` "USB JTAG/serial debug unit", so the USB descriptor cannot tell them apart.
+Ask the ROM.
 
-**The board has a display, and finding it took correcting a wrong answer.**
+### How it was identified, after a wrong answer
 
 The first version of this firmware scanned I2C on SDA=8/SCL=9 — the Arduino defaults for an S3 —
-found nothing, and reported that no display was attached. That conclusion reached `docs/devices.md`
-and survived a merge. It was wrong, and the mistake is worth more than the correction: **zero devices
-on the wrong pins is not a negative result.** It is an instrument reporting that it was aimed at
-nothing. AGENTS.md asks for attention to the thing you are looking *through*, and a default constant
-is exactly the sort of thing that goes unlooked-at.
+found nothing, and reported that no display was attached. That reached `docs/devices.md` and survived
+a merge. The board has a glass screen and buttons down one side.
 
-`probe/` replaces the assumption with a measurement. It takes no pin map on faith: it drives each
+**Zero devices on the wrong pins is not a negative result.** It is an instrument reporting that it
+was aimed at nothing. AGENTS.md asks for attention to the thing you look *through*, and a default
+constant is exactly what goes unlooked-at.
+
+`probe/` replaces the assumption with a measurement and takes no pin map on faith. It drives each
 safe GPIO's internal pull-down (~45k) and reports every pin that still reads high, on the physical
 grounds that an I2C bus carries external pull-ups of a few kilohms and very little else does. Five
-pins out of twenty-seven, and one real bus.
-
-Measured on that bus — **SDA=15, SCL=14** — with every device asked for its identity register rather
-than named from its address:
+pins out of twenty-seven, and one real bus at **SDA=15, SCL=14**. Every device on it is then asked
+for its identity register rather than named from its address:
 
 | Address | Identity register | What it is |
 |---|---|---|
-| 0x15 | chip 0xB7, vendor 0x41 | CST820-class capacitive touch |
+| 0x15 | chip 0xB7, vendor 0x41 | CST820 capacitive touch |
 | 0x18 | 0x83 0x11 | ES8311 audio codec |
 | 0x20 | in 0xCF, out 0x87, config 0x78 | TCA9554-class IO expander |
 | 0x34 | 0x4A | AXP2101 power-management unit |
 | 0x51 | — | PCF85063-class real-time clock |
 | 0x6B | WHO_AM_I 0x05, rev 0x7C | QMI8658 IMU |
 
-And the measurement that settles the question: **GPIO 13 toggles at about 58 Hz with nothing on this
-chip driving it** — a panel's tearing-effect line, raised once per refresh. A board with no display
-does not generate one.
-
-**The panel is not lit yet, and it is currently dark.** Its QSPI pin map is unknown, and `panelsweep/`
-searched for it rather than writing one from memory — the command phase of a QSPI AMOLED is
-single-line, so the search is over three pins, not six, and the tearing line is the oracle. Two
-exhaustive sweeps across 29 pins found nothing that wakes the controller. The likeliest reading is
-that one of the swept pins is the panel's *reset* rather than a chip select: the first sweep silenced
-the tearing line and carried on instead of stopping, so it could not say which combination did it,
-and a reset controller needs a full initialisation sequence rather than a `SLPOUT`. The next step is
-the board's documentation, not a wider guess.
+That fingerprint names the product *and its revision*: V2 pairs a CO5300 with a CST820, where V1 used
+an SH8601 with an FT3168 — the touch controller identifies the display driver. The vendor's own
+`pin_config.h` then declares `IIC_SDA 15` and `IIC_SCL 14`. A physical probe and a vendor header
+arriving at the same two pins independently is what makes this an identification and not a story.
 
 ## What is measured and what is not
 
-AGENTS.md asks for these to be kept apart.
-
-**Measured on the hardware**, by flashing it and painting real Anchor frames from the real host
-adapter through `tools/measure.ts`:
+**Measured on the hardware, with the panel presenting every frame**, by painting real Anchor surfaces
+from the real host adapter through `tools/measure.ts`:
 
 | | |
 |---|---|
 | PSRAM | 8,388,608 bytes total, 7,943,664 free at boot |
 | Internal heap | 333,448 free, largest block 270,324 |
-| Framebuffer | 466×466 RGB565 = **434,312 bytes, allocated in PSRAM** |
-| Firmware size | 330,252 bytes of flash (10%), 32,520 bytes of static RAM |
-| Full frame on the wire | 60 messages, **23,219 bytes** — 5.3% of the raw framebuffer |
-| Ping round trip | median **1.0 ms** |
-| Full frame, end to end | 84.5 ms to render and send, then **104.5 ms** to the pong |
-| Dirty rect, end to end | median **67.4 ms** (min 52.8, max 102.2) |
-| Unchanged frame | median **4.7 ms**, and **zero bytes on the wire** |
+| Framebuffer | 368×448 RGB565 = **329,728 bytes, allocated in PSRAM** |
+| Firmware size | 389,200 bytes of flash (12%), 32,848 bytes of static RAM |
+| Full frame on the wire | 60 messages, **23,219 bytes** — about 5% of the raw framebuffer |
+| Ping round trip | median **0.9 ms** |
+| Full frame, end to end | 74 ms to render and send, then **139 ms** to the pong |
+| A changed reading | median **70 ms** (min 55, max 97) |
+| Unchanged frame | median **3 ms**, and **zero bytes on the wire** |
 
 The instrument is the PONG. The stream is ordered, so a reply to a ping issued after a COMMIT cannot
-come back until the device has read, decoded and presented everything before it — which makes the
-round trip an upper bound on the whole path with no cooperation from the firmware beyond the reply
-the protocol already requires.
+come back until the device has read, decoded and *presented* everything before it — an upper bound on
+the whole path, with no cooperation from the firmware beyond a reply the protocol already requires.
 
-**Against the design doc's own falsification test**, which says the argument for shipping pixels is
-wrong if a full frame costs more than a few hundred milliseconds or a dirty rect more than about
-50 ms: the full frame passes at ~190 ms. **The dirty rect does not** — 67 ms median against a 50 ms
-threshold. That number is a composite (host rasterisation, send, decode, blit, round trip) and
-rasterising a 466×466 surface is 22–41 ms of it on its own, so the wire is not what is expensive.
-It is honest to say the threshold is missed and that the cost is on the host, not the link.
+**Against the design doc's falsification test** — the argument for shipping pixels is wrong if a full
+frame costs more than a few hundred milliseconds or a changed reading more than about 50 ms: the full
+frame passes at ~213 ms, and the changed reading **misses** at 70 ms. It is honest to say so. The cost
+is not the link: host rasterisation is 22–41 ms of it, and the panel push was most of the rest until
+the decoder began reporting which rows changed (105 ms → 70 ms).
 
 **Measured on the desktop**, with no hardware, on every `npm test`:
 
 - `src/anchor_pulse.c` compiles clean under `cc -std=c99 -Wall -Wextra -Werror -O2`.
 - It reconstructs, byte for byte, the frames the real `Esp32PulseDevice` paints — including a second
   incremental paint, and including the stream split at every single byte boundary.
-- The comparison can fail: flipping one byte produces a different framebuffer, and a test asserts it.
+- The comparison can fail: corrupting a pixel byte produces a different framebuffer, and a test
+  asserts it does.
 - Tiles that overrun the panel, run-length data that under-fills its rectangle, payloads larger than
   the buffer HELLO promised, and message types only a device may send are each refused, with the
   specific fault.
+- The dirty-row band is asserted from synthetic tiles at known rows, so it holds on a machine with
+  different fonts.
 
 **Not measured:**
 
-- Anything about the panel itself: blit time, byte order, refresh. Its bus has not been found.
 - Wi-Fi, TLS-PSK, and free heap with a radio and a TLS session up.
-- Whether the RGB LED colour is *correct* — it is driven from the frame's mean pixel, and nobody has
-  put a colorimeter on it. That it changes with the frame is inferred from the commits landing, not
-  seen by the author.
+- Touch, the IMU, and the side buttons. All present, none wired to `DeviceInput` yet.
+- Colour fidelity. The framebuffer is handed to the driver as native-endian RGB565 with no swap pass;
+  that it is *correct* on the glass is a thing a person has to look at.
 
 ## What the hardware taught us
 
-Five bugs that no amount of desktop testing would have found. Each is fixed, and each is the kind of
-thing AGENTS.md means by measuring the instrument rather than the reading.
+Bugs no amount of desktop testing would have found. Each is fixed, and each is the kind of thing
+AGENTS.md means by measuring the instrument rather than the reading.
 
 1. **`setRxBufferSize` was a silent no-op.** With `CDCOnBoot=cdc` the core calls `Serial.begin()`
    before `setup()` runs, and resizing a running HWCDC does nothing and returns 0. The code looked
    right, the comment claimed 16 KB, and the buffer stayed at the default. It needs `Serial.end()`
-   first — and the size is printed in the boot banner now, because a buffer you believe in is not a
-   buffer you measured.
+   first — and the size is in the boot banner now, because a buffer you believe in is not a buffer
+   you measured.
 2. **The receive buffer has to hold a whole frame, not a whole tile.** The blit target is PSRAM,
-   which is far slower to write than internal SRAM, so the device cannot decode a 23 KB frame as
-   fast as USB delivers it. Anything smaller than the frame drops the tail. The general answer is
-   flow control — the protocol already has PING/PONG, and a host that pings every N tiles cannot
-   outrun any device — but that is a reviewed change, not a bring-up.
+   far slower to write than internal SRAM, so the device cannot decode a 23 KB frame as fast as USB
+   delivers it. The general answer is flow control — the protocol already has PING/PONG, and a host
+   that pings every N tiles cannot outrun any device — but that is a reviewed change, not a bring-up.
 3. **A dropped byte does not look like a dropped byte.** It shifts the stream, so the next header is
-   read out of the middle of a payload. It surfaced first as `ANCHOR_FAULT_MAGIC` and later, once a
-   shifted length field happened to look plausible, as `ANCHOR_FAULT_LENGTH`. Neither names the
+   read out of the middle of a payload. It surfaced as `ANCHOR_FAULT_MAGIC`, and later — once a
+   shifted length field happened to look plausible — as `ANCHOR_FAULT_LENGTH`. Neither names the
    cause.
 4. **Flashing leaves bytes in the peripheral**, and feeding them to a strict parser makes a
    freshly-flashed device announce itself as already broken. Both ends now resynchronise once
@@ -138,11 +127,22 @@ thing AGENTS.md means by measuring the instrument rather than the reading.
    next host to open the port waits for a HELLO that never comes: a display that works exactly once
    per power cycle. The firmware watches the CDC connection state, which is the honest equivalent of
    a socket close.
+6. **A search whose success and whose failure look identical is not a search.** `panelsweep/` hunted
+   the display bus using the tearing line as an oracle. It found the pins that silenced the panel —
+   and then carried on past the hit instead of stopping, so it could not say which combination did
+   it, and produced two thousand more "candidates" against a line that was already dead. It aborts on
+   a dead oracle now.
+7. **And the mirror of that, which is the one worth remembering.** Once the pin map was known, a full
+   initialisation brought the controller back and the tearing line stayed at zero — which read exactly
+   like a panel that was still dark. It was not. Arduino_GFX's init does not enable tearing, and the
+   original 58 Hz had come from the firmware that shipped on the board. One command (`0x35`) restored
+   it. The panel had been refreshing the whole time; the *instrument* was off. That is the same error
+   as the I2C scan at the top of this file, pointing the other way.
 
-The fault code is reported in the device id of the next HELLO — `anchor-pulse-s3-fault-3` — because
-by the time the decoder rejects something the host has usually already hung up, and the protocol
-deliberately has no message for a complaint. That channel is how three of the five above were found
-rather than guessed at.
+The fault code rides in the device id of the next HELLO — `anchor-pulse-s3-fault-3` — because by the
+time the decoder rejects something the host has usually already hung up, and the protocol
+deliberately has no message for a complaint. That channel is how several of these were found rather
+than guessed at.
 
 ## Layout
 
@@ -224,6 +224,17 @@ arduino-cli core install esp32:esp32@3.3.11
 
 Pinned deliberately; 3.3.11 is the version this was built and flashed with. These are firmware
 libraries, not npm dependencies — the `devices` workspace still has exactly one.
+
+The panel needs a CO5300 driver. **Do not install `GFX Library for Arduino` from the Arduino
+index:** 1.6.0 is the published version and it does not compile against ESP32 core 3.3.11 —
+`Arduino_ESP32SPI` calls `spiFrequencyToClockDiv` with the pre-3.x signature. The vendor repository
+carries **1.6.4**, which does compile, so take it from there — clone
+`waveshareteam/ESP32-S3-Touch-AMOLED-1.8` and copy
+`examples/arduino-v2/libraries/GFX_Library_for_Arduino` into `~/Arduino/libraries/`.
+
+`arduino-v2` is the V2 hardware, which is what this board is. That directory also holds
+`pin_config.h`, and it is the source of every display constant in `app/` — none were written from
+memory.
 
 ### 3. Link this directory as a library
 
@@ -316,25 +327,22 @@ rather than an omission.
 
 ## Known gaps
 
-- **The panel is not driven yet.** Its QSPI pin map is unknown and it is currently reset. Push time,
-  byte order and refresh are all still open, and the frame is shown as one colour on the RGB LED
-  instead of on the glass.
-- **The touch controller, the IMU and the buttons are all unused.** The HELLO input mask is zero. A
-  CST820 and a QMI8658 are both real inputs, and GPIO 1, 2 and 21 carry external pull-ups, which is
-  what a side button looks like. Each is a bit in that mask and a call to `anchor_pulse_input` — and
-  none of them could say anything but a slot id and two numbers.
-- **The LED colour is not verified.** It is the frame's mean pixel, driven on every COMMIT. That the
-  commits land is measured; that the light is the right colour is not.
-- **Byte order is still a choice, not a measurement.** The firmware declares
-  `ANCHOR_PIXEL_RGB565_LE` so the framebuffer reads as `uint16_t` on a little-endian ESP32.
-  Declaring big-endian would let a panel driver DMA the bytes straight out. Which is right needs a
-  panel.
-- **The whole framebuffer is decoded into PSRAM.** That is what made the receive buffer have to hold
-  a whole frame. A device with a real panel should probably compose in internal SRAM per tile — the
-  TILE/COMMIT split already permits it, at the cost of atomicity.
+- **Colour fidelity is unverified.** The framebuffer is handed to the driver as native-endian RGB565
+  with no swap pass, which is why `ANCHOR_PIXEL_RGB565_LE` is what HELLO declares. That it looks
+  right on the glass needs a person to look at the glass.
+- **The whole dirty band is pushed, not the dirty rectangle.** The decoder reports the rows that
+  changed, because a band of whole rows is contiguous in the framebuffer and needs no per-row loop.
+  A narrow change in the middle of a wide panel still pushes full-width rows. Measure before making
+  it cleverer.
+- **Touch, the IMU and the side buttons are all unused.** The HELLO input mask is zero. A CST820 and
+  a QMI8658 are real inputs, and GPIO 1, 2 and 21 carry external pull-ups, which is what a button
+  looks like. Each is a bit in that mask and a call to `anchor_pulse_input` — and none of them could
+  say anything but a slot id and two numbers.
 - **No flow control.** The 64 KB receive buffer is a fix for this board's frame size, not a general
-  one. A host that pinged every N tiles and waited for the pong could not outrun any device, using
-  only the vocabulary the protocol already has. It is the right next change and it is a reviewed one.
-- **No input.** The HELLO input mask is zero; the board has nothing to report with.
-- **No Wi-Fi, no TLS-PSK.** Deliberate, for now. The cable is the honest v1 and it keeps invariant 6
-  vacuous rather than merely satisfied.
+  one. A host that pinged every N tiles and waited could not outrun any device, using only the
+  vocabulary the protocol already has. It is the right next change and it is a reviewed one.
+- **A page shaped for this screen.** 368×448 in portrait is not a strip, and the panel currently
+  renders a page designed for other geometry. That is a design question, and `scripts/review.ts` is
+  where it gets answered.
+- **No Wi-Fi, no TLS-PSK.** Deliberate. The cable keeps invariant 6 vacuous rather than merely
+  satisfied.

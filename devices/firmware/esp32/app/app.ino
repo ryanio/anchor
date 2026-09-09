@@ -1,21 +1,20 @@
 /*
  * Anchor Pulse on an ESP32-S3, over the USB cable.
  *
- * The board this was written for and flashed to is a bare ESP32-S3 N16R8 devkit: 16MB of flash,
- * 8MB of octal PSRAM, native USB-Serial/JTAG, and a glass display whose bus is not yet known.
- * The display is real — `probe/` measures a panel's tearing-effect line ticking at 58 Hz on GPIO 13
- * — but its QSPI pin map has not been found, so nothing here can draw on it yet. Until it can, this
- * firmware does the two things the hardware can honestly do today:
+ * The board is a **Waveshare ESP32-S3-Touch-AMOLED-1.8, V2 hardware**: an ESP32-S3 N16R8 with 16MB
+ * of flash and 8MB of octal PSRAM, native USB-Serial/JTAG, and a 368x448 AMOLED behind a CO5300
+ * controller on a QSPI bus. `probe/` identified it from the I2C bus alone — a CST820 touch
+ * controller is what distinguishes V2 from V1's FT3168, and the driver follows from the revision.
  *
- *   1. **Run the real protocol against a real framebuffer.** The panel is 466x466 — the largest
- *      candidate in the design doc — allocated in PSRAM, painted by the host, decoded by the same
- *      `anchor_pulse.c` the host test compiles. Nothing about that is simulated. It turns the two
- *      biggest "assumed, not verified" lines in the doc into measurements: whether a 434 KB
- *      framebuffer fits, and what a full frame actually costs end to end.
- *   2. **Show the frame on the only output it has.** The devkit's RGB LED is driven from the mean
- *      colour of the committed frame, so an Anchor surface rendered on the desktop, in the user's
- *      live Omarchy theme, changes the colour of a light on the board. It is one pixel, and it is a
- *      real one — the whole path, host rasteriser to glass, with only the glass missing.
+ * So the host renders and this blits, exactly as `docs/devices-esp32.md` argued it should:
+ *
+ *   1. **Run the real protocol against a real framebuffer.** 368x448 RGB565 is 329,728 bytes, held
+ *      in PSRAM, painted by the host and decoded by the same `anchor_pulse.c` the host test
+ *      compiles. Nothing about it is simulated.
+ *   2. **Put it on the glass.** Every COMMIT pushes the framebuffer to the panel, so an Anchor
+ *      surface rendered on the desktop — in the user's live Omarchy theme, in the user's fontconfig
+ *      monospace — appears on a display on the desk. That is the whole path, and none of it is
+ *      drawn on the device.
  *
  * Everything with judgement in it is in `../src/anchor_pulse.c`, which is portable C99 and is
  * compiled and driven by `devices/src/adapters/esp32-firmware.test.ts` on every `npm test`. This
@@ -23,23 +22,21 @@
  */
 
 #include <Arduino.h>
+#include <Arduino_GFX_Library.h>
 #include <Wire.h>
 #include <esp_heap_caps.h>
 
 #include "anchor_pulse.h"
 
 /*
- * The panel this device claims.
+ * The panel this device claims, measured rather than chosen.
  *
- * No panel is driven yet, so this is a choice rather than a measurement, and it is the design doc's
- * largest candidate on purpose: 466x466 RGB565 is 434,312 bytes, which the doc says "does not fit
- * in internal SRAM on an S3" and leaves as arithmetic. With 8MB of PSRAM confirmed on this board it
- * fits comfortably, and pushing a real frame at that size is the falsification test the doc asks
- * for — if a full frame costs more than a few hundred milliseconds end to end, shipping pixels was
- * the wrong call.
+ * An earlier version of this file declared 466x466 — the design doc's largest candidate — because
+ * there was no known display and a big framebuffer exercised the PSRAM arithmetic. The board is a
+ * 368x448 AMOLED. The doc's guess named the right driver family and the wrong size.
  */
-#define PANEL_WIDTH 466u
-#define PANEL_HEIGHT 466u
+#define PANEL_WIDTH 368u
+#define PANEL_HEIGHT 448u
 #define PANEL_BYTES (PANEL_WIDTH * PANEL_HEIGHT * 2u)
 
 /*
@@ -83,48 +80,95 @@ static uint32_t commit_count = 0;
 static bool framebuffer_in_psram = false;
 static size_t rx_buffer_bytes = 0;
 
-/* ------------------------------------------------------------------------------- the light ---- */
+/* ------------------------------------------------------------------------------- the panel ---- */
 
 /*
- * The devkit's one output.
+ * The display, from the vendor's `pin_config.h` for V2 hardware — not written from memory.
  *
- * `RGB_BUILTIN` is defined by the board variant; GPIO48 is the fallback because that is where the
- * WS2812 sits on an ESP32-S3-DevKitC-1. If the board turns out to have neither, this is a no-op and
- * the protocol still runs — which is the point of keeping the light out of the decoder.
+ * There is no reset pin: the vendor's own example passes `GFX_NOT_DEFINED`, which corroborates what
+ * the probe found the hard way. The 16 is a column offset, because a CO5300 addresses a wider frame
+ * than this panel exposes; getting it wrong shifts every pixel sideways and wraps the right edge,
+ * which looks like a protocol bug and is not one.
  */
-#ifndef RGB_BUILTIN
-#define RGB_BUILTIN 48
-#endif
+#define LCD_SDIO0 4
+#define LCD_SDIO1 5
+#define LCD_SDIO2 6
+#define LCD_SDIO3 7
+#define LCD_SCLK 11
+#define LCD_CS 12
+#define TE_PIN 13
+#define BUS_SDA 15
+#define BUS_SCL 14
 
-static void show_colour(uint8_t r, uint8_t g, uint8_t b) {
-  rgbLedWrite(RGB_BUILTIN, r, g, b);
+static Arduino_DataBus *panel_bus =
+    new Arduino_ESP32QSPI(LCD_CS, LCD_SCLK, LCD_SDIO0, LCD_SDIO1, LCD_SDIO2, LCD_SDIO3);
+static Arduino_CO5300 *panel = new Arduino_CO5300(panel_bus, GFX_NOT_DEFINED, 0 /* rotation */,
+                                                  (int16_t)PANEL_WIDTH, (int16_t)PANEL_HEIGHT, 16, 0,
+                                                  0, 0);
+static bool panel_ready = false;
+
+static void set_backlight(uint8_t percent) {
+  if (!panel_ready) return;
+  if (percent > 100) percent = 100;
+  panel->setBrightness((uint8_t)((uint32_t)percent * 255u / 100u));
 }
 
 /*
- * The mean colour of the frame, as one pixel.
+ * Turn the tearing-effect line on, and why it is worth a line of code.
  *
- * Sampled rather than summed over every pixel: 217,156 of them is real work on every commit, and a
- * regular stride over a flat-filled surface lands on the same answer. The pixels are RGB565 in the
- * order the host was told to send them — `ANCHOR_PIXEL_RGB565_LE` below — so this reads them as
- * little-endian and unpacks 5/6/5.
+ * The panel drives GPIO 13 once per refresh when this is enabled, and Arduino_GFX's init does not
+ * enable it. That signal is how anything here can tell a running panel from a dark one without a
+ * human looking at the desk — and reading its absence as "the panel is dark" is a mistake this
+ * firmware has already made once, in the other direction, with an I2C scan on the wrong pins.
  */
-static void present_to_led(void) {
-  const uint32_t pixels = (uint32_t)panel_width * (uint32_t)panel_height;
-  const uint32_t stride = 37; /* coprime with the row width, so it does not sample one column */
-  uint32_t r = 0, g = 0, b = 0, n = 0;
-  for (uint32_t i = 0; i < pixels; i += stride) {
-    uint16_t p = (uint16_t)framebuffer[i * 2] | ((uint16_t)framebuffer[i * 2 + 1] << 8);
-    r += ((p >> 11) & 0x1F) << 3;
-    g += ((p >> 5) & 0x3F) << 2;
-    b += (p & 0x1F) << 3;
-    n++;
+static void enable_tearing(void) {
+  panel_bus->beginWrite();
+  panel_bus->writeC8D8(0x35, 0x00);
+  panel_bus->endWrite();
+}
+
+/* Transitions on the tearing line: a measurement of whether the panel is actually refreshing. */
+static int te_activity(uint16_t ms) {
+  pinMode(TE_PIN, INPUT);
+  int last = digitalRead(TE_PIN);
+  int changes = 0;
+  uint32_t until = millis() + ms;
+  while (millis() < until) {
+    int now = digitalRead(TE_PIN);
+    if (now != last) {
+      changes++;
+      last = now;
+    }
   }
-  if (n == 0) return;
-  /* Scaled by the host's brightness so BRIGHTNESS and BLANK mean something on a device with no
-   * backlight to turn down. */
-  uint32_t scale = configured_brightness > 100 ? 100 : configured_brightness;
-  show_colour((uint8_t)(r / n * scale / 100), (uint8_t)(g / n * scale / 100),
-              (uint8_t)(b / n * scale / 100));
+  return changes;
+}
+
+/*
+ * Push the framebuffer to the glass.
+ *
+ * The whole panel goes out on every COMMIT. The decoder knows which rectangles changed — the host
+ * only sent those — but it does not report them, and guessing at that optimisation before measuring
+ * this one would be the exact mistake AGENTS.md describes. Time it first.
+ *
+ * The buffer holds RGB565 in the order the host was told to send it, `ANCHOR_PIXEL_RGB565_LE`, which
+ * is the ESP32's own byte order — so it can be handed to the driver as `uint16_t` with no pass over
+ * 329,728 bytes to swap them.
+ */
+static void present_frame(void) {
+  if (!panel_ready) return;
+  uint16_t top = 0;
+  uint16_t bottom = (uint16_t)(panel_height - 1);
+  if (pulse.has_dirty) {
+    top = pulse.dirty_top;
+    bottom = pulse.dirty_bottom;
+  }
+  if (bottom >= panel_height) bottom = (uint16_t)(panel_height - 1);
+  if (top > bottom) return;
+
+  // A band of whole rows is contiguous in the framebuffer, so this is one block and no copy.
+  const uint16_t rows = (uint16_t)(bottom - top + 1);
+  uint16_t *start = (uint16_t *)(framebuffer + ((uint32_t)top * panel_width * 2u));
+  panel->draw16bitRGBBitmap(0, (int16_t)top, start, (int16_t)panel_width, (int16_t)rows);
 }
 
 /* -------------------------------------------------------------------------------- sinks ------- */
@@ -137,8 +181,15 @@ static void sink_write(void *ctx, const uint8_t *bytes, size_t count) {
 static void sink_present(void *ctx) {
   (void)ctx;
   commit_count++;
-  presented = true;
-  present_to_led();
+  if (!presented) {
+    // The backlight stays down until there is something true to show, so the panel never displays a
+    // partly-painted frame on boot.
+    present_frame();
+    set_backlight(configured_brightness);
+    presented = true;
+    return;
+  }
+  present_frame();
 }
 
 static void sink_ready(void *ctx, const anchor_ready_t *ready) {
@@ -151,7 +202,7 @@ static void sink_ready(void *ctx, const anchor_ready_t *ready) {
 static void sink_brightness(void *ctx, uint8_t percent) {
   (void)ctx;
   configured_brightness = percent;
-  if (presented) present_to_led();
+  if (presented) set_backlight(percent);
 }
 
 /*
@@ -163,7 +214,8 @@ static void sink_blank(void *ctx) {
   (void)ctx;
   anchor_pulse_fill(&pulse, 0x00, 0x00);
   presented = false;
-  show_colour(0, 0, 0);
+  if (panel_ready) panel->fillScreen(0);
+  set_backlight(0);
 }
 
 /* -------------------------------------------------------------------------------- banner ------ */
@@ -209,10 +261,11 @@ static void banner(void) {
   Serial.printf("anchor-pulse: panel %ux%u, framebuffer %u bytes in %s\n", panel_width, panel_height,
                 (unsigned)((uint32_t)panel_width * panel_height * 2u),
                 framebuffer_in_psram ? "psram" : "internal");
-  Serial.printf("anchor-pulse: rgb led on gpio %d\n", RGB_BUILTIN);
+  Serial.printf("anchor-pulse: panel CO5300 %ux%u, tearing activity %d/150ms\n",
+                panel_width, panel_height, te_activity(150));
   Serial.printf("anchor-pulse: serial rx buffer %u bytes\n", (unsigned)rx_buffer_bytes);
   scan_i2c();
-  Serial.printf("anchor-pulse: no panel driver yet; the frame is shown as one colour on the led\n");
+  Serial.printf("anchor-pulse: waveshare esp32-s3-touch-amoled-1.8 v2\n");
   Serial.flush();
 }
 
@@ -265,21 +318,17 @@ static void install_decoder(void) {
 
 void setup() {
   /*
-   * The receive buffer, and why it is the first line of setup().
+   * The receive buffer, and `end()` first, which is the whole bug.
    *
-   * **Measured, the hard way.** With the core's default HWCDC ring buffer the first full frame
-   * faulted every time: the host splits a 466x466 panel into 8 KB tiles and writes them back to
-   * back, USB delivers them faster than `loop()` drains them, and the bytes that do not fit are
-   * dropped on the floor. A dropped byte is not a dropped pixel — it shifts the stream, so the next
-   * header is read out of a payload and the decoder correctly concludes it is being lied to.
+   * **Measured, the hard way.** With the core's default HWCDC ring buffer every full frame faulted:
+   * the host writes 8 KB tiles back to back, USB delivers them faster than `loop()` drains them into
+   * PSRAM, and what does not fit is dropped. A dropped byte is not a dropped pixel — it shifts the
+   * stream, so the next header is read out of the middle of a payload and the decoder correctly
+   * concludes it is being lied to. The symptom was a device that answered pings in 1 ms and then
+   * went silent, which reads like a hang and is really a fault.
    *
-   * The symptom was a device that answered pings in 1 ms and then went silent forever, which reads
-   * like a hang and is actually a fault. 16 KB holds two of the largest tiles the host can send.
-   */
-  /*
-   * `end()` first, and this is the whole bug.
-   *
-   * With `CDCOnBoot=cdc` the core has already called `Serial.begin()` before `setup()` runs, and
+   * And the fix needs `end()` in front of it. With `CDCOnBoot=cdc` the core has already called
+   * `Serial.begin()` before `setup()` runs, and
    * `setRxBufferSize` on a running HWCDC does nothing and returns 0. So the first version of this
    * line looked correct, changed nothing, and the device kept dropping bytes — the buffer stayed at
    * the core's default while the comment above it claimed 16 KB. The size is printed in the banner
@@ -291,14 +340,15 @@ void setup() {
   // Without this a write blocks forever whenever no host has the port open, which on a device whose
   // only job is to be written to is a hang rather than a slow path.
   Serial.setTxTimeoutMs(0);
-  show_colour(0, 0, 0);
+  set_backlight(0);
 
   /*
    * PSRAM first, internal SRAM as a fallback at a smaller panel.
    *
-   * A 434 KB framebuffer cannot come out of internal RAM on this part, so a board without working
-   * PSRAM must claim a smaller panel rather than fail to boot — the host reads the geometry out of
-   * HELLO and paints whatever it is told, which is exactly why that field exists.
+   * 329,728 bytes is more than this part will hand out of internal RAM once Wi-Fi and the USB stack
+   * have taken their share, so a board without working PSRAM claims a smaller panel rather than
+   * failing to boot — the host reads geometry out of HELLO and paints whatever it is told, which is
+   * exactly why that field exists.
    */
   framebuffer = (uint8_t *)heap_caps_malloc(PANEL_BYTES, MALLOC_CAP_SPIRAM);
   framebuffer_in_psram = framebuffer != nullptr;
@@ -312,10 +362,24 @@ void setup() {
     // Nothing useful is possible; say so on a loop rather than pretending to be a display.
     for (;;) {
       Serial.println("anchor-pulse: no memory for a framebuffer");
-      show_colour(40, 0, 0);
       delay(1000);
     }
   }
+
+  /*
+   * Bring the panel up before anything can ask to paint on it.
+   *
+   * `begin()` runs the CO5300 initialisation sequence, which is what recovers the controller from
+   * any state — including asleep, which is where an earlier pin sweep left it. The tearing line is
+   * then switched on deliberately, because the driver does not do it and it is the only way this
+   * firmware can report whether the glass is actually refreshing.
+   */
+  panel_ready = panel->begin();
+  if (panel_ready) {
+    enable_tearing();
+    panel->fillScreen(0);
+  }
+  set_backlight(0);
 
   install_decoder();
 
@@ -378,7 +442,6 @@ void loop() {
         install_decoder();
         have_ready = false;
         presented = false;
-        show_colour(20, 0, 0);
         delay(200);
         say_hello();
         break;
@@ -407,7 +470,7 @@ void loop() {
     last_fault = ANCHOR_OK;
     have_ready = false;
     presented = false;
-    show_colour(0, 0, 0);
+    set_backlight(0);
   }
   was_connected = connected;
 
@@ -439,7 +502,7 @@ void loop() {
     } else if (silence > stale_after_ms) {
       uint8_t was = configured_brightness;
       configured_brightness = (uint8_t)(was / 4u);
-      present_to_led();
+      set_backlight(configured_brightness);
       configured_brightness = was;
     }
   }

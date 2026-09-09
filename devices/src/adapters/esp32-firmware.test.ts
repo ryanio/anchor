@@ -32,6 +32,7 @@ import { toTokens } from "../tokens.ts";
 import type { Frame, SlotSpec, Surface } from "../types.ts";
 import { attach, type Esp32PulseDevice, MemoryLink, SCREEN_SLOT } from "./esp32.ts";
 import {
+  encodeCommit,
   encodeHello,
   encodeTile,
   type Hello,
@@ -127,6 +128,8 @@ function compilerAvailable(): boolean {
 interface Run {
   readonly status: number;
   readonly events: string[];
+  /** How many COMMITs the decoder presented. */
+  readonly commits: number;
   readonly framebuffer: Buffer;
   readonly fromDevice: Buffer;
 }
@@ -151,9 +154,11 @@ function feed(bytes: Buffer, chunk = 1): Run {
     { input: bytes, maxBuffer: 1 << 26 },
   );
   const stdout = result.stdout.toString("utf8");
+  const events = stdout.split("\n").filter((line) => line !== "");
   return {
     status: result.status ?? -1,
-    events: stdout.split("\n").filter((line) => line !== ""),
+    events,
+    commits: events.filter((line) => line.startsWith("commit ")).length,
     framebuffer: readFileSync(fbPath),
     fromDevice: readFileSync(devPath),
   };
@@ -196,7 +201,7 @@ describe("firmware conformance", { skip: !compilerAvailable() || !rasteriserAvai
 
     assert.equal(run.status, 0, `decoder faulted: ${run.events.join(", ")}`);
     assert.ok(run.events.includes("fault 0"), `expected a clean stream, got ${JSON.stringify(run.events)}`);
-    assert.ok(run.events.includes("commit 1"), "the frame was presented exactly once");
+    assert.equal(run.commits, 1, "the frame was presented exactly once");
     // READY carries the adapter's defaults; the firmware must read them off the wire, not guess.
     assert.ok(
       run.events.some((line) => line.startsWith("ready version=1 brightness=70")),
@@ -222,7 +227,7 @@ describe("firmware conformance", { skip: !compilerAvailable() || !rasteriserAvai
 
     const run = feed(link.written());
     assert.equal(run.status, 0, `decoder faulted: ${run.events.join(", ")}`);
-    assert.ok(run.events.includes("commit 2"), "two frames were presented");
+    assert.equal(run.commits, 2, "two frames were presented");
 
     // The point of the diff: the second paint is a fraction of a frame on the wire, and the device
     // still ends up holding all of it because the parts that did not change were never resent.
@@ -282,6 +287,63 @@ describe("firmware conformance", { skip: !compilerAvailable() || !rasteriserAvai
     assert.equal(run.fromDevice.readUInt8(1), MessageType.Pong);
     // Echoing the sequence number is what lets a host match a reply to the probe that caused it.
     assert.equal(run.fromDevice.readUInt16LE(2), 7);
+    await device.close();
+  });
+
+  test("the decoder reports which rows changed, so a device can push only those", () => {
+    // Built from raw tiles rather than a painted surface on purpose: the band a real frame dirties
+    // depends on where glyphs land, and this has to assert the same thing on a machine with
+    // different fonts. What is checked here is the bookkeeping, not the rendering.
+    const rowBytes = HELLO.width * 2;
+    const band = (y: number, height: number) =>
+      encodeTile(
+        1,
+        { x: 0, y, width: HELLO.width, height },
+        TileEncoding.Raw,
+        Buffer.alloc(rowBytes * height),
+      );
+
+    // Four rows each: 128 px * 2 bytes * 4 rows is exactly the tile budget HELLO promised, and
+    // a tile over that is refused rather than buffered — which this test found the hard way.
+    const run = feed(Buffer.concat([band(40, 4), band(96, 4), encodeCommit(2)]));
+    assert.equal(run.status, 0, run.events.join(", "));
+    // 40 through 99: the union of both tiles, which is what a panel push has to cover.
+    assert.ok(
+      run.events.includes("commit 1 rows 40-99"),
+      `expected the union of both bands, got ${JSON.stringify(run.events)}`,
+    );
+  });
+
+  test("a full repaint reports the whole panel, and the band resets between frames", async () => {
+    // A first paint has nothing to diff against, so it must report every row. The second frame must
+    // not inherit the first one's band — that bug would show up as a device forever repainting a
+    // region that stopped changing.
+    const { link, device } = await connect();
+    await device.paint(frameFor({ kind: "tile", emphasis: "ground", label: "one" }));
+    const first = feed(link.written());
+    assert.ok(
+      first.events.includes(`commit 1 rows 0-${HELLO.height - 1}`),
+      `a full repaint covers the panel, got ${JSON.stringify(first.events)}`,
+    );
+
+    const rowBytes = HELLO.width * 2;
+    const after = feed(
+      Buffer.concat([
+        link.written(),
+        encodeTile(
+          9,
+          { x: 0, y: 8, width: HELLO.width, height: 4 },
+          TileEncoding.Raw,
+          Buffer.alloc(rowBytes * 4),
+        ),
+        encodeCommit(10),
+      ]),
+    );
+    assert.equal(after.commits, 2);
+    assert.ok(
+      after.events.includes("commit 2 rows 8-11"),
+      `the second frame reports only its own rows, got ${JSON.stringify(after.events)}`,
+    );
     await device.close();
   });
 
@@ -386,7 +448,7 @@ describe("firmware conformance", { skip: !compilerAvailable() || !rasteriserAvai
     const run = feed(Buffer.concat([noise, link.written()]));
 
     assert.equal(run.status, 0, `expected a clean stream, got ${run.events.join(", ")}`);
-    assert.ok(run.events.includes("commit 1"));
+    assert.equal(run.commits, 1);
     const expected = await expectedPixels(surface);
     assert.equal(Buffer.compare(run.framebuffer, expected), 0, "the frame behind the noise is intact");
     await device.close();

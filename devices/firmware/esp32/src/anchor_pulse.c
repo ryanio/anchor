@@ -178,6 +178,16 @@ static anchor_fault_t handle_tile(anchor_pulse_t *ap, const uint8_t *payload, ui
   if ((uint32_t)x + (uint32_t)w > (uint32_t)ap->width) return ANCHOR_FAULT_RECT;
   if ((uint32_t)y + (uint32_t)h > (uint32_t)ap->height) return ANCHOR_FAULT_RECT;
 
+  /* Remember the band for the panel push. See `dirty_top` in the header for why rows, not rects. */
+  if (!ap->has_dirty) {
+    ap->dirty_top = y;
+    ap->dirty_bottom = (uint16_t)(y + h - 1);
+    ap->has_dirty = 1;
+  } else {
+    if (y < ap->dirty_top) ap->dirty_top = y;
+    if ((uint16_t)(y + h - 1) > ap->dirty_bottom) ap->dirty_bottom = (uint16_t)(y + h - 1);
+  }
+
   tile_cursor_t cursor;
   cursor_begin(&cursor, ap, x, y, w, h);
 
@@ -214,7 +224,10 @@ static anchor_fault_t dispatch(anchor_pulse_t *ap) {
     case ANCHOR_MSG_TILE:
       return handle_tile(ap, payload, len);
     case ANCHOR_MSG_COMMIT:
+      /* The band is live for the duration of the callback and cleared after it, so a present that
+       * pushes only what changed cannot accidentally reuse a stale one on the next frame. */
       if (ap->sink.present != NULL) ap->sink.present(ap->sink.ctx);
+      ap->has_dirty = 0;
       return ANCHOR_OK;
     case ANCHOR_MSG_BRIGHTNESS: {
       if (len < 1u) return ANCHOR_FAULT_SHORT;

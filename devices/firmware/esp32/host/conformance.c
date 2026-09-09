@@ -47,7 +47,12 @@ static void on_present(void *ctx) {
   h->commits++;
   /* Written on every COMMIT, so the file always holds a frame that was actually presented. */
   dump_framebuffer(h);
-  printf("commit %d\n", h->commits);
+  /* The dirty band is only valid inside this callback — the decoder clears it on return. */
+  if (h->ap->has_dirty) {
+    printf("commit %d rows %u-%u\n", h->commits, h->ap->dirty_top, h->ap->dirty_bottom);
+  } else {
+    printf("commit %d rows none\n", h->commits);
+  }
 }
 
 static void on_ready(void *ctx, const anchor_ready_t *r) {
