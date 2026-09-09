@@ -169,8 +169,12 @@ test("the full mark is taller than it is wide, which is why the bar cannot use i
   assert.ok(b.x1 - b.x0 < b.y1 - b.y0);
 });
 
-test("the bar asks for the square variant", () => {
-  const pulse = read("widget/Pulse.qml");
-  const bar = pulse.slice(0, pulse.indexOf("PanelHero"));
-  assert.match(bar, /AnchorMark \{[\s\S]*?compact: true/);
+test("the bar asks for the square variant, and the panel does not", () => {
+  // Pulse.qml draws the bar item; PanelContent.qml is the panel, where the mark has room and takes
+  // the full artwork. Slicing one file for "the part before the panel" was how this was written
+  // before the split, and it silently stopped checking anything the moment the panel moved out.
+  assert.match(read("widget/Pulse.qml"), /AnchorMark \{[\s\S]*?compact: true/);
+  const panel = read("widget/PanelContent.qml");
+  assert.match(panel, /AnchorMark \{/);
+  assert.doesNotMatch(panel, /compact:\s*true/);
 });
