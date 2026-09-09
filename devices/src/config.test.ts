@@ -130,7 +130,17 @@ describe("the packaged default config", () => {
   });
 
   test("every page action names a verb the dispatcher knows", () => {
-    const known = new Set(["omarchy", "hypr", "exec", "page", "volume", "brightness", "theme", "noop"]);
+    const known = new Set([
+      "omarchy",
+      "hypr",
+      "workspace",
+      "exec",
+      "page",
+      "volume",
+      "brightness",
+      "theme",
+      "noop",
+    ]);
     const { config } = loadConfig();
     for (const page of config.pages) {
       for (const key of page.keys) {

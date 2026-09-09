@@ -132,7 +132,9 @@ export const SEGMENT_SOURCES: Readonly<Record<string, (state: PanelState, page: 
   volume: ({ desktop }) => (desktop.muted ? "muted" : `${Math.round(desktop.volume * 100)}%`),
   brightness: ({ desktop }) => (desktop.brightness === null ? "—" : `${desktop.brightness}%`),
   cpu: ({ desktop }) => (desktop.cpu === "" ? "—" : `cpu ${desktop.cpu}`),
-  memory: ({ desktop }) => (desktop.memory === "" ? "—" : desktop.memory),
+  // `omarchy system stats` reports "6.7GB / 15GB". The total is fixed and knowable; on a strip
+  // competing for width, the half that changes is the half worth showing.
+  memory: ({ desktop }) => (desktop.memory === "" ? "—" : (desktop.memory.split("/")[0] ?? "").trim()),
   // Reports the palette actually being painted, not the desktop's setting. Normally identical; they
   // differ under `--theme`, and a preview that names a theme it is not wearing misleads the review.
   theme: ({ themeName, desktop }) => themeName || desktop.theme || "—",

@@ -96,3 +96,22 @@ describe("resolveActive", () => {
     assert.equal(resolveActive("workspace:notanumber", SNAPSHOT, "desktop"), false);
   });
 });
+
+describe("workspace actions speak Hyprland 0.56's Lua", () => {
+  const context = { setPage: () => {} };
+
+  test("`workspace N` is a known verb", () => {
+    assert.equal(dispatch("workspace 3", context), true);
+  });
+
+  test("`workspace` with no target is refused rather than defaulted", () => {
+    assert.equal(dispatch("workspace", context), false);
+  });
+
+  test("raw `hypr` still passes a Lua expression through", () => {
+    // Hyprland wraps the argument in `return hl.dispatch(...)`, so the old argv form
+    // `dispatch("workspace", "3")` became the Lua syntax error `hl.dispatch(workspace 3)`.
+    assert.equal(dispatch("hypr hl.dsp.window.close()", context), true);
+    assert.equal(dispatch("hypr", context), false);
+  });
+});

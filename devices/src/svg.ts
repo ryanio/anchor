@@ -170,9 +170,19 @@ function renderBar(surface: Extract<Surface, { kind: "bar" }>, tokens: Tokens, s
     `<rect width="${w}" height="2" fill="${tokens.accent}"/>`,
   ];
 
+  // A segment needs room to say something. Ellipsising "Catppuccin" down to "Catp…" spends the
+  // pixels and communicates nothing, so a segment that cannot fit a legible minimum is dropped
+  // instead — the same judgement the list surface makes about a half-drawn row.
+  const MIN_LEGIBLE_CHARS = 6;
   let x = 22;
   for (const segment of surface.segments) {
-    if (x > w - 60) break;
+    const iconRoom = segment.icon ? cellWidth(segment.icon, iconSize) : 0;
+    const room = w - x - iconRoom - 30;
+    const needed = Math.min(
+      advance(segment.text, textSize),
+      advance("x".repeat(MIN_LEGIBLE_CHARS), textSize),
+    );
+    if (room < needed) break;
     if (segment.icon) {
       parts.push(
         `<text x="${x}" y="${h / 2}" font-family="monospace" font-size="${iconSize}" ` +
