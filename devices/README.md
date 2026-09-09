@@ -7,6 +7,16 @@ are the reason the layer exists at all.
 `package.json` and its only runtime dependency lives here, so `npm ci` at the repo root does not
 pull a USB HID binding onto a machine with nothing plugged in.
 
+## What it needs
+
+**ImageMagick**, as a system package — `magick` (7) or `convert` (6). Key faces are drawn as SVG and
+rasterised, so without it a device paints nothing. It is not an npm dependency and cannot be: it is
+a binary, and the whole point of this workspace is that its npm side stays a single USB HID binding.
+
+```bash
+omarchy pkg add imagemagick     # or: sudo pacman -S imagemagick
+```
+
 ## Try it
 
 ```bash
