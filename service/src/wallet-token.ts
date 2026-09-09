@@ -26,7 +26,7 @@
  */
 
 import type { ChainIdentifier } from "@opensea/api-types";
-import { decodeJwtPayload, extractWalletAddress } from "@opensea/sdk";
+import { decodeJwtPayload, extractLinkedWallets, extractWalletAddress } from "@opensea/sdk";
 import { addressMatchesChain } from "./chains.ts";
 import { looksLikeCredential } from "./keyring.ts";
 
@@ -188,18 +188,31 @@ export function describeTokenShape(token: string): TokenShape {
  * declared a dead end without following the exchange the service already performs for every
  * wallet-scoped read.
  *
- * The primary wallet comes first, then linked ones, filtered to the configured chains — a Solana
- * address on an EVM-only config is dropped rather than failing validation at startup.
+ * The set comes from the SDK's `extractLinkedWallets`, which reads the claim and is the authority
+ * on its shape. Two things are still ours, and both are why this function did not simply go away:
+ *
+ *   **Order.** `wallets[0]` is the primary wallet, and the two routes that cannot fan out —
+ *   `/portfolio/history` and the NFT list — read it. `linked_wallets` already contains the token's
+ *   own wallet, so this reorders rather than adds; combining the two lists would double-count the
+ *   primary, which the SDK's own documentation warns about.
+ *
+ *   **Chains.** A Solana address on an EVM-only config is dropped rather than failing validation at
+ *   startup. The SDK deliberately applies no format validation, leaving that to the server — here,
+ *   the server is us.
  */
-export function walletsFromClaims(
-  claims: Record<string, unknown>,
-  chains: readonly ChainIdentifier[],
-): string[] {
-  const primary = extractWalletAddress(claims);
-  const linked = claims.linked_wallets;
+export function walletsFromToken(accessToken: string, chains: readonly ChainIdentifier[]): string[] {
+  // `extractLinkedWallets` answers `[]` for anything that is not a JWT; `decodeJwtPayload` throws.
+  // The exchange endpoint is not ours and a startup path must degrade rather than crash, so the
+  // primary lookup is guarded to match the SDK's tolerance rather than undo it.
+  let primary: string | undefined;
+  try {
+    primary = extractWalletAddress(decodeJwtPayload(accessToken));
+  } catch {
+    primary = undefined;
+  }
   const candidates = [
     ...(typeof primary === "string" ? [primary] : []),
-    ...(Array.isArray(linked) ? linked.filter((w): w is string => typeof w === "string") : []),
+    ...extractLinkedWallets(accessToken),
   ];
 
   const seen = new Set<string>();

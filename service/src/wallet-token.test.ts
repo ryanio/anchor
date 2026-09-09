@@ -9,7 +9,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import type { ChainIdentifier } from "@opensea/api-types";
-import { describeTokenShape, resolveWallets, walletFromToken, walletsFromClaims } from "./wallet-token.ts";
+import { describeTokenShape, resolveWallets, walletFromToken, walletsFromToken } from "./wallet-token.ts";
 
 /** Public identifiers, not credentials: OpenSea's Seaport conduit and Wrapped SOL. */
 const EVM = "0x1E0049783F008A0085193E00003D00cd54003c71";
@@ -160,37 +160,46 @@ describe("describeTokenShape", () => {
   });
 });
 
-describe("walletsFromClaims", () => {
-  /** The claim shape an exchanged access token actually carries, measured 2026-09-08. */
-  const claims = {
+describe("walletsFromToken", () => {
+  /**
+   * The claim shape an exchanged access token actually carries, measured 2026-09-08.
+   *
+   * `linked_wallets` already contains the token's own wallet — the SDK documents that, and the
+   * fixture reflects it. Reading both claims and concatenating without a dedupe would count the
+   * primary twice, which is the trap the SDK's own doc comment warns about.
+   */
+  const token = jwt({
     wallet: EVM,
     linked_wallets: ["0x0000000000000000000000000000000000000009", SOL, EVM],
-  };
+  });
 
   test("puts the authenticated wallet first, then the linked ones", () => {
-    const wallets = walletsFromClaims(claims, ETHEREUM);
+    // Order is ours to keep: `wallets[0]` is the primary, and the two routes that cannot fan out —
+    // `/portfolio/history` and the NFT list — read it.
+    const wallets = walletsFromToken(token, ETHEREUM);
     assert.equal(wallets[0], EVM, "the `wallet` claim is the primary");
     assert.equal(wallets.length, 2);
   });
 
   test("drops wallets for chains that are not configured", () => {
-    // A Solana address on an EVM-only config would fail `assertAddressForChains` at startup.
-    assert.equal(walletsFromClaims(claims, ETHEREUM).includes(SOL), false);
-    assert.deepEqual(walletsFromClaims(claims, SOLANA), [SOL]);
+    // A Solana address on an EVM-only config would fail `assertAddressForChains` at startup. The
+    // SDK deliberately applies no format validation and leaves this to the server; here that is us.
+    assert.equal(walletsFromToken(token, ETHEREUM).includes(SOL), false);
+    assert.deepEqual(walletsFromToken(token, SOLANA), [SOL]);
   });
 
   test("de-duplicates, case-insensitively", () => {
-    const dup = { wallet: EVM, linked_wallets: [EVM.toLowerCase(), EVM.toUpperCase().replace("0X", "0x")] };
-    assert.equal(walletsFromClaims(dup, ETHEREUM).length, 1);
+    const dup = jwt({
+      wallet: EVM,
+      linked_wallets: [EVM.toLowerCase(), EVM.toUpperCase().replace("0X", "0x")],
+    });
+    assert.equal(walletsFromToken(dup, ETHEREUM).length, 1);
   });
 
-  test("returns nothing rather than throwing on claims that carry no wallets", () => {
-    assert.deepEqual(walletsFromClaims({}, ETHEREUM), []);
-    assert.deepEqual(walletsFromClaims({ linked_wallets: "not-an-array" }, ETHEREUM), []);
-    assert.deepEqual(walletsFromClaims({ linked_wallets: [1, null, {}] }, ETHEREUM), []);
-  });
-
-  test("never reads `sub` as a wallet, even here", () => {
-    assert.deepEqual(walletsFromClaims({ sub: EVM }, ETHEREUM), []);
+  test("returns nothing rather than throwing on a token that carries no wallets", () => {
+    assert.deepEqual(walletsFromToken(jwt({}), ETHEREUM), []);
+    assert.deepEqual(walletsFromToken(jwt({ linked_wallets: "not-an-array" }), ETHEREUM), []);
+    assert.deepEqual(walletsFromToken(jwt({ linked_wallets: [1, null, {}] }), ETHEREUM), []);
+    assert.deepEqual(walletsFromToken("not-a-jwt", ETHEREUM), []);
   });
 });

@@ -17,7 +17,7 @@ import { getApiKey, getPat, keyringAvailable, looksLikeCredential, setApiKey, se
 import { OpenSeaClient } from "./opensea.ts";
 import { createApp, HOST } from "./server.ts";
 import { installService, uninstallService } from "./unit.ts";
-import { describeTokenShape, resolveWallets, walletsFromClaims } from "./wallet-token.ts";
+import { describeTokenShape, resolveWallets, walletsFromToken } from "./wallet-token.ts";
 
 /** `/health` may be polled once a second; spawning secret-tool that often is not free. */
 const CREDENTIAL_CACHE_MS = 30_000;
@@ -173,7 +173,7 @@ async function main(): Promise<void> {
     try {
       const accessToken = await new WalletTokenProvider({ getPat }).token();
       if (accessToken !== null) {
-        const wallets = walletsFromClaims(decodeJwtPayload(accessToken), configured.chains);
+        const wallets = walletsFromToken(accessToken, configured.chains);
         if (wallets.length > 0) {
           resolvedWallets = { wallets, source: "token", detail: "" };
         }

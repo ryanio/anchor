@@ -17,7 +17,7 @@
 
 import assert from "node:assert/strict";
 import { generateKeyPairSync, verify } from "node:crypto";
-import { after, describe, test } from "node:test";
+import { describe, test } from "node:test";
 import { PrivySvmAdapter } from "@opensea/wallet-adapters";
 import type { ApprovedAction, Denied, PolicyDecision } from "./decision.ts";
 import { PolicyBoundExecutor } from "./executor.ts";
@@ -1040,16 +1040,9 @@ describe("the Solana signer reads the transaction before it signs it", () => {
     return Uint8Array.from(bytes);
   }
 
-  /**
-   * The signing half is `PrivySvmAdapter` now, and it calls the global `fetch` rather than one
-   * handed to it. So the stub is installed globally for these tests and restored after — which is
-   * also what keeps them offline. The policy half still takes an injected `fetchImpl`, because
-   * `PrivyClient` is still ours: the adapter deliberately exposes no policy mutation.
-   */
-  const realFetch = globalThis.fetch;
-  after(() => {
-    globalThis.fetch = realFetch;
-  });
+  // Both halves take an injected `fetchImpl` now — `wallet-adapters` 1.2.0 added one, so these
+  // tests no longer replace `globalThis.fetch` and restore it afterwards. A test that reaches for a
+  // global is a test that can leak into the one after it.
 
   async function solanaHarness(serialized: Uint8Array) {
     const c = clock();
@@ -1058,7 +1051,6 @@ describe("the Solana signer reads the transaction before it signs it", () => {
       if (call.method === "GET") return json(document);
       return json({ method: "signAndSendTransaction", data: { hash: SOL_SIGNATURE } });
     });
-    globalThis.fetch = impl;
     const api = new PrivyClient({
       appId: APP_ID,
       appSecret: APP_SECRET,
@@ -1073,7 +1065,12 @@ describe("the Solana signer reads the transaction before it signs it", () => {
       now: c.now,
     });
     const signer = new PrivySolanaSigner({
-      adapter: new PrivySvmAdapter({ appId: APP_ID, appSecret: APP_SECRET, walletId: SOL_WALLET_ID }),
+      adapter: new PrivySvmAdapter({
+        appId: APP_ID,
+        appSecret: APP_SECRET,
+        walletId: SOL_WALLET_ID,
+        fetchImpl: impl,
+      }),
       walletId: SOL_WALLET_ID,
       builder: builderOf(serialized),
       cluster: "mainnet",
