@@ -164,10 +164,13 @@ export const KEY_SOURCES: Readonly<Record<string, (state: PanelState, argument: 
     if (pieces.length === 0) return { ...NOT_LOADED, label: "Gallery" };
     const piece = pieces[((rotation ?? 0) + offset) % pieces.length];
     if (piece === undefined) return { ...NOT_LOADED, label: "Gallery" };
+    const art = cachedThumbnail(piece.imageUrl);
     return {
       value: "",
-      label: piece.name || piece.collection || "Untitled",
-      image: cachedThumbnail(piece.imageUrl) ?? undefined,
+      // No caption once the art is here: a title over a picture is a label on a painting, and the
+      // key is 120px. Until the art arrives the name is all there is, so it stands in.
+      label: art === null ? piece.name || piece.collection || "Untitled" : "",
+      image: art ?? undefined,
     };
   },
   chain: ({ portfolio }, argument) => {

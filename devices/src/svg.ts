@@ -194,8 +194,9 @@ function renderTile(surface: Extract<Surface, { kind: "tile" }>, tokens: Tokens,
     );
   }
   if (hasImage) {
-    // Clipped to the tile's own radius so the art sits in the key rather than on it, with a scrim
-    // so a label stays readable over a bright piece.
+    // Clipped to the tile's own radius so the art sits in the key rather than on it. The scrim only
+    // appears when there is a label to protect: a piece with no caption gets the whole key, which
+    // is the point of putting art on hardware at all.
     const id = `art${Math.abs(hashString(surface.image ?? ""))}`;
     parts.push(
       `<defs><clipPath id="${id}"><rect x="3.5" y="3.5" width="${w - 7}" height="${h - 7}" rx="14"/></clipPath>` +
@@ -203,10 +204,13 @@ function renderTile(surface: Extract<Surface, { kind: "tile" }>, tokens: Tokens,
         `<stop offset="0.45" stop-color="${tokens.sunken}" stop-opacity="0"/>` +
         `<stop offset="1" stop-color="${tokens.sunken}" stop-opacity="0.92"/></linearGradient></defs>`,
     );
+    const scrim =
+      surface.label === undefined || surface.label === ""
+        ? ""
+        : `<rect x="3.5" y="3.5" width="${w - 7}" height="${h - 7}" fill="url(#${id}s)"/>`;
     parts.push(
       `<g clip-path="url(#${id})"><image href="${surface.image}" x="3.5" y="3.5" width="${w - 7}" ` +
-        `height="${h - 7}" preserveAspectRatio="xMidYMid slice"/>` +
-        `<rect x="3.5" y="3.5" width="${w - 7}" height="${h - 7}" fill="url(#${id}s)"/></g>`,
+        `height="${h - 7}" preserveAspectRatio="xMidYMid slice"/>${scrim}</g>`,
     );
   }
 
