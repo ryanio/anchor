@@ -418,114 +418,19 @@ Panel {
       else root.toggle()
     }
 
-    Row {
+    BarItem {
       id: content
       anchors.centerIn: parent
-      spacing: Style.space(5)
 
-      AnchorMark {
-        anchors.verticalCenter: parent.verticalCenter
-        // The square variant, because a bar breaks the full mark two ways. It is 32×45 on its own
-        // grid, so fitted to a slot it drew 10×12 — the one tall, narrow thing in the row — and at
-        // this size its stroke computed to 0.93 device pixels, under one, so it antialiased to
-        // grey. `compact` swaps in the top of the anchor on square 36×36 bounds at stroke 6: it
-        // fills the slot in both directions and draws 1.57 pixels.
-        //
-        // `iconSize` is the mark's DRAWN size, not a canvas it sits inside: AnchorMark fits the
-        // artwork to this number, and with the square variant both dimensions bind at once.
-        //
-        // Every neighbour is a Nerd Font glyph in a `Style.bar.iconCanvas` slot, and a glyph draws
-        // to roughly its cap height inside that slot. Measured off the running bar, tray, monitor,
-        // grid, bluetooth and network draw 9–11px inside a 16px canvas. So the canvas is scaled by
-        // the fraction a glyph actually fills, and the mark lands at 11 — the top of the range.
-        // The full mark used to take 12 to compensate for being narrow; square, it no longer has
-        // to, and the row is even.
-        //
-        // Raising `strokeUnits` to compensate for the smaller size was tried and reverted — it
-        // moved two pixels on screen, and the apparent thinness was the deliberate dim of the
-        // "service not running" state rather than the stroke.
-        compact: true
-        iconSize: Math.round(Style.bar.iconCanvas * 0.68)
-        color: root.foreground
-        // Dimmed whenever the numbers beside it cannot be fully trusted — starting up, offline,
-        // stale, or not yet configured. This is the widget's whole first impression on a fresh
-        // install: present, legible, obviously not finished, and never alarming.
-        opacity: root.label.dim ? root.dimOpacity : 1
-      }
-
-      // A vertical bar is 28px wide, so the numbers do not fit. The mark stays, and a single dot
-      // says there is something to look at — the panel is one click away.
-      Rectangle {
-        anchors.verticalCenter: parent.verticalCenter
-        visible: root.vertical
-          && ((root.config.showOffers && root.label.offers > 0)
-            || (root.config.showDeadline && root.label.deadline !== ""))
-        width: Style.space(4)
-        height: width
-        radius: width / 2
-        color: root.label.attention ? root.urgent : root.foreground
-      }
-
-      Text {
-        anchors.verticalCenter: parent.verticalCenter
-        visible: !root.vertical && root.label.value !== ""
-        textFormat: Text.PlainText
-        text: root.label.value
-        color: root.label.dim ? root.dim : root.foreground
-        font.family: root.fontFamily
-        font.pixelSize: Style.font.body
-        renderType: Text.NativeRendering
-      }
-
-      Text {
-        anchors.verticalCenter: parent.verticalCenter
-        visible: !root.vertical && root.config.showChange && root.label.change !== null && root.label.change.arrow !== ""
-        textFormat: Text.PlainText
-        // Direction is an arrow, not a colour: red and green fight every theme on the desktop and
-        // vanish entirely for a red-green colour-blind reader. The arrow works in both cases.
-        text: root.label.change === null ? "" : root.label.change.arrow + root.label.change.text
-        color: root.dim
-        font.family: root.fontFamily
-        font.pixelSize: Style.font.caption
-        renderType: Text.NativeRendering
-      }
-
-      Text {
-        anchors.verticalCenter: parent.verticalCenter
-        visible: !root.vertical && root.config.showOffers && root.label.offers > 0
-        textFormat: Text.PlainText
-        text: "◆" + root.label.offers
-        color: root.foreground
-        font.family: root.fontFamily
-        font.pixelSize: Style.font.caption
-        renderType: Text.NativeRendering
-      }
-
-      Text {
-        anchors.verticalCenter: parent.verticalCenter
-        visible: !root.vertical && root.config.showDeadline && root.label.deadline !== ""
-        textFormat: Text.PlainText
-        text: "◷" + root.label.deadline
-        // The only place the theme's attention colour is used, and only for a decision whose
-        // window is actually closing. A bar that is always urgent is a bar nobody reads.
-        color: root.label.attention ? root.urgent : root.dim
-        font.family: root.fontFamily
-        font.pixelSize: Style.font.caption
-        renderType: Text.NativeRendering
-      }
-
-      // Activity is the quietest thing on the bar because it needs no decision — it only says
-      // something happened. Two characters, dimmed, and absent entirely when nothing has.
-      Text {
-        anchors.verticalCenter: parent.verticalCenter
-        visible: !root.vertical && root.config.showActivity && root.label.activity > 0
-        textFormat: Text.PlainText
-        text: "·" + root.label.activity
-        color: root.dim
-        font.family: root.fontFamily
-        font.pixelSize: Style.font.caption
-        renderType: Text.NativeRendering
-      }
+      reading: root.state
+      config: root.config
+      nowMs: root.nowMs
+      vertical: root.vertical
+      foreground: root.foreground
+      urgent: root.urgent
+      dim: root.dim
+      dimOpacity: root.dimOpacity
+      fontFamily: root.fontFamily
     }
   }
 

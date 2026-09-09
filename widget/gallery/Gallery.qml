@@ -1,6 +1,7 @@
 import QtQuick
 import Quickshell
 import qs.Commons
+import qs.Ui
 import "states.js" as States
 import "PulseModel.js" as Model
 
@@ -22,7 +23,15 @@ import "PulseModel.js" as Model
 ShellRoot {
   id: harness
 
-  readonly property var cases: States.CASES
+  // Panels first, then bar items. One list, so the harness advances through both without knowing
+  // which is which beyond the size of the frame it grabs.
+  readonly property var cases: {
+    const all = []
+    for (const c of States.CASES) all.push(Object.assign({ kind: "panel" }, c))
+    for (const c of States.BAR_CASES) all.push(Object.assign({ kind: "bar" }, c))
+    return all
+  }
+  readonly property var currentCase: cases[index]
   readonly property string outDir: Quickshell.env("ANCHOR_GALLERY_OUT") || "/tmp/anchor-gallery"
   property int index: 0
   property bool grabbing: false
@@ -39,28 +48,49 @@ ShellRoot {
     // run of this made 1892px wide. The shot has to be the panel's size, not the window's.
     Rectangle {
       id: card
-      color: panel.panelGround
-      // The real panel is 360 wide with 14 of padding, in `Style.space` units so it follows the
-      // user's font size the way the live one does rather than being 360 physical pixels here.
+      color: harness.currentCase.kind === "bar" ? "#16181d" : panel.panelGround
       readonly property int pad: Style.space(14)
-      width: Style.space(360) + pad * 2
-      height: panel.implicitHeight + pad * 2
+      width: harness.currentCase.kind === "bar" ? Style.space(300) : Style.space(360) + pad * 2
+      height: harness.currentCase.kind === "bar" ? barStrip.height : panel.implicitHeight + pad * 2
+
+      // The bar's own ground and the bar's own height, because a bar item reviewed on a card
+      // background is a bar item reviewed in a place it never is.
+      Item {
+        id: barStrip
+        anchors.horizontalCenter: parent.horizontalCenter
+        width: parent.width
+        height: Style.bar.height > 0 ? Style.bar.height : Style.space(26)
+        visible: harness.currentCase.kind === "bar"
+
+        BarItem {
+          anchors.centerIn: parent
+          reading: harness.currentCase.reading
+          config: Model.mergeSettings(harness.currentCase.settings || {})
+          nowMs: States.NOW
+          vertical: harness.currentCase.vertical === true
+          foreground: "#e6e9ef"
+          urgent: Color.urgent
+          // The live widget derives these from the theme's contrast; here they are the values that
+          // derivation lands on for a dark bar, so a review sees the dim it actually ships.
+          dim: Qt.rgba(0.902, 0.914, 0.937, 0.55)
+          dimOpacity: 0.55
+        }
+      }
 
       PanelContent {
         id: panel
         x: card.pad
         y: card.pad
         width: Style.space(360)
+        visible: harness.currentCase.kind === "panel"
 
-        readonly property var currentCase: harness.cases[harness.index]
-
-        reading: currentCase.reading
-        config: Model.mergeSettings(currentCase.settings || {})
+        reading: harness.currentCase.reading
+        config: Model.mergeSettings(harness.currentCase.settings || {})
         // Fixed, not `Date.now()`: a countdown that moves between two runs makes every shot differ
         // and fills the review page with diffs that are only the clock.
         nowMs: States.NOW
-        detailsOpen: (currentCase.view && currentCase.view.detailsOpen) === true
-        optionalOpen: (currentCase.view && currentCase.view.optionalOpen) === true
+        detailsOpen: (harness.currentCase.view && harness.currentCase.view.detailsOpen) === true
+        optionalOpen: (harness.currentCase.view && harness.currentCase.view.optionalOpen) === true
         // Nothing to animate towards in a still.
         animate: false
       }
@@ -76,9 +106,11 @@ ShellRoot {
       onTriggered: {
         if (harness.grabbing) return
         harness.grabbing = true
-        const id = harness.cases[harness.index].id
+        const c = harness.cases[harness.index]
+        const sub = c.kind === "bar" ? "bar/" : "panel/"
+        const id = c.id
         card.grabToImage(function (result) {
-          const ok = result.saveToFile(harness.outDir + "/" + id + ".png")
+          const ok = result.saveToFile(harness.outDir + "/" + sub + id + ".png")
           console.log(ok ? "captured " + id : "FAILED " + id)
           if (harness.index + 1 >= harness.cases.length) {
             tick.running = false
