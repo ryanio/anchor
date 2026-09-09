@@ -170,6 +170,12 @@ expect to merge `origin/main` before pushing.
 **Branch and PR. Never push to `main`, never force-push a published branch.** Merge `origin/main` into
 your branch rather than rebasing once it is pushed.
 
+**A new workspace is not tested until CI runs it.** `devices/` landed with 188 tests that CI never
+ran, and `check-versions.ts` skipped its engines and its version — both because the workspace list
+was written out by hand, directly under a comment saying a new workspace must not create a drift
+hole. That list is now derived from the directories on disk. Add a workspace and CI picks it up;
+the `.github/workflows/ci.yml` install and test steps are still by name, so add yours there.
+
 **Verify, do not report.** An agent once concluded with "CI: pass" when CI had failed. Check the actual
 run — `gh pr checks <n>` — before claiming a state, and treat another agent's summary as a claim to
 test, not a fact to repeat. This applies to your own work most of all: the typecheck that "obviously"
