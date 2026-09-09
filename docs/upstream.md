@@ -343,6 +343,25 @@ for a smaller diff.
 forwarded as the header would close it, and `PrivySolanaSigner` becomes a thin wrapper over the
 adapter. `signTransaction` needs nothing — it does not broadcast, so it has nothing to make idempotent.
 
+## 13. No per-collection holdings value
+
+**Upstream problem.** Anchor can show what a portfolio is worth by type, by wallet, by asset and by
+chain. It cannot show it **by collection**, which is the split an NFT holder asks for first.
+
+What the API offers is a floor price per collection (`/collections/{slug}/stats`) and a paginated
+NFT list per account. Value per collection would have to be *count × floor* — an estimate, and one
+that would sit in a column beside figures that are not estimates. `/account/{address}/portfolio`
+returns `nftValueUsd` as a single number; nothing breaks it down.
+
+**What we wrote.** Nothing, deliberately. The breakdown tabs are `type`, `wallets`, `assets`,
+`chains`, and a `collections` tab is absent rather than approximated. `docs/tokens.md` sets out the
+same rule for chain splits of NFT value: inventing a plausible number from what is available is
+exactly what this widget exists not to do.
+
+**When it's fixed.** A per-collection value in the portfolio response — or a documented
+`group_by=collection` on it — becomes a fifth tab and about thirty lines of model code. The rendering
+is already there; only the number is missing.
+
 ## Reporting
 
 The full write-up handed to OpenSea on 2026-09-07 covers eight findings, of which findings 1-6 above
