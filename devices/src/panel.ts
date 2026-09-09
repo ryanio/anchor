@@ -10,13 +10,7 @@
 import * as actions from "./actions.ts";
 import type { PageConfig, PanelConfig } from "./config.ts";
 import type { ServiceStatus } from "./state/anchor.ts";
-import {
-  describeAge,
-  EMPTY_PORTFOLIO,
-  type PortfolioSnapshot,
-  TIMEFRAMES,
-  type Timeframe,
-} from "./state/anchor.ts";
+import { describeAge, type PortfolioSnapshot, TIMEFRAMES, type Timeframe } from "./state/anchor.ts";
 import type { DesktopSnapshot } from "./state/desktop.ts";
 import type { Tokens } from "./tokens.ts";
 import type { AnchorDevice, BarSegment, DeviceInput, Frame, ListRow, Surface, TokenName } from "./types.ts";
