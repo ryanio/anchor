@@ -211,8 +211,13 @@ async function main(): Promise<void> {
     process.exit(0);
   }
 
+  let deckBrightness = panel.deckBrightness;
   device.onInput((input) => {
     if (!panel.handle(input)) return;
+    if (panel.deckBrightness !== deckBrightness) {
+      deckBrightness = panel.deckBrightness;
+      void device.setBrightness(deckBrightness);
+    }
     // A page switch or a timeframe scrub changes what data is wanted, so ask before repainting.
     void refreshPortfolio().then(() => repaint());
   });

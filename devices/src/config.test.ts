@@ -78,7 +78,7 @@ describe("the packaged default config", () => {
     const { config } = loadConfig();
     assert.deepEqual(
       config.pages.map((page) => page.name),
-      ["desktop", "portfolio", "anchor"],
+      ["desktop", "portfolio", "chains", "anchor"],
     );
   });
 

@@ -29,6 +29,8 @@ export interface KeyReading {
   readonly value: string;
   readonly label?: string;
   readonly tone?: TokenName;
+  readonly spark?: readonly number[];
+  readonly slices?: readonly { readonly value: number; readonly tone?: TokenName }[];
 }
 
 /**
@@ -86,10 +88,70 @@ export const KEY_SOURCES: Readonly<Record<string, (state: PanelState, argument: 
   }),
   token: ({ portfolio }, argument) => {
     const rank = Math.max(1, Number.parseInt(argument || "1", 10));
-    const holding = portfolio?.tokens[rank - 1];
+    const holdings = portfolio?.tokens ?? [];
+    const holding = holdings[rank - 1];
     // Keep the caption when there is no holding, so an empty page still says what each key is for.
     if (holding === undefined) return { ...NOT_LOADED, label: `Top ${rank}` };
-    return { value: usd(String(holding.usdValue)), label: holding.symbol };
+    // Across 29 chains the same ticker appears repeatedly — three keys reading "ETH" name nothing.
+    // The chain is only added when the symbol is actually ambiguous, so the common case stays short.
+    const ambiguous = holdings.filter((other) => other.symbol === holding.symbol).length > 1;
+    const label = ambiguous && holding.chain !== "" ? `${holding.symbol}·${holding.chain}` : holding.symbol;
+    return { value: usd(String(holding.usdValue)), label };
+  },
+  "portfolio.spark": ({ portfolio, timeframe }) => {
+    const pnl = portfolio?.stats?.pnlPercentage ?? null;
+    return {
+      value: usd(portfolio?.stats?.totalUsd ?? null),
+      label: (timeframe ?? "DAY").toLowerCase(),
+      tone: signTone(pnl),
+      spark: portfolio?.history,
+    };
+  },
+  "portfolio.pnlSpark": ({ portfolio, timeframe }) => {
+    const pnl = portfolio?.stats?.pnlPercentage ?? null;
+    return {
+      value: percent(pnl),
+      label: `P&L ${(timeframe ?? "DAY").toLowerCase()}`,
+      tone: signTone(pnl),
+      spark: portfolio?.history,
+    };
+  },
+  "portfolio.split": ({ portfolio }) => {
+    const nft = Number.parseFloat(portfolio?.stats?.nftUsd ?? "");
+    const token = Number.parseFloat(portfolio?.stats?.tokenUsd ?? "");
+    if (!Number.isFinite(nft) && !Number.isFinite(token)) return { ...NOT_LOADED, label: "Split" };
+    const total = (Number.isFinite(nft) ? nft : 0) + (Number.isFinite(token) ? token : 0);
+    const nftShare = total === 0 ? 0 : Math.round(((Number.isFinite(nft) ? nft : 0) / total) * 100);
+    return {
+      value: `${nftShare}%`,
+      label: "NFT share",
+      slices: [
+        { value: Number.isFinite(nft) ? nft : 0, tone: "accent" },
+        { value: Number.isFinite(token) ? token : 0, tone: "positive" },
+      ],
+    };
+  },
+  "portfolio.chains": ({ portfolio }) => {
+    const chains = portfolio?.chains ?? [];
+    if (chains.length === 0) return { ...NOT_LOADED, label: "Chains" };
+    return {
+      value: String(chains.length),
+      label: "Chains",
+      // Top five carry their own colour; the tail is summed so the donut still totals the portfolio.
+      slices: [
+        ...chains.slice(0, 5).map((entry) => ({ value: entry.usdValue })),
+        {
+          value: chains.slice(5).reduce((sum, entry) => sum + entry.usdValue, 0),
+          tone: "inkDim" as TokenName,
+        },
+      ],
+    };
+  },
+  chain: ({ portfolio }, argument) => {
+    const rank = Math.max(1, Number.parseInt(argument || "1", 10));
+    const entry = portfolio?.chains[rank - 1];
+    if (entry === undefined) return { ...NOT_LOADED, label: `Chain ${rank}` };
+    return { value: usd(String(entry.usdValue)), label: entry.chain };
   },
   collection: ({ portfolio }, argument) => {
     const rank = Math.max(1, Number.parseInt(argument || "1", 10));
@@ -160,6 +222,25 @@ export const SEGMENT_SOURCES: Readonly<Record<string, (state: PanelState, page: 
   },
 };
 
+/**
+ * Width to reserve per segment source, in characters.
+ *
+ * Sized to the widest realistic reading rather than the current one: cpu reaches "cpu 100%", volume
+ * reaches "muted", a workspace id can reach two digits. Sources whose width is already stable, or
+ * which sit last on the strip, are absent and simply take the room they need.
+ */
+export const SEGMENT_MIN_CHARS: Readonly<Record<string, number>> = {
+  cpu: 8,
+  memory: 7,
+  volume: 5,
+  workspace: 5,
+  brightness: 4,
+  clock: 5,
+  "anchor.total": 9,
+  "anchor.timeframe": 5,
+  "anchor.age": 9,
+};
+
 export class Panel {
   readonly #config: PanelConfig;
   #pageName: string;
@@ -168,6 +249,7 @@ export class Panel {
   #timeframe: Timeframe = "DAY";
   #selected = 0;
   #filter = "";
+  #deckBrightness = 70;
 
   constructor(config: PanelConfig, tokens: Tokens) {
     const first = config.pages[0];
@@ -194,6 +276,17 @@ export class Panel {
   /** The window the portfolio page is reporting over. Scrubbed by a dial, read by the poller. */
   get timeframe(): Timeframe {
     return this.#timeframe;
+  }
+
+  /**
+   * The device's own backlight, 0-100.
+   *
+   * Distinct from `brightness`, which is the desktop's display. On a machine used remotely the deck
+   * is the thing in the room, so its own brightness is the more useful control — and it is the one
+   * dial that needs no desktop at all.
+   */
+  get deckBrightness(): number {
+    return this.#deckBrightness;
   }
 
   /** The filter text a keyboard device has committed. Narrows rows; never dispatched. */
@@ -271,6 +364,8 @@ export class Panel {
         // itself, which is what lets `token:1` render as the symbol it happens to be today.
         label: key.label || reading?.label || undefined,
         value: reading?.value,
+        spark: reading?.spark,
+        slices: reading?.slices,
         emphasis: this.#pressed.has(id) ? "raised" : active ? "active" : "ground",
         tone: reading?.tone ?? key.tone,
       });
@@ -310,6 +405,7 @@ export class Panel {
         icon: segment.icon || undefined,
         text: (SEGMENT_SOURCES[segment.source] ?? (() => `?${segment.source}`))(state, this.#pageName),
         tone: segment.tone,
+        minChars: SEGMENT_MIN_CHARS[segment.source],
       }));
       frame.set(STRIP_SLOT, { kind: "bar", segments });
     }
@@ -352,6 +448,14 @@ export class Panel {
         }
         const dial = page.dials.find((d) => dialSlot(d.index) === input.slot);
         if (!dial) return false;
+        if (dial.control === "deck") {
+          const step = dial.step === 0 ? 5 : dial.step;
+          this.#deckBrightness = Math.min(
+            100,
+            Math.max(5, this.#deckBrightness + (input.delta > 0 ? step : -step)),
+          );
+          return true;
+        }
         if (dial.control === "timeframe") {
           // The one dial that changes what is *shown* rather than what the machine is doing. A
           // physical control over a data dimension is the thing a dial is genuinely better at than

@@ -79,6 +79,71 @@ function text(x: number, y: number, size: number, fill: string, body: string, bo
   );
 }
 
+/**
+ * A sparkline: the series scaled to its own range, not to zero.
+ *
+ * Anchoring at zero would render every real portfolio move as a flat line near the top. The range
+ * is the series' own min and max, so the shape shows the movement that actually happened; a flat
+ * series draws a centred line rather than dividing by zero.
+ */
+function sparkline(
+  points: readonly number[],
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  color: string,
+): string {
+  if (points.length < 2) return "";
+  const low = Math.min(...points);
+  const high = Math.max(...points);
+  const span = high - low;
+  const at = (value: number): number => (span === 0 ? y + h / 2 : y + h - ((value - low) / span) * h);
+  const step = w / (points.length - 1);
+  const coords = points.map((value, index) => `${(x + index * step).toFixed(1)},${at(value).toFixed(1)}`);
+  const area = `${x},${y + h} ${coords.join(" ")} ${x + w},${y + h}`;
+  return (
+    `<polygon points="${area}" fill="${color}" fill-opacity="0.18"/>` +
+    `<polyline points="${coords.join(" ")}" fill="none" stroke="${color}" stroke-width="2" ` +
+    `stroke-linejoin="round" stroke-linecap="round"/>`
+  );
+}
+
+/** A donut. Proportions only — no legend, because a 120px key has no room to lie in. */
+function donut(
+  slices: readonly { value: number; tone?: TokenName }[],
+  tokens: Tokens,
+  cx: number,
+  cy: number,
+  radius: number,
+  thickness: number,
+): string {
+  const total = slices.reduce((sum, slice) => sum + Math.max(0, slice.value), 0);
+  if (total <= 0)
+    return `<circle cx="${cx}" cy="${cy}" r="${radius}" fill="none" stroke="${tokens.line}" stroke-width="${thickness}"/>`;
+
+  const palette: TokenName[] = ["accent", "positive", "warning", "negative", "inkDim"];
+  const circumference = 2 * Math.PI * radius;
+  let offset = 0;
+  const parts = [
+    `<circle cx="${cx}" cy="${cy}" r="${radius}" fill="none" stroke="${tokens.line}" stroke-width="${thickness}"/>`,
+  ];
+  slices.forEach((slice, index) => {
+    const fraction = Math.max(0, slice.value) / total;
+    if (fraction <= 0) return;
+    const length = fraction * circumference;
+    const color = tokens[slice.tone ?? palette[index % palette.length] ?? "accent"];
+    // Dash one arc per slice and rotate it into place; simpler than arc paths and exact.
+    parts.push(
+      `<circle cx="${cx}" cy="${cy}" r="${radius}" fill="none" stroke="${color}" stroke-width="${thickness}" ` +
+        `stroke-dasharray="${length.toFixed(2)} ${(circumference - length).toFixed(2)}" ` +
+        `stroke-dashoffset="${(-offset).toFixed(2)}" transform="rotate(-90 ${cx} ${cy})"/>`,
+    );
+    offset += length;
+  });
+  return parts.join("");
+}
+
 function renderTile(surface: Extract<Surface, { kind: "tile" }>, tokens: Tokens, slot: SlotSpec): string {
   const { width: w, height: h } = slot;
   const tone = toneColor(tokens, surface.tone);
@@ -94,9 +159,11 @@ function renderTile(surface: Extract<Surface, { kind: "tile" }>, tokens: Tokens,
 
   const hasMeter = typeof surface.meter === "number";
   const hasValue = typeof surface.value === "string" && surface.value !== "";
+  const hasSpark = Array.isArray(surface.spark) && surface.spark.length > 1;
+  const hasSlices = Array.isArray(surface.slices) && surface.slices.length > 0;
   // A reading takes the middle of the tile; the icon shrinks to a marker and the label to a caption.
   const iconY = hasValue ? h * 0.2 : hasMeter ? h * 0.29 : h * 0.4;
-  const labelY = hasValue ? h * 0.78 : hasMeter ? h * 0.62 : h * 0.76;
+  const labelY = hasSpark ? h * 0.64 : hasValue ? h * 0.78 : hasMeter ? h * 0.62 : h * 0.76;
 
   if (surface.icon) {
     const iconSize = Math.round(hasValue ? h * 0.16 : h * 0.38);
@@ -111,10 +178,21 @@ function renderTile(surface: Extract<Surface, { kind: "tile" }>, tokens: Tokens,
       ),
     );
   }
+  if (hasSlices) {
+    // The donut takes the middle; a value, if any, sits inside it.
+    parts.push(donut(surface.slices ?? [], tokens, w / 2, h * 0.44, h * 0.24, Math.round(h * 0.1)));
+  }
+
   if (hasValue) {
     const value = surface.value ?? "";
-    const size = autoSize(value, w - 14, Math.round(h * 0.26), Math.round(h * 0.11));
-    parts.push(text(w / 2, h * 0.47, size, tone, value, true));
+    const maxSize = hasSlices ? Math.round(h * 0.15) : Math.round(h * 0.26);
+    const width = hasSlices ? w * 0.34 : w - 14;
+    const size = autoSize(value, width, maxSize, Math.round(h * 0.09));
+    parts.push(text(w / 2, hasSlices ? h * 0.44 : hasSpark ? h * 0.4 : h * 0.47, size, tone, value, true));
+  }
+
+  if (hasSpark) {
+    parts.push(sparkline(surface.spark ?? [], 12, h * 0.72, w - 24, h * 0.18, tone));
   }
   if (surface.label) {
     const size = Math.round(h * (hasValue ? 0.105 : 0.125));
@@ -197,7 +275,10 @@ function renderBar(surface: Extract<Surface, { kind: "bar" }>, tokens: Tokens, s
       `<text x="${x}" y="${h / 2}" font-family="monospace" font-size="${textSize}" fill="${tokens.inkStrong}" ` +
         `dominant-baseline="central">${escapeXml(body)}</text>`,
     );
-    x += advance(body, textSize) + 30;
+    // Reserve the segment's declared width so a shorter reading leaves the gap rather than closing
+    // it, and its neighbours stay put.
+    const reserved = segment.minChars === undefined ? 0 : advance("0".repeat(segment.minChars), textSize);
+    x += Math.max(advance(body, textSize), reserved) + 30;
   }
   return parts.join("");
 }

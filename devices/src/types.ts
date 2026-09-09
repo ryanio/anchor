@@ -83,6 +83,15 @@ export interface BarSegment {
   readonly icon?: string;
   readonly text: string;
   readonly tone?: TokenName;
+  /**
+   * Characters to reserve, so a changing reading does not move its neighbours.
+   *
+   * A status strip is read at a glance, and the eye finds a value by where it sits. Packing
+   * segments by their current width means `cpu 5%` ticking to `cpu 14%` shifts everything to its
+   * right by one character — every second, forever. Reserving the width a reading can grow to keeps
+   * each one in place; the text itself is not padded, only the space after it.
+   */
+  readonly minChars?: number;
 }
 
 /**
@@ -122,6 +131,16 @@ export type Surface =
       /** 0..1 draws a fill bar under the label; omit for a plain tile. */
       readonly meter?: number;
       readonly badge?: string;
+      /**
+       * A series drawn as a sparkline beneath the reading.
+       *
+       * A number says where you are; a sparkline says how you got there, in the same space. Values
+       * are raw — the renderer scales to the series' own range, because a portfolio that moved 2%
+       * should look like a 2% move against itself, not a flat line against zero.
+       */
+      readonly spark?: readonly number[];
+      /** Proportions drawn as a donut. Values are relative; the renderer normalises them. */
+      readonly slices?: readonly { readonly value: number; readonly tone?: TokenName }[];
     }
   | { readonly kind: "bar"; readonly segments: readonly BarSegment[] }
   /**

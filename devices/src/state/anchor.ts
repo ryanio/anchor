@@ -140,6 +140,14 @@ export interface TokenHolding {
   readonly symbol: string;
   readonly usdValue: number;
   readonly status: string;
+  /** The chain it is held on. A symbol alone is ambiguous once more than one chain is configured. */
+  readonly chain: string;
+}
+
+/** One chain's share of the portfolio, from token balances. */
+export interface ChainTotal {
+  readonly chain: string;
+  readonly usdValue: number;
 }
 
 export interface PortfolioSnapshot {
@@ -148,6 +156,10 @@ export interface PortfolioSnapshot {
   readonly nftCount: number | null;
   /** Holdings grouped by collection, largest first. */
   readonly topCollections: readonly { readonly slug: string; readonly count: number }[];
+  /** Net worth over the selected timeframe, oldest first. Empty when history is unavailable. */
+  readonly history: readonly number[];
+  /** Chains holding value, largest first. */
+  readonly chains: readonly ChainTotal[];
   readonly ageSeconds: number | null;
   readonly stale: boolean;
   readonly detail: string;
@@ -158,6 +170,8 @@ export const EMPTY_PORTFOLIO: PortfolioSnapshot = {
   tokens: [],
   nftCount: null,
   topCollections: [],
+  history: [],
+  chains: [],
   ageSeconds: null,
   stale: false,
   detail: "not loaded",
@@ -226,7 +240,14 @@ export function readTokens(data: unknown): TokenHolding[] {
       const status = str(field(raw, "status")) ?? "OK";
       if (symbol === null || status !== "OK") return [];
       const usdValue = Number.parseFloat(str(field(raw, "usd_value", "usdValue")) ?? "");
-      return [{ symbol, usdValue: Number.isFinite(usdValue) ? usdValue : 0, status }];
+      return [
+        {
+          symbol,
+          usdValue: Number.isFinite(usdValue) ? usdValue : 0,
+          status,
+          chain: str(field(raw, "chain")) ?? "",
+        },
+      ];
     })
     .sort((a, b) => b.usdValue - a.usdValue);
 }
@@ -253,6 +274,53 @@ export function readCollections(data: unknown): { slug: string; count: number }[
   return [...counts].map(([slug, count]) => ({ slug, count })).sort((a, b) => b.count - a.count);
 }
 
+/**
+ * Net-worth points for a sparkline, oldest first.
+ *
+ * Live shape, measured 2026-09-08: `{ dataPoints: [{ timestamp, valueUsd, tokenValueUsd,
+ * nftValueUsd }], timeframe }` — camelCase again, where the spec says `data_points` / `value_usd`.
+ */
+export function readHistory(data: unknown): number[] {
+  if (typeof data !== "object" || data === null) return [];
+  const list = field(data as Record<string, unknown>, "data_points", "dataPoints");
+  if (!Array.isArray(list)) return [];
+  return list
+    .flatMap((entry): number[] => {
+      if (typeof entry !== "object" || entry === null) return [];
+      const raw = entry as Record<string, unknown>;
+      const value = Number.parseFloat(str(field(raw, "value_usd", "valueUsd")) ?? "");
+      const at = Number(field(raw, "timestamp") ?? 0);
+      return Number.isFinite(value) ? [value] : [];
+    })
+    .slice(-64);
+}
+
+/**
+ * Value per chain, largest first.
+ *
+ * Derived from token balances, which carry a `chain` on every holding. NFTs are not included: the
+ * live `Nft` shape has no chain field, so attributing them would be a guess — and this number is
+ * used to size a donut, where a guess is indistinguishable from a measurement.
+ */
+export function readChains(data: unknown): ChainTotal[] {
+  if (typeof data !== "object" || data === null) return [];
+  const list = field(data as Record<string, unknown>, "token_balances", "tokenBalances");
+  if (!Array.isArray(list)) return [];
+  const totals = new Map<string, number>();
+  for (const entry of list) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const raw = entry as Record<string, unknown>;
+    const chain = str(field(raw, "chain"));
+    if (chain === null) continue;
+    const value = Number.parseFloat(str(field(raw, "usd_value", "usdValue")) ?? "");
+    if (!Number.isFinite(value)) continue;
+    totals.set(chain, (totals.get(chain) ?? 0) + value);
+  }
+  return [...totals]
+    .map(([chain, usdValue]) => ({ chain, usdValue }))
+    .sort((a, b) => b.usdValue - a.usdValue);
+}
+
 function metaOf(body: unknown): { ageSeconds: number | null; stale: boolean } {
   if (!isEnvelope(body)) return { ageSeconds: null, stale: false };
   return { ageSeconds: body.meta.ageSeconds, stale: body.meta.stale };
@@ -265,10 +333,11 @@ function metaOf(body: unknown): { ageSeconds: number | null; stale: boolean } {
  * says so instead of showing zeros. Zeros would be a reading; "no wallet" is the truth.
  */
 export async function portfolio(timeframe: Timeframe, timeoutMs = 4000): Promise<PortfolioSnapshot> {
-  const [value, balances, nfts] = await Promise.all([
+  const [value, balances, nfts, history] = await Promise.all([
     get(`/portfolio/value?timeframe=${timeframe}`, timeoutMs),
-    get("/balances?limit=50", timeoutMs),
+    get("/balances?limit=100", timeoutMs),
     get("/portfolio?limit=50", timeoutMs),
+    get(`/portfolio/history?timeframe=${timeframe}`, timeoutMs),
   ]);
 
   if (value === null) return { ...EMPTY_PORTFOLIO, detail: "service not running" };
@@ -279,9 +348,12 @@ export async function portfolio(timeframe: Timeframe, timeoutMs = 4000): Promise
   const { ageSeconds, stale } = metaOf(value.body);
   const collections = nfts?.status === 200 && isEnvelope(nfts.body) ? readCollections(nfts.body.data) : [];
 
+  const balanceData = balances?.status === 200 && isEnvelope(balances.body) ? balances.body.data : null;
   return {
     stats: readStats(envelope?.data),
-    tokens: balances?.status === 200 && isEnvelope(balances.body) ? readTokens(balances.body.data) : [],
+    tokens: balanceData === null ? [] : readTokens(balanceData),
+    history: history?.status === 200 && isEnvelope(history.body) ? readHistory(history.body.data) : [],
+    chains: balanceData === null ? [] : readChains(balanceData),
     nftCount: collections.reduce((sum, entry) => sum + entry.count, 0) || null,
     topCollections: collections,
     ageSeconds,
