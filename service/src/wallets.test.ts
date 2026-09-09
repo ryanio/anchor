@@ -3,8 +3,8 @@
  *
  * Every wallet-scoped route once read `config.wallets[0]` and every caller presented the answer as
  * the whole picture. On the machine this was found on that meant nine wallets resolving from a
- * linked-wallet PAT, one of them read, and $2,220.15 shown where $3,397.44 was true — a third of a
- * portfolio missing, with nothing on screen to suggest it.
+ * linked-wallet PAT, one of them read, and roughly a third of the portfolio missing from the figure
+ * on screen — with nothing there to suggest it.
  *
  * The fix was easy. Keeping it fixed is what this file is for: it walks `WALLET_ROUTES` rather than
  * naming routes, so a route added next year is covered the day it is added, and a route that reads
