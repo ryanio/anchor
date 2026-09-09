@@ -8,6 +8,7 @@
  * data freshness rather than implying everything is live.
  */
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { combineList, combinePortfolio, fanOut } from "./aggregate.ts";
 import { MissingPatError, WalletTokenError } from "./auth.ts";
 import type { CacheEntry } from "./cache.ts";
 import type { Config } from "./config.ts";
@@ -80,6 +81,10 @@ function send(res: ServerResponse, status: number, body: unknown, headOnly = fal
   headOnly ? res.end() : res.end(payload);
 }
 
+/** Where each response keeps its list, whichever shape it arrived in. */
+const BALANCE_KEYS = ["balances", "tokens", "items", "results"];
+const EVENT_KEYS = ["assetEvents", "asset_events", "events", "items"];
+
 function envelope<T>(entry: CacheEntry<T>) {
   return {
     data: entry.data,
@@ -151,6 +156,41 @@ export function createApp(config: Config, client: OpenSeaClient, deps: ServerDep
       }
 
       const primaryWallet = config.wallets[0] ?? "";
+      const wallets = config.wallets;
+
+      /**
+       * Fan a wallet-scoped read across every configured wallet and keep the oldest envelope.
+       *
+       * Oldest, not newest: the combined answer is only as fresh as its stalest part, and a total
+       * that reports the freshness of whichever wallet happened to be cached last is a total that
+       * says it is current when a third of it is an hour old.
+       */
+      const fanned = async <T>(read: (wallet: string) => Promise<CacheEntry<T>>) => {
+        // A credential problem is not a partial answer. `MissingApiKeyError`, `MissingPatError` and
+        // `WalletTokenError` are about this request, not about one address, and swallowing them
+        // turns a broken setup into an empty portfolio with a 200 on it.
+        const out = await fanOut(
+          wallets,
+          read,
+          (err) =>
+            err instanceof MissingApiKeyError ||
+            err instanceof MissingPatError ||
+            err instanceof WalletTokenError,
+        );
+        const entries = out.ok.map((r) => r.value);
+        const oldest = entries.reduce<CacheEntry<unknown> | null>(
+          (worst, e) => (worst === null || e.ageSeconds > worst.ageSeconds ? e : worst),
+          null,
+        );
+        return {
+          fanned: { ...out, ok: out.ok.map((r) => ({ wallet: r.wallet, value: r.value.data })) },
+          meta: {
+            fetchedAt: oldest?.fetchedAt ?? Math.floor(Date.now() / 1000),
+            ageSeconds: oldest?.ageSeconds ?? 0,
+            stale: entries.some((e) => e.stale),
+          },
+        };
+      };
 
       if (!primaryWallet && WALLET_ROUTES.has(path)) {
         send(
@@ -180,12 +220,10 @@ export function createApp(config: Config, client: OpenSeaClient, deps: ServerDep
         const timeframe = url.searchParams.get("timeframe");
         const allowed = ["HOUR", "DAY", "WEEK", "MONTH"] as const;
         const chosen = allowed.find((t) => t === timeframe);
-        send(
-          res,
-          200,
-          envelope(await client.portfolioStats(primaryWallet, config.ttl.portfolio, chosen)),
-          headOnly,
+        const { fanned: all, meta } = await fanned((w) =>
+          client.portfolioStats(w, config.ttl.portfolio, chosen),
         );
+        send(res, 200, envelope({ data: combinePortfolio(all), ...meta }), headOnly);
         return;
       }
 
@@ -203,32 +241,34 @@ export function createApp(config: Config, client: OpenSeaClient, deps: ServerDep
       }
 
       if (path === "/balances") {
-        send(
-          res,
-          200,
-          envelope(
-            await client.tokenBalances(primaryWallet, config.ttl.tokens, {
-              limit: intParam(url.searchParams.get("limit"), 200),
-              cursor: url.searchParams.get("cursor") ?? undefined,
-            }),
-          ),
-          headOnly,
+        // Paging is per wallet and a merged list has no single cursor, so a cursor here reads one
+        // wallet — the caller asked to continue a specific list. Without one, every wallet.
+        const cursor = url.searchParams.get("cursor") ?? undefined;
+        const limit = intParam(url.searchParams.get("limit"), 200);
+        if (cursor !== undefined) {
+          send(
+            res,
+            200,
+            envelope(await client.tokenBalances(primaryWallet, config.ttl.tokens, { limit, cursor })),
+            headOnly,
+          );
+          return;
+        }
+        const { fanned: all, meta } = await fanned((w) =>
+          client.tokenBalances(w, config.ttl.tokens, { limit }),
         );
+        send(res, 200, envelope({ data: combineList(all, BALANCE_KEYS, "balances"), ...meta }), headOnly);
         return;
       }
 
       if (path === "/activity") {
         const types = url.searchParams.getAll("event_type");
-        send(
-          res,
-          200,
-          envelope(
-            await client.eventsByAccount(primaryWallet, config.ttl.events, {
-              eventTypes: types.length ? types : undefined,
-            }),
-          ),
-          headOnly,
+        const { fanned: all, meta } = await fanned((w) =>
+          client.eventsByAccount(w, config.ttl.events, {
+            eventTypes: types.length ? types : undefined,
+          }),
         );
+        send(res, 200, envelope({ data: combineList(all, EVENT_KEYS, "assetEvents"), ...meta }), headOnly);
         return;
       }
 
