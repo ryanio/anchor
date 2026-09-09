@@ -47,7 +47,12 @@ function envelope(data, overrides) {
   );
 }
 
-function portfolio(overrides) {
+/**
+ * A portfolio in the shape the service now returns: a summed `stats`, the wallets it was summed
+ * from, and any it could not read. A single-wallet setup gets a one-row `wallets` list, because
+ * that is what the service produces for one too.
+ */
+function portfolio(overrides, wallets, incomplete) {
   return envelope({
     stats: Object.assign(
       {
@@ -59,8 +64,25 @@ function portfolio(overrides) {
       },
       overrides || {},
     ),
+    wallets: wallets || [
+      { address: ADDRESS, totalValueUsd: "11111.11", nftValueUsd: "4444.44", tokenValueUsd: "6666.67" },
+    ],
+    incomplete: incomplete || [],
   });
 }
+
+/** Nine wallets, the way a linked-wallet PAT resolves them. Repeated digits, as everything is here. */
+const NINE = [
+  { address: ADDRESS, totalValueUsd: "4444.44" },
+  { address: ADDRESS_2, totalValueUsd: "2222.22" },
+  { address: OTHER, totalValueUsd: "1111.11" },
+  { address: `0x${"0".repeat(39)}4`, totalValueUsd: "999.99" },
+  { address: `0x${"0".repeat(39)}5`, totalValueUsd: "888.88" },
+  { address: `0x${"0".repeat(39)}6`, totalValueUsd: "777.77" },
+  { address: "SAMPLEso1anaAddressAAAAAAAAAAAAAAAAAAAAAAAAA", totalValueUsd: "444.44" },
+  { address: "SAMPLEso1anaAddressBBBBBBBBBBBBBBBBBBBBBBBBB", totalValueUsd: "133.33" },
+  { address: "SAMPLEso1anaAddressCCCCCCCCCCCCCCCCCCCCCCCCC", totalValueUsd: "88.93" },
+];
 
 function offer(overrides) {
   return Object.assign(
@@ -288,6 +310,33 @@ const CASES = [
           asset: { collection: "sample-apes", identifier: "2222", name: "SAMPLE Ape #2222" },
         }),
       ]),
+    }),
+  },
+  {
+    id: "wallets-breakdown",
+    category: "The second view",
+    title: "Details — the split by wallet",
+    looking:
+      "Nine wallets, biggest first, each a figure that wallet's own portfolio page would show — " +
+      "nothing here divides a total by anything. Check that nine rows stays readable and that the " +
+      "tail row is honest about what it folds.",
+    reading: healthy({
+      health: health({ wallets: NINE.map((w) => w.address), wallet: ADDRESS }),
+      portfolio: portfolio({ totalValueUsd: "11111.11" }, NINE),
+    }),
+    view: { detailsOpen: true, breakdown: "wallet" },
+  },
+  {
+    id: "partial-total",
+    category: "Something is wrong",
+    title: "Warning — the total is missing a wallet",
+    looking:
+      "One of nine did not answer, so the total covers eight and the line under it says so. This " +
+      "is the state that must never be silent: a total quietly missing a wallet is the bug the " +
+      "whole fan-out exists to fix.",
+    reading: healthy({
+      health: health({ wallets: NINE.map((w) => w.address), wallet: ADDRESS }),
+      portfolio: portfolio({ totalValueUsd: "10222.18" }, NINE.slice(0, 8), [NINE[8].address]),
     }),
   },
   {

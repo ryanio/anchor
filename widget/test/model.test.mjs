@@ -152,6 +152,75 @@ test("renders an amount in the denomination it arrived in and no other", () => {
   assert.equal(Model.formatMoney("1.5", { symbol: "🤑" }), "1.5");
 });
 
+test("a total is the sum of every wallet, and each wallet is still readable", () => {
+  // The service fans out and reports each wallet beside the sum, so this reads rather than derives:
+  // every row is a figure that wallet's own portfolio page would show. Nothing divides a total.
+  const state = stateWith({
+    health: health({ wallets: ["0xaa", "0xbb", "0xcc"] }),
+    portfolio: {
+      data: {
+        stats: { totalValueUsd: "300.30" },
+        wallets: [
+          { address: `0x${"a".repeat(40)}`, totalValueUsd: "100.10" },
+          { address: `0x${"b".repeat(40)}`, totalValueUsd: "200.20" },
+        ],
+        incomplete: [],
+      },
+      receivedAt: NOW,
+    },
+    updatedAt: NOW,
+  });
+
+  const split = Model.portfolioBreakdown(state, Model.mergeSettings({}), "wallet");
+  // Biggest first: a nine-row list in whatever order a JWT happened to list them is a list nobody
+  // reads past the third row.
+  // Rows are the magnitude form, as every other breakdown's rows are; the total under them is
+  // exact. That is the split between "how big is each" and "what does it add to".
+  assert.deepEqual(
+    split.rows.map((r) => r.text),
+    ["$200.00", "$100.00"],
+  );
+  assert.deepEqual(
+    split.rows.map((r) => r.value),
+    ["200.20", "100.10"],
+    "the underlying figures keep their cents even where the label rounds",
+  );
+  assert.equal(split.totalText, "$300.30");
+  assert.match(split.scope, /by wallet/);
+});
+
+test("a total missing a wallet says so, in the line that makes the claim", () => {
+  // The service reports what it could not read rather than trimming it. This is the half that makes
+  // reporting it worth anything — a total silently missing a wallet is the bug the fan-out fixes.
+  const missing = stateWith({
+    health: health({ wallets: ["0xaa", "0xbb", "0xcc"] }),
+    portfolio: {
+      data: { stats: { totalValueUsd: "2" }, wallets: [], incomplete: [`0x${"c".repeat(40)}`] },
+      receivedAt: NOW,
+    },
+    updatedAt: NOW,
+  });
+  assert.match(Model.provenance(missing, NOW), /^2 of 3 wallets/);
+
+  const whole = stateWith({
+    health: health({ wallets: ["0xaa", "0xbb", "0xcc"] }),
+    portfolio: { data: { stats: { totalValueUsd: "3" }, wallets: [], incomplete: [] }, receivedAt: NOW },
+    updatedAt: NOW,
+  });
+  assert.match(Model.provenance(whole, NOW), /^3 wallets/);
+});
+
+test("rounding into the next magnitude takes the next magnitude with it", () => {
+  // $999.99 chose "no unit" from its digits, rounded to 1000, and rendered "$1000.00" in a column
+  // of "$4.44K". The tier has to be checked against the rounding, not only against the input.
+  assert.equal(Model.formatMoney("999.99", { symbol: "USD" }), "$1K");
+  assert.equal(Model.formatMoney("999999.9", { symbol: "USD" }), "$1M");
+  assert.equal(Model.formatMoney("999999999.5", { symbol: "USD" }), "$1B");
+  // Not rounding up is unchanged.
+  assert.equal(Model.formatMoney("999.4", { symbol: "USD" }), "$999.00");
+  assert.equal(Model.formatMoney("1234", { symbol: "USD" }), "$1.23K");
+});
+
 test("a hidden value is distinguishable from no value", () => {
   // The bug: with `showValue` off the bar drew a lone mark, which is exactly what an unconfigured
   // install draws. Measured on the two rendered strips, they were 4% apart in luminance on an 11px
