@@ -319,19 +319,58 @@ threat model here includes the device itself.
 
 ## Displays
 
-**No pulse display exists. Nobody owns one of these panels.** That is worth saying plainly, because
-everything below reads like a specification and it is a shopping list.
+**A panel exists, and the first attempt to find it went wrong in an instructive way.**
 
-What is actually on the desk is a **bare ESP32-S3 devkit** — measured with esptool, not read off a
-label: ESP32-S3 (QFN56) rev v0.2, 16 MB quad flash, 8 MB embedded PSRAM, native USB-Serial/JTAG,
-MAC `28:84:85:3a:d3:f0`. That is the N16R8 configuration. It has no panel attached, and an I2C scan
-from the firmware finds nothing, so it has no touch controller or IMU either. Its only output is the
-board's RGB LED.
+The board on the desk is an ESP32-S3 N16R8 — ESP32-S3 (QFN56) rev v0.2, 16 MB quad flash, 8 MB
+embedded PSRAM, native USB-Serial/JTAG, MAC `28:84:85:3a:d3:f0` — and it is a finished product with a
+glass screen and buttons down one side, not a bare devkit. An earlier version of this section said it
+had no display. That was wrong, and the way it was reached matters more than the conclusion:
 
-So the firmware in `devices/firmware/esp32/` claims a 466×466 panel and paints a real framebuffer in
-PSRAM, and shows the frame's mean colour on that LED. That is not a display, and the document should
-not pretend it is one — but it is the whole path except the glass, and the numbers it produces are
-real. The dimensions and buses in the table below remain vendor documentation.
+> The firmware scanned I2C on SDA=8/SCL=9 — the ESP32-S3 Arduino defaults — found nothing, and
+> concluded the board had no panel. **Zero devices on the wrong pins is not a negative result.** It is
+> the instrument reporting that it was pointed somewhere nothing lives. AGENTS.md says to check the
+> instrument rather than the reading; this is that failure exactly, and it survived a merge because
+> the number it produced looked like data.
+
+`devices/firmware/esp32/probe/` replaces the assumption with a measurement. It does not take a pin
+map on faith: it drives each safe GPIO's internal pull-down and reports the pins that stay high, on
+the physical grounds that an I2C bus has external pull-ups of a few kilohms and almost nothing else
+does. That turns 27 candidate pins into five, and five into one bus.
+
+**Measured, on the real bus at SDA=15/SCL=14**, with every chip asked for its identity register
+rather than guessed at from its address:
+
+| Address | Identity register | What it is |
+|---|---|---|
+| 0x15 | chip 0xB7, vendor 0x41 | CST820-class capacitive touch controller |
+| 0x18 | 0x83 0x11 | ES8311 audio codec |
+| 0x20 | in 0xCF, out 0x87, config 0x78 | TCA9554-class IO expander |
+| 0x34 | 0x4A | AXP2101 power-management unit |
+| 0x51 | — | PCF85063-class real-time clock |
+| 0x6B | WHO_AM_I 0x05, rev 0x7C | QMI8658 inertial measurement unit |
+
+And the finding that settles it: **GPIO 13 toggles at about 58 Hz with nothing on this chip driving
+it.** That is a display's tearing-effect line — a panel announcing the end of each refresh. A board
+with no display does not produce one.
+
+Three further things follow, and they are the reason the panel is still dark:
+
+- **The panel's reset is behind the IO expander, not on a GPIO.** Its configuration register shows
+  four output lines. A display can therefore be present, powered and refreshing while remaining
+  invisible to any pin-level scan — which is the second half of why the original conclusion was easy
+  to reach.
+- **The QSPI pin map is not known.** `devices/firmware/esp32/panelsweep/` searches for it rather than
+  writing it from memory, using the tearing line as an oracle: the command phase of a QSPI AMOLED is
+  single-line, so the search is over three pins rather than six. Two exhaustive sweeps over 29 pins
+  found no combination that wakes the controller.
+- **That negative is bounded, and it is partly self-inflicted.** The first sweep silenced the tearing
+  line and then kept going, so it could not say which combination did it — and the panel has been
+  dark since. The most likely reading is that a swept pin is the panel's reset rather than its chip
+  select, in which case the controller is not asleep but reset, and no `SLPOUT` will ever wake it
+  because it needs a full initialisation sequence. **The board's own documentation is the next step,
+  not a wider guess.**
+
+The table below remains vendor documentation for candidate panels, unverified. It is a shopping list.
 
 | Candidate | Panel | Bus | Full frame (RLE, measured) | Notes |
 |---|---|---|---|---|

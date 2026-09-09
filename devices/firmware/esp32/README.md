@@ -24,10 +24,44 @@ ESP32-S3FN8 with 8 MB of flash and no PSRAM, and has its own adapter and design 
 as `303a:1001` "USB JTAG/serial debug unit", so the USB descriptor cannot tell them apart. Ask the
 ROM.
 
-**There is no display attached.** An I2C scan from the firmware finds nothing on SDA=8/SCL=9, and
-the board's only output is its RGB LED. An SPI panel would answer nothing on I2C either, so that
-scan is not proof — but nothing on this board suggests a screen, and no pulse-display panel exists
-to attach.
+**The board has a display, and finding it took correcting a wrong answer.**
+
+The first version of this firmware scanned I2C on SDA=8/SCL=9 — the Arduino defaults for an S3 —
+found nothing, and reported that no display was attached. That conclusion reached `docs/devices.md`
+and survived a merge. It was wrong, and the mistake is worth more than the correction: **zero devices
+on the wrong pins is not a negative result.** It is an instrument reporting that it was aimed at
+nothing. AGENTS.md asks for attention to the thing you are looking *through*, and a default constant
+is exactly the sort of thing that goes unlooked-at.
+
+`probe/` replaces the assumption with a measurement. It takes no pin map on faith: it drives each
+safe GPIO's internal pull-down (~45k) and reports every pin that still reads high, on the physical
+grounds that an I2C bus carries external pull-ups of a few kilohms and very little else does. Five
+pins out of twenty-seven, and one real bus.
+
+Measured on that bus — **SDA=15, SCL=14** — with every device asked for its identity register rather
+than named from its address:
+
+| Address | Identity register | What it is |
+|---|---|---|
+| 0x15 | chip 0xB7, vendor 0x41 | CST820-class capacitive touch |
+| 0x18 | 0x83 0x11 | ES8311 audio codec |
+| 0x20 | in 0xCF, out 0x87, config 0x78 | TCA9554-class IO expander |
+| 0x34 | 0x4A | AXP2101 power-management unit |
+| 0x51 | — | PCF85063-class real-time clock |
+| 0x6B | WHO_AM_I 0x05, rev 0x7C | QMI8658 IMU |
+
+And the measurement that settles the question: **GPIO 13 toggles at about 58 Hz with nothing on this
+chip driving it** — a panel's tearing-effect line, raised once per refresh. A board with no display
+does not generate one.
+
+**The panel is not lit yet, and it is currently dark.** Its QSPI pin map is unknown, and `panelsweep/`
+searched for it rather than writing one from memory — the command phase of a QSPI AMOLED is
+single-line, so the search is over three pins, not six, and the tearing line is the oracle. Two
+exhaustive sweeps across 29 pins found nothing that wakes the controller. The likeliest reading is
+that one of the swept pins is the panel's *reset* rather than a chip select: the first sweep silenced
+the tearing line and carried on instead of stopping, so it could not say which combination did it,
+and a reset controller needs a full initialisation sequence rather than a `SLPOUT`. The next step is
+the board's documentation, not a wider guess.
 
 ## What is measured and what is not
 
@@ -72,7 +106,7 @@ It is honest to say the threshold is missed and that the cost is on the host, no
 
 **Not measured:**
 
-- Anything about a real panel: blit time, byte order, refresh. There is no display.
+- Anything about the panel itself: blit time, byte order, refresh. Its bus has not been found.
 - Wi-Fi, TLS-PSK, and free heap with a radio and a TLS session up.
 - Whether the RGB LED colour is *correct* — it is driven from the frame's mean pixel, and nobody has
   put a colorimeter on it. That it changes with the frame is inferred from the commits landing, not
@@ -116,6 +150,8 @@ rather than guessed at.
 src/anchor_pulse.{c,h}   the protocol. C99, no allocation, no platform. This is the firmware.
 host/conformance.c       the same decoder as a desktop binary, driven by the Node test
 app/app.ino              the application: transport, framebuffer, the LED, and nothing else
+probe/probe.ino          what is actually wired to this board — measured, not assumed
+panelsweep/panelsweep.ino  hunt for the display's bus using the panel's own tearing line
 tools/bringup.ts         host side — paint one frame down the cable and hold it there
 tools/measure.ts         host side — what a frame actually costs, end to end
 library.properties       so the Arduino IDE can find src/ as a library
@@ -280,8 +316,13 @@ rather than an omission.
 
 ## Known gaps
 
-- **No display, so no blit is measured.** Everything about a real panel — push time, byte order,
-  refresh — is open. The frame is shown as one colour on the board's RGB LED.
+- **The panel is not driven yet.** Its QSPI pin map is unknown and it is currently reset. Push time,
+  byte order and refresh are all still open, and the frame is shown as one colour on the RGB LED
+  instead of on the glass.
+- **The touch controller, the IMU and the buttons are all unused.** The HELLO input mask is zero. A
+  CST820 and a QMI8658 are both real inputs, and GPIO 1, 2 and 21 carry external pull-ups, which is
+  what a side button looks like. Each is a bit in that mask and a call to `anchor_pulse_input` — and
+  none of them could say anything but a slot id and two numbers.
 - **The LED colour is not verified.** It is the frame's mean pixel, driven on every COMMIT. That the
   commits land is measured; that the light is the right colour is not.
 - **Byte order is still a choice, not a measurement.** The firmware declares

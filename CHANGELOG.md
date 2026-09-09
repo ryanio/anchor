@@ -17,6 +17,16 @@ becomes `## [0.1.0] - YYYY-MM-DD` at the moment the tag is pushed, and not befor
 **Devices** — Anchor on physical hardware, starting with the Elgato Stream Deck. Opt-in: the
 workspace keeps its own dependency, so a machine with no device attached installs nothing.
 
+- The ESP32 board does have a display, and the firmware that said otherwise was measuring the wrong
+  pins. `devices/firmware/esp32/probe/` finds a board's I2C bus physically — by driving each safe
+  GPIO's internal pull-down and reporting the pins an external pull-up still holds high — instead of
+  trusting the Arduino defaults. The real bus is SDA=15/SCL=14, and every device on it is identified
+  by its identity register rather than its address: a CST820 touch controller, an ES8311 codec, a
+  TCA9554-class IO expander, an AXP2101, a PCF85063-class RTC and a QMI8658. GPIO 13 carries a ~58Hz
+  tearing-effect signal, which is a panel refreshing. `panelsweep/` searches for the display's QSPI
+  bus using that tearing line as an oracle rather than writing a pin map from memory; two exhaustive
+  sweeps over 29 pins have not found it, so the panel is identified but not yet driven. Docs corrected
+  in the same change — `docs/devices.md` had shipped the claim that no display was attached.
 - ESP32 pulse firmware, **running on hardware**. The device half of the wire format is portable C99
   with no allocation and no platform calls; it is compiled and driven on every `npm test` against
   frames from the real host adapter, so the encoder is proved against a second implementation rather

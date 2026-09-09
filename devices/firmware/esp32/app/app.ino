@@ -2,10 +2,10 @@
  * Anchor Pulse on an ESP32-S3, over the USB cable.
  *
  * The board this was written for and flashed to is a bare ESP32-S3 N16R8 devkit: 16MB of flash,
- * 8MB of octal PSRAM, native USB-Serial/JTAG, and — as far as anything here can tell — no display.
- * That last part shapes the whole file. `docs/devices-esp32.md` was written for a panel nobody owns
- * yet, so rather than pretend, this firmware does the two things the hardware on the desk can
- * honestly do:
+ * 8MB of octal PSRAM, native USB-Serial/JTAG, and a glass display whose bus is not yet known.
+ * The display is real — `probe/` measures a panel's tearing-effect line ticking at 58 Hz on GPIO 13
+ * — but its QSPI pin map has not been found, so nothing here can draw on it yet. Until it can, this
+ * firmware does the two things the hardware can honestly do today:
  *
  *   1. **Run the real protocol against a real framebuffer.** The panel is 466x466 — the largest
  *      candidate in the design doc — allocated in PSRAM, painted by the host, decoded by the same
@@ -31,7 +31,7 @@
 /*
  * The panel this device claims.
  *
- * There is no display, so this is a choice rather than a measurement, and it is the design doc's
+ * No panel is driven yet, so this is a choice rather than a measurement, and it is the design doc's
  * largest candidate on purpose: 466x466 RGB565 is 434,312 bytes, which the doc says "does not fit
  * in internal SRAM on an S3" and leaves as arithmetic. With 8MB of PSRAM confirmed on this board it
  * fits comfortably, and pushing a real frame at that size is the falsification test the doc asks
@@ -181,7 +181,7 @@ static void sink_blank(void *ctx) {
  * what it would be.
  */
 static void scan_i2c(void) {
-  Wire.begin();
+  Wire.begin(15 /* SDA */, 14 /* SCL */, 100000u);
   int found = 0;
   for (uint8_t address = 1; address < 127; address++) {
     Wire.beginTransmission(address);
@@ -190,9 +190,10 @@ static void scan_i2c(void) {
       found++;
     }
   }
-  Serial.printf("anchor-pulse: i2c devices found: %d (SDA=%d SCL=%d)\n", found, SDA, SCL);
-  // An SPI panel answers nothing here, so a zero is not proof there is no display — only that
-  // there is no I2C touch controller, IMU or port expander of the kind a display board carries.
+  Serial.printf("anchor-pulse: i2c devices found: %d (SDA=15 SCL=14, measured by probe/)\n", found);
+  // Scanned on the bus the probe measured, not on the Arduino defaults. Scanning the wrong pins and
+  // reading the silence as "no display" is precisely how this firmware once reported a board with a
+  // screen on it as having none.
 }
 
 static void banner(void) {
@@ -211,7 +212,7 @@ static void banner(void) {
   Serial.printf("anchor-pulse: rgb led on gpio %d\n", RGB_BUILTIN);
   Serial.printf("anchor-pulse: serial rx buffer %u bytes\n", (unsigned)rx_buffer_bytes);
   scan_i2c();
-  Serial.printf("anchor-pulse: no display driver is configured; the frame is shown as one colour\n");
+  Serial.printf("anchor-pulse: no panel driver yet; the frame is shown as one colour on the led\n");
   Serial.flush();
 }
 
