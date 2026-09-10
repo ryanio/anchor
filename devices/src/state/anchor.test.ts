@@ -13,12 +13,12 @@ import { describeAge, readCollections, readStats, readTokens, TIMEFRAMES } from 
 
 describe("readTokens", () => {
   const balances = {
-    token_balances: [
-      { symbol: "USDC", usd_value: "6210.40", status: "OK" },
-      { symbol: "ETH", usd_value: "18400.22", status: "OK" },
-      { symbol: "SCAMCOIN", usd_value: "999999", status: "SPAM" },
-      { symbol: "DUST", usd_value: "0.001", status: "LOW_VALUE" },
-      { symbol: "RISKY", usd_value: "5000", status: "WARNING" },
+    tokenBalances: [
+      { symbol: "USDC", usdValue: "6210.40", status: "OK" },
+      { symbol: "ETH", usdValue: "18400.22", status: "OK" },
+      { symbol: "SCAMCOIN", usdValue: "999999", status: "SPAM" },
+      { symbol: "DUST", usdValue: "0.001", status: "LOW_VALUE" },
+      { symbol: "RISKY", usdValue: "5000", status: "WARNING" },
     ],
   };
 
@@ -31,7 +31,7 @@ describe("readTokens", () => {
 
   test("drops everything OpenSea has not classified OK", () => {
     // An unfiltered "top tokens" list on an airdropped-at wallet is a list of scams shown with
-    // Anchor's authority behind it. The highest `usd_value` here is the spam entry, deliberately.
+    // Anchor's authority behind it. The highest `usdValue` here is the spam entry, deliberately.
     const symbols = readTokens(balances).map((t) => t.symbol);
     for (const excluded of ["SCAMCOIN", "DUST", "RISKY"]) {
       assert.equal(symbols.includes(excluded), false, `${excluded} must not be shown`);
@@ -41,13 +41,28 @@ describe("readTokens", () => {
   test("survives junk rather than throwing", () => {
     assert.deepEqual(readTokens(null), []);
     assert.deepEqual(readTokens({}), []);
-    assert.deepEqual(readTokens({ token_balances: "nope" }), []);
-    assert.deepEqual(readTokens({ token_balances: [null, 5, {}] }), []);
+    assert.deepEqual(readTokens({ tokenBalances: "nope" }), []);
+    assert.deepEqual(readTokens({ tokenBalances: [null, 5, {}] }), []);
   });
 
   test("an unparseable value becomes zero rather than NaN", () => {
-    const [only] = readTokens({ token_balances: [{ symbol: "X", usd_value: "n/a", status: "OK" }] });
+    const [only] = readTokens({ tokenBalances: [{ symbol: "X", usdValue: "n/a", status: "OK" }] });
     assert.equal(only?.usdValue, 0);
+  });
+
+  test("`balances` is read when the aggregating service wraps them, `tokenBalances` otherwise", () => {
+    const wrapped = readTokens({ balances: [{ symbol: "ETH", usdValue: "1", status: "OK" }] });
+    const single = readTokens({ tokenBalances: [{ symbol: "ETH", usdValue: "1", status: "OK" }] });
+    assert.equal(wrapped[0]?.symbol, "ETH");
+    assert.equal(single[0]?.symbol, "ETH");
+  });
+
+  test("a missing spam classification is treated as OK, not as spam", () => {
+    // Defensive only: the API populates `status` on every balance today (docs/upstream.md entry 0).
+    // Filtering everything out because a field went missing would be a worse failure than showing
+    // the list unfiltered.
+    const [only] = readTokens({ tokenBalances: [{ symbol: "ETH", usdValue: "1" }] });
+    assert.equal(only?.symbol, "ETH");
   });
 });
 
@@ -91,16 +106,17 @@ describe("TIMEFRAMES", () => {
 });
 
 /**
- * The spec and the live API disagree about spelling, so both are pinned.
+ * `readStats` reads the camelCase the API actually sends.
  *
- * `@opensea/api-types` declares snake_case; `api.opensea.io` answers in camelCase. Reading the
- * generated types is normally what prevents a wrong field name — here the generated types *are* the
- * wrong field name, and only a real response revealed it. Both shapes are tested so that whichever
- * side changes, this keeps working and the test says which spelling arrived.
+ * `docs/upstream.md` entry 0 used to say this needed both spellings: `@opensea/api-types` declares
+ * these fields in snake_case, and a wallet measured through the local service came back camelCase.
+ * That was a false alarm — the mismatch was `@opensea/sdk`'s own `camelizeResponse` (default `true`)
+ * rewriting the wire response before this module ever saw it, not a disagreement between the spec
+ * and the API. What arrives here is always the camelCase view.
  */
-describe("field spellings", () => {
-  test("portfolio stats read from the camelCase the API actually sends", () => {
-    // Measured from api.opensea.io on 2026-09-08.
+describe("readStats", () => {
+  test("reads the camelCase the SDK's camelizeResponse produces", () => {
+    // Measured from api.opensea.io on 2026-09-08, through the local service.
     const live = {
       totalValueUsd: "1381.84",
       nftValueUsd: "50.89",
@@ -113,35 +129,5 @@ describe("field spellings", () => {
     assert.equal(stats?.totalUsd, "1381.84");
     assert.equal(stats?.nftUsd, "50.89");
     assert.equal(stats?.pnlPercentage, "+0.80");
-  });
-
-  test("portfolio stats still read from the snake_case the spec declares", () => {
-    const spec = { total_value_usd: "10", nft_value_usd: "4", token_value_usd: "6", timeframe: "DAY" };
-    assert.equal(readStats(spec)?.totalUsd, "10");
-    assert.equal(readStats(spec)?.nftUsd, "4");
-  });
-
-  test("token balances read from either spelling", () => {
-    const live = { tokenBalances: [{ symbol: "ETH", usdValue: "1330.95" }] };
-    const spec = { token_balances: [{ symbol: "ETH", usd_value: "1330.95", status: "OK" }] };
-    for (const [name, payload] of [
-      ["live", live],
-      ["spec", spec],
-    ] as const) {
-      const [only] = readTokens(payload);
-      assert.equal(only?.symbol, "ETH", name);
-      assert.equal(only?.usdValue, 1330.95, name);
-    }
-  });
-
-  test("a missing spam classification is treated as OK, not as spam", () => {
-    // The live response carries no `status` at all. Filtering everything out because a documented
-    // field is absent would be a worse failure than showing the list.
-    const [only] = readTokens({ tokenBalances: [{ symbol: "ETH", usdValue: "1" }] });
-    assert.equal(only?.symbol, "ETH");
-  });
-
-  test("an explicit spam classification is still honoured", () => {
-    assert.deepEqual(readTokens({ tokenBalances: [{ symbol: "X", usdValue: "9", status: "SPAM" }] }), []);
   });
 });

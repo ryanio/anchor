@@ -189,6 +189,19 @@ and the chain filter stay ours, because `wallets[0]` is the primary and the SDK 
 validation to the server. `fetchImpl` on `PrivyConfig` means the executor's tests inject a stub
 instead of replacing `globalThis.fetch`, which is one fewer global for a test to leak.
 
+**`@opensea/sdk` 12.7.0, `@opensea/api-types` 0.11.1, `@opensea/wallet-adapters` 1.2.1.** A reported
+camelCase/snake_case mismatch turned out to be a false alarm — `camelizeResponse` (default `true`)
+rewrites every SDK response before this codebase sees it, so `devices/src/state/anchor.ts` never had
+two spellings to reconcile. `field()` and its per-call spelling list are gone; every read now names
+the one field that arrives. `CHAIN_IDENTIFIERS` and `isChainIdentifier` are now generated and
+exported at runtime by `@opensea/api-types` itself, so `ChainsAgree`, the compile-time proof this
+repo carried instead, is gone from `service/src/chains.ts` too. `GetTokensArgs.sortBy` and
+`.sortDirection` are surfaced on `/tokens/trending` and `/tokens/top`. `tryDecodeJwtPayload`
+replaces three `try`/`catch` blocks around `decodeJwtPayload` in `service/src/wallet-token.ts` with
+a direct null check — the SDK's own fix for a `decodeJwtPayload` bug where a non-object JWT payload
+parsed without error and every claim read `undefined`. See `docs/upstream.md` entries 0, 2, 4, 5
+and 14 for what shipped and what did not.
+
 **Both marketplaces.** OpenSea is NFTs *and* fungible tokens, and Anchor treats them as different
 products rather than one with a quantity field. The token half covers portfolio value, balances,
 trending and top tokens, individual tokens and price history.

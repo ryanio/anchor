@@ -26,7 +26,7 @@
  */
 
 import type { ChainIdentifier } from "@opensea/api-types";
-import { decodeJwtPayload, extractLinkedWallets, extractWalletAddress } from "@opensea/sdk";
+import { extractLinkedWallets, extractWalletAddress, tryDecodeJwtPayload } from "@opensea/sdk";
 import { addressMatchesChain } from "./chains.ts";
 import { looksLikeCredential } from "./keyring.ts";
 
@@ -55,11 +55,9 @@ export function walletFromToken(
     return { address: null, detail: "no token stored" };
   }
 
-  let claims: Record<string, unknown>;
-  try {
-    claims = decodeJwtPayload(pat);
-  } catch {
-    // A PAT is not required to be a JWT. An opaque token is not an error, it just carries nothing.
+  // A PAT is not required to be a JWT. An opaque token is not an error, it just carries nothing.
+  const claims = tryDecodeJwtPayload(pat);
+  if (claims === null) {
     return { address: null, detail: "token is not a JWT, so it carries no claims" };
   }
 
@@ -142,10 +140,8 @@ export function describeTokenShape(token: string): TokenShape {
     };
   }
 
-  let claims: Record<string, unknown>;
-  try {
-    claims = decodeJwtPayload(token);
-  } catch {
+  const claims = tryDecodeJwtPayload(token);
+  if (claims === null) {
     return {
       kind: "opaque",
       segments,
@@ -201,15 +197,11 @@ export function describeTokenShape(token: string): TokenShape {
  *   the server is us.
  */
 export function walletsFromToken(accessToken: string, chains: readonly ChainIdentifier[]): string[] {
-  // `extractLinkedWallets` answers `[]` for anything that is not a JWT; `decodeJwtPayload` throws.
-  // The exchange endpoint is not ours and a startup path must degrade rather than crash, so the
-  // primary lookup is guarded to match the SDK's tolerance rather than undo it.
-  let primary: string | undefined;
-  try {
-    primary = extractWalletAddress(decodeJwtPayload(accessToken));
-  } catch {
-    primary = undefined;
-  }
+  // `extractLinkedWallets` and `tryDecodeJwtPayload` both answer with "nothing here" — `[]` and
+  // `null` respectively — for anything that is not a JWT, rather than throwing, so the primary
+  // lookup matches the SDK's own tolerance without a try/catch of its own.
+  const claims = tryDecodeJwtPayload(accessToken);
+  const primary = claims === null ? undefined : extractWalletAddress(claims);
   const candidates = [
     ...(typeof primary === "string" ? [primary] : []),
     ...extractLinkedWallets(accessToken),

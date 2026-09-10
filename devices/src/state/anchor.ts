@@ -200,27 +200,6 @@ function str(value: unknown): string | null {
   return typeof value === "string" && value !== "" ? value : null;
 }
 
-/**
- * Read the first field that is present, by any of its spellings.
- *
- * `@opensea/api-types` declares these responses in snake_case — `total_value_usd`, `token_balances`,
- * `usd_value` — and the live API answers in camelCase. Measured against `api.opensea.io` on
- * 2026-09-08 through the local service:
- *
- *     /portfolio/value -> { totalValueUsd, nftValueUsd, tokenValueUsd, pnlAbsolute, pnlPercentage }
- *     /balances        -> { tokenBalances: [{ symbol, usdValue, usdPrice, imageUrl, ... }] }
- *
- * Reading the generated types is normally the thing that prevents a wrong field name; here the
- * generated types *are* the wrong field name. Accepting both spellings is the smallest fix that
- * cannot break when the mismatch is resolved in either direction. See `docs/upstream.md`.
- */
-function field(raw: Record<string, unknown>, ...names: readonly string[]): unknown {
-  for (const name of names) {
-    if (name in raw) return raw[name];
-  }
-  return undefined;
-}
-
 export function readStats(data: unknown): PortfolioStats | null {
   if (typeof data !== "object" || data === null) return null;
   const outer = data as Record<string, unknown>;
@@ -230,14 +209,14 @@ export function readStats(data: unknown): PortfolioStats | null {
   // service — which is the failure that put em dashes on the panel in the first place.
   const nested = outer.stats;
   const raw = (typeof nested === "object" && nested !== null ? nested : outer) as Record<string, unknown>;
-  const total = str(field(raw, "total_value_usd", "totalValueUsd"));
+  const total = str(raw.totalValueUsd);
   if (total === null) return null;
   return {
     totalUsd: total,
-    nftUsd: str(field(raw, "nft_value_usd", "nftValueUsd")),
-    tokenUsd: str(field(raw, "token_value_usd", "tokenValueUsd")),
-    pnlAbsolute: str(field(raw, "pnl_absolute", "pnlAbsolute")),
-    pnlPercentage: str(field(raw, "pnl_percentage", "pnlPercentage")),
+    nftUsd: str(raw.nftValueUsd),
+    tokenUsd: str(raw.tokenValueUsd),
+    pnlAbsolute: str(raw.pnlAbsolute),
+    pnlPercentage: str(raw.pnlPercentage),
     timeframe: str(raw.timeframe) ?? "",
   };
 }
@@ -251,29 +230,30 @@ export function readStats(data: unknown): PortfolioStats | null {
  */
 export function readTokens(data: unknown): TokenHolding[] {
   if (typeof data !== "object" || data === null) return [];
-  // `balances` is what the aggregating service wraps them in; the other two are what a single
-  // wallet's response uses, in the spec's spelling and the API's.
-  const list = field(data as Record<string, unknown>, "balances", "tokenBalances", "token_balances");
+  // `balances` is what the aggregating service wraps them in; `tokenBalances` is what a single
+  // wallet's response uses, straight from `getAccountTokens`.
+  const outer = data as Record<string, unknown>;
+  const list = outer.balances ?? outer.tokenBalances;
   if (!Array.isArray(list)) return [];
   const holdings = list
     .flatMap((entry): TokenHolding[] => {
       if (typeof entry !== "object" || entry === null) return [];
       const raw = entry as Record<string, unknown>;
       const symbol = str(raw.symbol);
-      // The spec documents a `status` spam classification; the live response does not carry it at
-      // all. An absent classification is treated as OK rather than as spam — filtering everything
-      // out because a field is missing would be a worse failure than showing an unfiltered list,
-      // and it is the shape that actually arrives today.
-      const status = str(field(raw, "status")) ?? "OK";
+      // `status` is a non-nullable enum the API populates on every balance, defaulting to `OK` —
+      // the `??` here is a defensive fallback, not the common case. Filtering everything out
+      // because the field were ever missing would be a worse failure than showing an unfiltered
+      // list, so absent still reads as OK rather than as spam.
+      const status = str(raw.status) ?? "OK";
       if (symbol === null || status !== "OK") return [];
-      const usdValue = Number.parseFloat(str(field(raw, "usd_value", "usdValue")) ?? "");
+      const usdValue = Number.parseFloat(str(raw.usdValue) ?? "");
       return [
         {
           symbol,
           usdValue: Number.isFinite(usdValue) ? usdValue : 0,
           status,
-          chain: str(field(raw, "chain")) ?? "",
-          openseaUrl: str(field(raw, "opensea_url", "openseaUrl")) ?? "",
+          chain: str(raw.chain) ?? "",
+          openseaUrl: str(raw.openseaUrl) ?? "",
         },
       ];
     })
@@ -302,7 +282,7 @@ export function readTokens(data: unknown): TokenHolding[] {
  */
 export function readCollections(data: unknown): { slug: string; count: number }[] {
   if (typeof data !== "object" || data === null) return [];
-  const list = field(data as Record<string, unknown>, "nfts");
+  const list = (data as Record<string, unknown>).nfts;
   if (!Array.isArray(list)) return [];
   const counts = new Map<string, number>();
   for (const entry of list) {
@@ -318,18 +298,17 @@ export function readCollections(data: unknown): { slug: string; count: number }[
  * Net-worth points for a sparkline, oldest first.
  *
  * Live shape, measured 2026-09-08: `{ dataPoints: [{ timestamp, valueUsd, tokenValueUsd,
- * nftValueUsd }], timeframe }` — camelCase again, where the spec says `data_points` / `value_usd`.
+ * nftValueUsd }], timeframe }`.
  */
 export function readHistory(data: unknown): number[] {
   if (typeof data !== "object" || data === null) return [];
-  const list = field(data as Record<string, unknown>, "data_points", "dataPoints");
+  const list = (data as Record<string, unknown>).dataPoints;
   if (!Array.isArray(list)) return [];
   return list
     .flatMap((entry): number[] => {
       if (typeof entry !== "object" || entry === null) return [];
       const raw = entry as Record<string, unknown>;
-      const value = Number.parseFloat(str(field(raw, "value_usd", "valueUsd")) ?? "");
-      const at = Number(field(raw, "timestamp") ?? 0);
+      const value = Number.parseFloat(str(raw.valueUsd) ?? "");
       return Number.isFinite(value) ? [value] : [];
     })
     .slice(-64);
@@ -344,15 +323,18 @@ export function readHistory(data: unknown): number[] {
  */
 export function readChains(data: unknown): ChainTotal[] {
   if (typeof data !== "object" || data === null) return [];
-  const list = field(data as Record<string, unknown>, "balances", "tokenBalances", "token_balances");
+  // `balances` is what the aggregating service wraps them in; `tokenBalances` is what a single
+  // wallet's response uses. See readTokens above.
+  const outer = data as Record<string, unknown>;
+  const list = outer.balances ?? outer.tokenBalances;
   if (!Array.isArray(list)) return [];
   const totals = new Map<string, number>();
   for (const entry of list) {
     if (typeof entry !== "object" || entry === null) continue;
     const raw = entry as Record<string, unknown>;
-    const chain = str(field(raw, "chain"));
+    const chain = str(raw.chain);
     if (chain === null) continue;
-    const value = Number.parseFloat(str(field(raw, "usd_value", "usdValue")) ?? "");
+    const value = Number.parseFloat(str(raw.usdValue) ?? "");
     if (!Number.isFinite(value)) continue;
     totals.set(chain, (totals.get(chain) ?? 0) + value);
   }
@@ -385,22 +367,21 @@ export function isExcluded(collection: string, exclude: readonly string[]): bool
 
 export function readNfts(data: unknown, exclude: readonly string[] = []): OwnedNft[] {
   if (typeof data !== "object" || data === null) return [];
-  const list = field(data as Record<string, unknown>, "nfts");
+  const list = (data as Record<string, unknown>).nfts;
   if (!Array.isArray(list)) return [];
   return list.flatMap((entry): OwnedNft[] => {
     if (typeof entry !== "object" || entry === null) return [];
     const raw = entry as Record<string, unknown>;
-    const imageUrl =
-      str(field(raw, "display_image_url", "displayImageUrl")) ?? str(field(raw, "image_url", "imageUrl"));
+    const imageUrl = str(raw.displayImageUrl) ?? str(raw.imageUrl);
     if (imageUrl === null) return [];
-    const collection = str(field(raw, "collection")) ?? "";
+    const collection = str(raw.collection) ?? "";
     if (isExcluded(collection, exclude)) return [];
     return [
       {
-        name: str(field(raw, "name")) ?? "",
+        name: str(raw.name) ?? "",
         collection,
         imageUrl,
-        openseaUrl: str(field(raw, "opensea_url", "openseaUrl")) ?? "",
+        openseaUrl: str(raw.openseaUrl) ?? "",
       },
     ];
   });

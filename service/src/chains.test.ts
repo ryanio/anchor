@@ -35,9 +35,9 @@ describe("the chain list comes from the SDK", () => {
   });
 
   test("the list is not a hand-maintained copy", () => {
-    // 29 at the time of writing. The number is not the point — the point is that it came from
-    // Object.values(Chain), and chains.ts fails to compile if the SDK and api-types disagree.
-    assert.ok(CHAINS.length > 20, `expected the SDK's full chain list, got ${CHAINS.length}`);
+    // 29 at the time of writing. The number is not the point — the point is that it comes from
+    // `@opensea/api-types`' own generated `CHAIN_IDENTIFIERS`, wired into their weekly sync.
+    assert.ok(CHAINS.length > 20, `expected the full chain list, got ${CHAINS.length}`);
     assert.ok(CHAINS.includes("ethereum") && CHAINS.includes("base"));
   });
 });

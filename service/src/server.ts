@@ -12,7 +12,7 @@ import { combineList, combinePortfolio, fanOut } from "./aggregate.ts";
 import { MissingPatError, WalletTokenError } from "./auth.ts";
 import type { CacheEntry } from "./cache.ts";
 import type { Config } from "./config.ts";
-import { MissingApiKeyError, type OpenSeaClient } from "./opensea.ts";
+import { MissingApiKeyError, type OpenSeaClient, TOKEN_SORT_BY, type TokenSort } from "./opensea.ts";
 import type { WalletSource } from "./wallet-token.ts";
 
 const HOST = "127.0.0.1";
@@ -284,10 +284,16 @@ export function createApp(config: Config, client: OpenSeaClient, deps: ServerDep
 
       if (path === "/tokens/trending" || path === "/tokens/top") {
         const limit = intParam(url.searchParams.get("limit"), 100) ?? 20;
+        const sortBy = TOKEN_SORT_BY.find((s) => s === url.searchParams.get("sort_by"));
+        const direction = url.searchParams.get("sort_direction");
+        const sort: TokenSort = {
+          ...(sortBy === undefined ? {} : { sortBy }),
+          ...(direction === "asc" || direction === "desc" ? { sortDirection: direction } : {}),
+        };
         const entry =
           path === "/tokens/trending"
-            ? await client.trendingTokens(config.ttl.tokens, limit)
-            : await client.topTokens(config.ttl.tokens, limit);
+            ? await client.trendingTokens(config.ttl.tokens, limit, sort)
+            : await client.topTokens(config.ttl.tokens, limit, sort);
         send(res, 200, envelope(entry), headOnly);
         return;
       }

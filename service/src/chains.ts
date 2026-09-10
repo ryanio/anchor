@@ -5,32 +5,26 @@
  * about Solana tokens should be able to configure it as easily as someone doing EVM NFTs. That
  * means the chain list, the address rules, and the failure messages all have to be chain-aware.
  *
- * The list of chains is **not** maintained here. `Chain` is the SDK's enum and `ChainIdentifier`
- * is the union generated from OpenSea's OpenAPI spec; `ChainsAgree` below is a compile-time proof
- * that the two still describe the same set, so a chain added upstream shows up as a typecheck
- * failure rather than as a slug we silently reject.
+ * The list of chains is **not** maintained here. `CHAIN_IDENTIFIERS` and `isChainIdentifier` are
+ * generated from OpenSea's OpenAPI spec and shipped by `@opensea/api-types` itself (since 0.11.1,
+ * wired into their weekly sync), so a chain added upstream simply appears here on the next
+ * `npm update` rather than as a slug we silently reject. `Chain`, the SDK's own enum, is a second,
+ * separately-generated copy of the same 29 strings — used only where a chain-scoped SDK method asks
+ * for it by that nominal type — and `toSdkChain` below is the lookup between them. See
+ * docs/upstream.md entry 4 for why this file used to carry a compile-time proof that the two agreed.
  *
  * See docs/chains.md for what actually differs between chains, and what does not.
  */
 
-import type { ChainIdentifier } from "@opensea/api-types";
+import {
+  CHAIN_IDENTIFIERS,
+  type ChainIdentifier,
+  isChainIdentifier as isApiChainIdentifier,
+} from "@opensea/api-types";
 import { Chain } from "@opensea/sdk";
 
-/**
- * `readonly ChainIdentifier[]` when the SDK enum and the api-types union agree in both
- * directions, and `never` otherwise — which makes the assignment below fail to compile.
- *
- * This is the whole reason we can build the chain list from `Object.values(Chain)` instead of
- * hand-maintaining a copy that would rot the first time OpenSea ships a new chain.
- */
-type ChainsAgree = `${Chain}` extends ChainIdentifier
-  ? ChainIdentifier extends `${Chain}`
-    ? readonly ChainIdentifier[]
-    : never
-  : never;
-
-/** Every chain slug the OpenSea API accepts, straight from the SDK. 29 at the time of writing. */
-export const CHAINS: ChainsAgree = Object.values(Chain);
+/** Every chain slug the OpenSea API accepts, straight from `@opensea/api-types`. 29 chains. */
+export const CHAINS: readonly ChainIdentifier[] = CHAIN_IDENTIFIERS;
 
 /**
  * The api-types union and the SDK enum are the same strings, but TypeScript treats a string enum
@@ -41,8 +35,9 @@ const SDK_CHAIN: ReadonlyMap<ChainIdentifier, Chain> = new Map(
   Object.values(Chain).map((chain) => [chain, chain] as const),
 );
 
+/** Thin wrapper: the generated `isChainIdentifier` takes a `string`, and config input is `unknown`. */
 export function isChainIdentifier(value: unknown): value is ChainIdentifier {
-  return typeof value === "string" && SDK_CHAIN.has(value as ChainIdentifier);
+  return typeof value === "string" && isApiChainIdentifier(value);
 }
 
 /** Convert a validated slug to the enum the SDK's path-scoped methods expect. */

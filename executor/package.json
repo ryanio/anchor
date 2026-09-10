@@ -17,6 +17,6 @@
   },
   "license": "MIT",
   "dependencies": {
-    "@opensea/wallet-adapters": "^1.2.0"
+    "@opensea/wallet-adapters": "^1.2.1"
   }
 }

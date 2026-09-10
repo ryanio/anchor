@@ -29,7 +29,7 @@
 
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { ChainIdentifier } from "@opensea/api-types";
-import { OpenSeaAPI, type RequestOptions } from "@opensea/sdk";
+import { OpenSeaAPI, type RequestOptions, type TokenRankingSortBy } from "@opensea/sdk";
 import { MissingPatError, WalletTokenError, type WalletTokenProvider } from "./auth.ts";
 import type { Cache, CacheEntry } from "./cache.ts";
 import { toSdkChain } from "./chains.ts";
@@ -284,9 +284,11 @@ export class ReadOnlyOpenSeaAPI extends OpenSeaAPI {
       // Sleeping while holding a slot would starve every other read on the desktop, queued behind a
       // request that is doing nothing at all.
       //
-      // The return type is inferred rather than annotated: the SDK's `Camelize<T>` is a conditional
-      // type that `Awaited<>` will not collapse, and `Camelize` is not exported from the SDK root
-      // (docs/upstream.md entry 8), so there is no name to write here even if we wanted one.
+      // The return type is inferred rather than annotated: `Camelize<T>` is a conditional type that
+      // `Awaited<>` will not collapse. `@opensea/sdk` 12.7.0 exports `Camelize` from its root now
+      // (it did not when this was written), but that only gives the type a name — it does not
+      // change how `Awaited<>` distributes over it, so an explicit `Promise<Camelize<T>>` here would
+      // still widen to something `Result` above does not match.
       const attemptWithRetries = async () => {
         for (let attempt = 0; ; attempt++) {
           try {
@@ -330,6 +332,34 @@ export class ReadOnlyOpenSeaAPI extends OpenSeaAPI {
   override async request(method: never, apiPath: string): Promise<never> {
     throw new ReadOnlyViolationError(String(method), apiPath);
   }
+}
+
+/**
+ * Every value `/tokens/trending` and `/tokens/top` accept for `sort_by`, lowercase, straight from
+ * the OpenAPI spec (`@opensea/api-types` has no runtime export for this one, unlike `CHAIN_IDENTIFIERS`
+ * — see chains.ts — so it is copied here rather than generated). The API parses case-insensitively,
+ * but this is the casing the published enum and `TokenRankingSortBy` use, so query params are
+ * validated against it before reaching the SDK rather than left to a 400 from upstream.
+ */
+export const TOKEN_SORT_BY = [
+  "market_cap",
+  "one_hour_volume",
+  "one_day_volume",
+  "one_hour_price_change",
+  "one_day_price_change",
+  "seven_day_price_change",
+  "fourteen_day_price_change",
+  "thirty_day_price_change",
+  "two_hundred_day_price_change",
+  "one_year_price_change",
+  "price",
+  "genesis_date",
+  "score",
+] as const satisfies readonly TokenRankingSortBy[];
+
+export interface TokenSort {
+  sortBy?: TokenRankingSortBy;
+  sortDirection?: "asc" | "desc";
 }
 
 export interface ClientOptions {
@@ -539,17 +569,23 @@ export class OpenSeaClient {
     );
   }
 
-  /** GET /tokens/trending */
-  trendingTokens(ttl: number, limit = 20) {
+  /**
+   * GET /tokens/trending
+   *
+   * `sortBy` re-orders the same trending set rather than changing which tokens qualify — omitting
+   * it keeps the endpoint's own default (trending score). See `TOKEN_SORT_BY` above for the full
+   * set (docs/upstream.md entry 5, closed in `@opensea/sdk` 12.7.0).
+   */
+  trendingTokens(ttl: number, limit = 20, sort?: TokenSort) {
     return this.#call(ttl, "account", "/tokens/trending", (api) =>
-      api.getTrendingTokens({ limit, chains: [...this.#chains] }),
+      api.getTrendingTokens({ limit, chains: [...this.#chains], ...sort }),
     );
   }
 
-  /** GET /tokens/top */
-  topTokens(ttl: number, limit = 20) {
+  /** GET /tokens/top. `sortBy` defaults to one-day volume when omitted. */
+  topTokens(ttl: number, limit = 20, sort?: TokenSort) {
     return this.#call(ttl, "account", "/tokens/top", (api) =>
-      api.getTopTokens({ limit, chains: [...this.#chains] }),
+      api.getTopTokens({ limit, chains: [...this.#chains], ...sort }),
     );
   }
 

@@ -24,7 +24,7 @@
   },
   "license": "MIT",
   "dependencies": {
-    "@opensea/api-types": "^0.10.0",
-    "@opensea/sdk": "^12.5.0"
+    "@opensea/api-types": "^0.11.1",
+    "@opensea/sdk": "^12.7.0"
   }
 }
