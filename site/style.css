@@ -104,6 +104,14 @@ header nav a:hover { color: var(--accent); background: rgb(var(--accent-rgb) / .
   letter-spacing: -.018em; line-height: 1.25; margin-bottom: 7px;
 }
 .entry-summary { display: block; color: var(--text-muted); font-size: 15px; line-height: 1.6; }
+.entries-more { display: flex; justify-content: center; margin: var(--space-5) 0 0; }
+
+/* Present to a screen reader, invisible on screen — extra context on a link whose visible text
+   ("View more") is clear from its position but ambiguous read out of that context. */
+.visually-hidden {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
 
 /* ── prose ──────────────────────────────────────────────────────────── */
 article { max-width: var(--measure); }

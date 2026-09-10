@@ -439,12 +439,30 @@ for (const e of entries) {
   );
 }
 
-const index = entries
-  .map(
-    (e) =>
-      `<li><a class="glass" href="/diary/${e.slug}.html"><span class="entry-date">${esc(e.date)}</span><span class="entry-title">${esc(e.title)}</span><span class="entry-summary">${esc(e.summary)}</span></a></li>`,
-  )
-  .join("");
+/** Shared between the home page's teaser and the full archive — one row's markup, one place. */
+function entryRows(list: readonly (typeof entries)[number][]): string {
+  return list
+    .map(
+      (e) =>
+        `<li><a class="glass" href="/diary/${e.slug}.html"><span class="entry-date">${esc(e.date)}</span><span class="entry-title">${esc(e.title)}</span><span class="entry-summary">${esc(e.summary)}</span></a></li>`,
+    )
+    .join("");
+}
+
+/**
+ * The home page teases the latest few; the rest is one click away rather than one long scroll.
+ *
+ * Three is a page most people read all of, on a site whose whole pitch is one story a day — the
+ * fourth entry pushing the hero below the fold is the failure this avoids. `View more` only
+ * appears once there is somewhere for it to go.
+ */
+const HOME_ENTRY_COUNT = 3;
+const latestEntries = entries.slice(0, HOME_ENTRY_COUNT);
+const olderCount = entries.length - latestEntries.length;
+const viewMore =
+  olderCount > 0
+    ? `<a class="btn" href="${PATHS.archive}">View more<span class="visually-hidden"> diary entries</span></a>`
+    : "";
 
 const latest = entries[0];
 const hero = `<div class="hero">
@@ -457,7 +475,15 @@ const hero = `<div class="hero">
 
 writeFileSync(
   join(OUT, "index.html"),
-  page("Anchor — build diary", `${hero}<ul class="entries">${index}</ul>${COUNTDOWN_JS}`),
+  page(
+    "Anchor — build diary",
+    `${hero}<ul class="entries">${entryRows(latestEntries)}</ul>${viewMore ? `<p class="entries-more">${viewMore}</p>` : ""}${COUNTDOWN_JS}`,
+  ),
+);
+
+writeFileSync(
+  join(OUT, "diary", "index.html"),
+  page("Every entry — Anchor", `<h1>Every entry</h1><ul class="entries">${entryRows(entries)}</ul>`),
 );
 
 writeFileSync(

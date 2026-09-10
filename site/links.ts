@@ -37,4 +37,6 @@ export const PATHS = {
   changelog: "/changelog.html",
   llms: "/llms.txt",
   diary: (slug: string) => `/diary/${slug}.html`,
+  /** Every entry, not just the latest few the home page teases. */
+  archive: "/diary/",
 } as const;
