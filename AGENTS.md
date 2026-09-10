@@ -139,12 +139,15 @@ Two artefacts, both part of the work rather than an afterthought:
 
 - **`CHANGELOG.md`** — [Keep a Changelog](https://keepachangelog.com) format. Factual, user-visible
   changes.
-- **`site/diary/`** — the build diary. One entry per meaningful session: what you tried, what broke,
-  what you learned, what you'd do differently. Write it for a reader who wasn't there. Dead ends are
-  the interesting part; a diary that only records successes is marketing, not a diary.
+- **`site/diary/`** — the build diary. One entry per meaningful session, leading with what shipped:
+  a feature, a capability, something the project — or a device it drives — can now do that it could
+  not do yesterday. Write it for a reader who wasn't there and wants to know what's new. What it
+  took to get there is real material, not filler, but it is supporting evidence for the feature, not
+  a replacement for naming one.
 
-Be honest in both. "This approach failed and here's why" is more useful to a reader than a clean
-narrative, and this project is public precisely so people can learn from the real process.
+Be honest in both. If something broke on the way, say so plainly rather than smoothing it out of
+the story — the process is public precisely so people can see it — but an entry that leads with the
+break and never gets to what it enabled has buried its own news.
 
 ### Diary entries
 
@@ -159,21 +162,22 @@ or date it the day its work landed.
 
 The word cap exists because the failure mode is drift rather than one bad decision. Every paragraph looks
 worth keeping while you are adding it, and an entry that folded in a whole day's work reached 1522
-words that way. The limit forces the entry to be **one story** — the best thing that happened that
-day — instead of a summary of everything.
+words that way. The limit forces the entry to be **one story** — the most significant thing that
+shipped that day — instead of a summary of everything.
 
-Nothing is lost by cutting: `CHANGELOG.md` holds what shipped and `docs/` holds how it works. The
-changelog says so at the top — the diary has the story, the changelog has the facts.
+Nothing is lost by cutting: `CHANGELOG.md` holds the full factual list of what shipped and `docs/`
+holds how it works. The diary is not a second changelog — it is the one entry that names, in plain
+language, what the day's headline feature actually lets someone do.
 
-**Tone: honest and hopeful, not a lament.** Honesty about what broke is the point, and it is also not
-the ending. Every entry earns its keep by finishing somewhere better than it started — what got built,
-what is now impossible to get wrong, what the next person no longer has to discover. A bug found on
-day one is good news about day one hundred, and the entry should read that way.
+**Tone: lead with what shipped.** The opening names the capability — what a person, or a device
+Anchor drives, can now do — before any account of how the work went. A bug hit and fixed on the way
+is worth a sentence or two as supporting material; it is not itself the entry. An entry whose
+headline is a problem rather than a feature has the wrong lede, even if the problem was the more
+dramatic part of the day.
 
-The failure modes to avoid are both real: an entry that only records successes is marketing, and an
-entry that only records failures is a confession. Neither teaches anyone anything. State the mistake
-plainly, then spend the last third on the fix, the rule, and the thing that is better now. Self-blame
-is not rigour — the finding is the achievement.
+State what changed, then what it took to get there, in that order. Self-blame is not the point
+either way — a fix found along the way is worth naming, briefly, on the strength of what it enabled,
+not for its own sake.
 
 ## Working alongside other agents
 
