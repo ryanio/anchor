@@ -20,12 +20,46 @@
  * and a command that fails must not take the panel down with it.
  */
 
-import { execFile, spawn } from "node:child_process";
+import { execFile as realExecFile, spawn as realSpawn } from "node:child_process";
 import * as hypr from "./state/hypr.ts";
 
 export interface ActionContext {
   /** Switch the visible page. Provided by the panel. */
   readonly setPage: (name: string) => void;
+}
+
+// A key press must not touch the real desktop from a test. `dispatch` reaches a real browser, a
+// real volume, a real theme — none of it behind a flag a test author has to remember, because the
+// first time this went unmocked it opened a fake NFT's URL in a real Chromium window, repeatedly,
+// every time the suite ran. `spawn` and `execFile` are the only two exits to the outside world this
+// file has, so redirecting both here is what makes every test safe by construction rather than by
+// each test remembering to route around them.
+//
+// Narrowed to the one shape each call site actually uses, rather than `typeof spawn`/`typeof
+// execFile` — both are overloaded for callers this file is not, and a fake that only has to satisfy
+// what `spawnDetached`/`themeStep` call is a fake a test can write in three lines.
+interface FakeChild {
+  on(event: "error", listener: (error: Error) => void): void;
+  unref(): void;
+}
+type SpawnFn = (command: string, args: readonly string[]) => FakeChild;
+type ExecFileCallback = (error: Error | null, stdout: string, stderr: string) => void;
+type ExecFileFn = (command: string, args: readonly string[], callback: ExecFileCallback) => FakeChild;
+
+let spawnImpl: SpawnFn = (command, args) => realSpawn(command, args, { detached: true, stdio: "ignore" });
+let execFileImpl: ExecFileFn = (command, args, callback) =>
+  realExecFile(command, args, { encoding: "utf8", timeout: 5000 }, callback);
+
+/** Test-only. Replaces both exits to the real world; returns a restorer for `after`/`afterEach`. */
+export function useFakeProcesses(spawnFake: SpawnFn, execFileFake: ExecFileFn): () => void {
+  const previousSpawn = spawnImpl;
+  const previousExecFile = execFileImpl;
+  spawnImpl = spawnFake;
+  execFileImpl = execFileFake;
+  return () => {
+    spawnImpl = previousSpawn;
+    execFileImpl = previousExecFile;
+  };
 }
 
 /** Split on whitespace, honouring double quotes so a label can carry a space. */
@@ -43,7 +77,7 @@ export function tokenize(action: string): string[] {
 
 function spawnDetached(command: string, args: readonly string[]): void {
   try {
-    const child = spawn(command, args, { detached: true, stdio: "ignore" });
+    const child = spawnImpl(command, args);
     child.on("error", () => {
       /* a missing binary must not crash the panel */
     });
@@ -76,25 +110,20 @@ export function workspaceStep(delta: number): void {
 
 /** Cycle themes in the order `omarchy theme list` reports. */
 export function themeStep(delta: number): void {
-  execFile("omarchy", ["theme", "list"], { encoding: "utf8", timeout: 5000 }, (listError, listing) => {
+  execFileImpl("omarchy", ["theme", "list"], (listError, listing) => {
     if (listError) return;
-    execFile(
-      "omarchy",
-      ["theme", "current"],
-      { encoding: "utf8", timeout: 5000 },
-      (currentError, current) => {
-        if (currentError) return;
-        const themes = listing
-          .split("\n")
-          .map((t) => t.trim())
-          .filter((t) => t !== "");
-        const index = themes.indexOf(current.trim());
-        if (index === -1 || themes.length === 0) return;
-        const next = themes[(index + (delta > 0 ? 1 : -1) + themes.length) % themes.length];
-        if (next === undefined) return;
-        spawnDetached("omarchy", ["theme", "set", next]);
-      },
-    );
+    execFileImpl("omarchy", ["theme", "current"], (currentError, current) => {
+      if (currentError) return;
+      const themes = listing
+        .split("\n")
+        .map((t) => t.trim())
+        .filter((t) => t !== "");
+      const index = themes.indexOf(current.trim());
+      if (index === -1 || themes.length === 0) return;
+      const next = themes[(index + (delta > 0 ? 1 : -1) + themes.length) % themes.length];
+      if (next === undefined) return;
+      spawnDetached("omarchy", ["theme", "set", next]);
+    });
   });
 }
 

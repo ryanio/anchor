@@ -220,16 +220,14 @@ describe("marks scale with the slot they are drawn in", () => {
     assert.ok(svg.includes('clip-path="url(#'));
   });
 
-  test("an art key keeps its outline, which means the edge is drawn after the image", () => {
+  test("a tile draws no boundary stroke; the gap between real keys is the only edge it needs", () => {
     const svg = toSvg(
       { kind: "tile", emphasis: "ground", image: "data:image/jpeg;base64,AAAA" },
       TOKENS,
       KEY,
     );
-    const image = svg.indexOf("<image");
-    const stroke = svg.lastIndexOf("stroke=");
-    assert.ok(image !== -1);
-    assert.ok(stroke > image, "the boundary was painted over by the artwork");
+    assert.ok(svg.includes("<image"));
+    assert.ok(!svg.includes("stroke="));
   });
 
   test("artwork takes the whole key, so no caption is drawn over it", () => {

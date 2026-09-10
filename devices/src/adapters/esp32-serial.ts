@@ -152,12 +152,32 @@ export function openSerialLink(path: string): Link {
   output.on("error", (error: Error) => closed?.(error.message));
   input.on("close", () => closed?.("serial port closed"));
 
+  // A whole message in one `write()` call is not a whole message delivered. Measured on a real
+  // Cardputer (same ESP32-S3 native-USB CDC stack as this board): `output.write()`'s callback
+  // fires once Node hands the bytes to the kernel, not once the CDC-ACM bulk transfer actually
+  // lands, and a burst of a few hundred bytes to a few KB arriving faster than the firmware's main
+  // loop drains its RX buffer is silently dropped by the driver rather than errored. The dropped
+  // byte does not look like a dropped byte — it shifts the stream, and the next header is read out
+  // of the middle of a payload, which is exactly the `ANCHOR_FAULT_MAGIC` / `ANCHOR_FAULT_LENGTH`
+  // class this firmware's own README documents from bring-up. Pacing to a size a USB full-speed
+  // packet does not have to split, with a short pause between chunks for the firmware to drain what
+  // arrived, is the same fix that resolved it on the Cardputer. `splitRect` already bounds a single
+  // TILE to `maxTileBytes`; this bounds what actually reaches the wire in one go.
+  const CHUNK_BYTES = 64;
+  const CHUNK_DELAY_MS = 8;
+  const send = async (chunk: Buffer): Promise<void> => {
+    for (let i = 0; i < chunk.length; i += CHUNK_BYTES) {
+      const piece = chunk.subarray(i, i + CHUNK_BYTES);
+      await new Promise<void>((resolve, reject) => {
+        output.write(piece, (error) => (error ? reject(error) : resolve()));
+      });
+      if (i + CHUNK_BYTES < chunk.length) await new Promise((r) => setTimeout(r, CHUNK_DELAY_MS));
+    }
+  };
+
   return {
     description: path,
-    send: (chunk) =>
-      new Promise<void>((resolve, reject) => {
-        output.write(chunk, (error) => (error ? reject(error) : resolve()));
-      }),
+    send,
     onData: (handler) => {
       data = handler;
     },

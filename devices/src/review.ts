@@ -294,7 +294,7 @@ const PORTFOLIO_STALE: PortfolioSnapshot = { ...PORTFOLIO_FULL, ageSeconds: 2760
 /**
  * Everything else arrived and the headline did not.
  *
- * `readStats` returns null when `total_value_usd` is absent, and the panel then shows an em dash on
+ * `readStats` returns null when `totalValueUsd` is absent, and the panel then shows an em dash on
  * every money key while the strip still says the service is ready. That combination is the one most
  * likely to be read as "you have nothing", so it is the one most worth looking at.
  */
@@ -531,10 +531,26 @@ export const CASES: readonly CaseSpec[] = [
     device: "pulse-amoled",
     state: "ready",
     page: "portfolio",
-    title: "ESP32 pulse, 368×448 — the same page as a list",
+    rotation: 0,
+    title: "ESP32 pulse, 368×448 — the portfolio ambient view",
     looking:
-      "One screen, no keys, so the page becomes rows. Check the row rhythm, that the value column " +
-      "lines up down the right, and the padding against the panel edge — the outline is the glass.",
+      "A big screen with no keys is a display, not a smaller Stream Deck: the portfolio page becomes " +
+      "`pulseDetail`'s stats over a rotating piece of art rather than a list of rows. Check the scrim " +
+      "leaves every line legible over the art behind it, and that the footer's age reading survives " +
+      "at the panel's own font size.",
+  },
+  {
+    id: "pulse-gallery",
+    category: "Every device",
+    device: "pulse-amoled",
+    state: "ready",
+    page: "gallery",
+    rotation: 0,
+    title: "ESP32 pulse — the gallery page as an ambient art frame",
+    looking:
+      "The one piece in rotation, full-bleed, with its own name as the title rather than a row of " +
+      "thumbnails. Check the title never falls back to \"Untitled\" for a piece that has a name, and " +
+      "that the scrim still leaves the title readable over a mostly-light piece of art.",
   },
   {
     id: "pulse-round",
@@ -542,10 +558,12 @@ export const CASES: readonly CaseSpec[] = [
     device: "pulse-round",
     state: "ready",
     page: "portfolio",
+    rotation: 0,
     title: "ESP32 pulse, 240×240 round — the corners are not there",
     looking:
       "This panel is round in real life, so anything within about 35px of a corner of this square is " +
-      "off the glass. Is the first row's label clipped by the bezel? Is the last row?",
+      "off the glass. `pulseDetail`'s title, lines and footer are all laid out from `pad`, the same " +
+      "fraction of the panel every other surface uses — check none of them reach into a corner.",
   },
   {
     id: "cardputer",
@@ -886,15 +904,15 @@ export const CASES: readonly CaseSpec[] = [
   // ── contract surfaces ─────────────────────────────────────────────────────────────────────────
   {
     id: "contract-detail",
-    category: "Surfaces with no producer yet",
+    category: "Surfaces at their edges",
     device: "pulse-amoled",
     state: "ready",
-    title: "`detail` — declared in the contract, drawn by nothing",
+    title: "`detail` — every field at once, painted directly rather than through a page",
     looking:
-      "`types.ts` declares a `detail` surface and `svg.ts` renders one, but no code path in `Panel` " +
-      "emits one, so nobody has ever looked at it. Painted here directly. Check the footer is whole " +
-      "(it is never truncated by design), the badge does not collide with the title, and the lines " +
-      "have room to breathe.",
+      "`pulseDetail` never sets a badge or this many lines; this is the shape the contract allows " +
+      "rather than the shape a page asks for today, so a future producer does not discover a collision " +
+      "`svg.ts` never had to handle. Check the footer is whole (never truncated by design), the badge " +
+      "does not collide with the title, and the lines have room to breathe.",
     frame: () =>
       new Map<string, Surface>([
         [

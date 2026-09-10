@@ -281,7 +281,13 @@ async function main(): Promise<void> {
     if (!usesPortfolio) return;
     if (!force && portfolioTimeframe === panel.timeframe && portfolio.detail === "") return;
     portfolioTimeframe = panel.timeframe;
-    portfolio = await anchor.portfolio(panel.timeframe);
+    portfolio = await anchor.portfolio(panel.timeframe, undefined, undefined, (partial) => {
+      // The stat tiles, the tokens and the gallery each come from a different request; painting as
+      // each lands is what turns a cold cache from one long "loading…" into tiles that fill in as
+      // their own data actually arrives, instead of all of them waiting on the slowest.
+      portfolio = { ...portfolio, ...partial };
+      if (!options.once) void repaint();
+    });
     // Warm the gallery. The daemon does it in the background — a rotation must never wait on a
     // socket — but a single frame has no second chance, so --once waits: a preview with the art
     // missing is not a preview of what the device shows.

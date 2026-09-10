@@ -445,11 +445,26 @@ export function openSerial(path: string): CardputerLink {
     /* the same the other way: writing to a device that has gone must not take the process down */
   });
 
+  // A whole line in one `write()` call is not a whole line delivered: measured on this machine, a
+  // message past a couple hundred bytes (the theme, any real frame) is dropped far more often than
+  // it arrives, while a short one (hello, ~24 bytes) usually gets through. `output.write()`'s
+  // callback fires once Node hands the bytes to the kernel, not once the CDC-ACM bulk transfer
+  // actually lands, and the firmware's serial RX buffer does not keep up with a multi-hundred-byte
+  // burst arriving faster than `cable::tick()` drains it — the excess is silently dropped by the
+  // driver, `cable::readLine()` never sees a terminator, and the line is gone with no error on
+  // either end. Chunking to a size a USB full-speed packet does not have to split, with a short
+  // pause between chunks for the firmware's main loop to drain what arrived, fixed it: measured
+  // against a real Cardputer, a 1.4KB frame now lands every time it did not before.
+  const CHUNK_BYTES = 64;
+  const CHUNK_DELAY_MS = 8;
   return {
-    write: (line) =>
-      new Promise((resolve) => {
-        output.write(line, () => resolve());
-      }),
+    write: async (line) => {
+      for (let i = 0; i < line.length; i += CHUNK_BYTES) {
+        const chunk = line.slice(i, i + CHUNK_BYTES);
+        await new Promise<void>((resolve) => output.write(chunk, () => resolve()));
+        if (i + CHUNK_BYTES < line.length) await new Promise((r) => setTimeout(r, CHUNK_DELAY_MS));
+      }
+    },
     onLine: (next) => {
       handler = next;
     },
@@ -809,6 +824,14 @@ export class CardputerDevice implements AnchorDevice {
       // screen that has been through a reset is how a rebooted device stays blank for good.
       this.#painted.clear();
       for (const waiter of [...this.#helloWaiters]) waiter();
+      // A single write over this link is not a delivered write — `fs.createWriteStream`'s callback
+      // fires once Node hands the bytes to the kernel, not once the CDC-ACM bulk transfer actually
+      // lands, and measured on this machine a write immediately after opening the port is dropped
+      // more often than not. The device repeating its hello every HELLO_MS while unlinked is a
+      // retry signal already arriving for free; answering it turns a single lucky write into a
+      // self-healing loop bounded by that heartbeat, and it costs nothing once truly linked because
+      // the device stops sending it the moment a message of ours actually lands.
+      void this.greet();
       return;
     }
     if (message.t === "key") {

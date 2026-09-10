@@ -99,8 +99,10 @@ describe("a frame built for a case", () => {
     assert.ok(frame.has(STRIP_SLOT));
   });
 
-  test("a screen device gets a list rather than tiles", () => {
-    const frame = buildFrame(caseNamed("pulse-amoled"), config, TOKENS);
+  test("a screen device gets a list rather than tiles, on a page pulseDetail does not claim", () => {
+    // Not the "pulse-amoled" case: that one is on the portfolio page, which is `pulseDetail`'s and
+    // renders as "detail" on purpose. "list-selected" is the desktop page, which still becomes rows.
+    const frame = buildFrame(caseNamed("list-selected"), config, TOKENS);
     assert.equal(frame.get(SCREEN_SLOT)?.kind, "list");
   });
 
@@ -127,17 +129,16 @@ describe("a frame built for a case", () => {
     assert.equal(buildFrame(caseNamed("blank-pulse"), config, TOKENS).size, 0);
   });
 
-  test("a gallery key carries the piece's name, so a list device can say which piece", () => {
-    const frame = buildFrame(caseNamed("pulse-amoled"), config, TOKENS);
+  test("the gallery's ambient view carries the piece's own name, never a slot fallback", () => {
+    // The regression this guards: the source used to blank a piece's name once artwork arrived, and
+    // a consumer that fell through to a generic label read "Key 2" instead of what the piece was.
+    // `pulseDetail`'s gallery branch is the current place that could reintroduce it — its title falls
+    // back to "Untitled" for a piece with no name, never to the slot it happened to land in.
+    const frame = buildFrame(caseNamed("pulse-gallery"), config, TOKENS);
     const surface = frame.get(SCREEN_SLOT);
-    assert.equal(surface?.kind, "list");
-    if (surface?.kind !== "list") return;
-    // The regression: the source used to blank the name once artwork arrived, so a screen device
-    // fell through to `Key ${index}` and a row of the gallery read "Key 2".
-    assert.equal(
-      surface.rows.some((row) => /^Key \d+$/.test(row.label)),
-      false,
-      `a row fell back to its slot number: ${surface.rows.map((row) => row.label).join(", ")}`,
-    );
+    assert.equal(surface?.kind, "detail");
+    if (surface?.kind !== "detail") return;
+    assert.notEqual(surface.title, "");
+    assert.equal(/^Key \d+$/.test(surface.title), false, `title fell back to a slot number: ${surface.title}`);
   });
 });

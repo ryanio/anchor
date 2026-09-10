@@ -9,7 +9,7 @@
 
 import * as actions from "./actions.ts";
 import type { PageConfig, PanelConfig } from "./config.ts";
-import { cachedThumbnail } from "./images.ts";
+import { cachedThumbnail, thumbnail } from "./images.ts";
 import type { ServiceStatus } from "./state/anchor.ts";
 import { describeAge, type PortfolioSnapshot, TIMEFRAMES, type Timeframe } from "./state/anchor.ts";
 import type { DesktopSnapshot } from "./state/desktop.ts";
@@ -220,6 +220,17 @@ export function readKeySource(name: string, state: PanelState): KeyReading | nul
 }
 
 /** Slot ids the adapters agree on. Kept here so panel and adapter cannot drift apart. */
+/**
+ * How many pieces the gallery dial can put in rotation, at each end.
+ *
+ * `MAX` matches `/portfolio?limit=50` in `state/anchor.ts` — the dial cannot scrub past what was
+ * ever fetched, so its top end starts as "everything" rather than as a number invented here. `MIN`
+ * is one rather than zero: a dial that can turn a gallery empty is a dial that can make a page whose
+ * whole point is the art show `nothing to show`, which is a bug wearing a control's clothing.
+ */
+export const MAX_GALLERY_NFTS = 50;
+export const MIN_GALLERY_NFTS = 1;
+
 export const keySlot = (index: number): string => `key:${index}`;
 export const dialSlot = (index: number): string => `dial:${index}`;
 export const screenSlot = (index: number): string => `screen:${index}`;
@@ -300,6 +311,8 @@ export class Panel {
   #selected = 0;
   #filter = "";
   #deckBrightness = 70;
+  /** How many pieces are in the gallery's rotation, scrubbed by the `gallery` dial control. */
+  #nftLimit = MAX_GALLERY_NFTS;
   /**
    * The action each key would perform, as of the last frame.
    *
@@ -308,6 +321,11 @@ export class Panel {
    * than whatever the gallery has rotated to since.
    */
   readonly #dynamicActions = new Map<string, string>();
+  /**
+   * `url|size` keys currently being fetched by `#pulseArt`, so a piece that stays on screen for
+   * several ticks before the network answers gets one request rather than one every second.
+   */
+  readonly #artWarming = new Set<string>();
 
   constructor(config: PanelConfig, tokens: Tokens) {
     const first = config.pages[0];
@@ -334,6 +352,11 @@ export class Panel {
   /** The window the portfolio page is reporting over. Scrubbed by a dial, read by the poller. */
   get timeframe(): Timeframe {
     return this.#timeframe;
+  }
+
+  /** How many pieces are currently in the gallery's rotation. Scrubbed by the `gallery` dial. */
+  get nftLimit(): number {
+    return this.#nftLimit;
   }
 
   /**
@@ -382,6 +405,84 @@ export class Panel {
       .map(({ row }) => row);
   }
 
+  /**
+   * The cached large art for a pulse page, warming it in the background when it is missing.
+   *
+   * `cachedThumbnail` is synchronous and never fetches — `build` cannot await, so the piece a screen
+   * device is currently showing would stay art-less forever without something to start the fetch.
+   * `prefetch` already warms the small size the Stream Deck's tiles use; this is the same idea at the
+   * one size a big screen actually wants, for the one piece it is actually showing right now rather
+   * than the whole gallery a strip's filmstrip needs.
+   */
+  #pulseArt(url: string): string | undefined {
+    const size = 400;
+    const cached = cachedThumbnail(url, size);
+    if (cached !== null) return cached;
+    const key = `${size}|${url}`;
+    if (!this.#artWarming.has(key)) {
+      this.#artWarming.add(key);
+      void thumbnail(url, size).finally(() => this.#artWarming.delete(key));
+    }
+    return undefined;
+  }
+
+  /**
+   * The portfolio and gallery pages, as a screen device's ambient display rather than a menu.
+   *
+   * Returns `null` for every other page, which tells `build` to fall back to `rows` — a desktop or
+   * chains page is a set of things to choose between, and stays a list. These two are not: one is a
+   * number worth glancing at from across a desk, the other is a piece of art worth having up at all,
+   * and `renderDetail`'s `artwork` field exists for exactly this.
+   */
+  pulseDetail(state: PanelState): Surface | null {
+    const age =
+      state.portfolio === undefined || state.portfolio.detail !== ""
+        ? (state.portfolio?.detail ?? "loading…")
+        : state.portfolio.ageSeconds === null
+          ? "—"
+          : `${describeAge(state.portfolio.ageSeconds)}${state.portfolio.stale ? " (stale)" : ""}`;
+
+    if (this.#pageName === "portfolio") {
+      const stats = state.portfolio?.stats ?? null;
+      const nfts = state.portfolio?.nfts ?? [];
+      const piece = nfts.length === 0 ? undefined : nfts[(state.rotation ?? 0) % nfts.length];
+      return {
+        kind: "detail",
+        title: "Portfolio",
+        lines: [
+          { label: "Total", value: usd(stats?.totalUsd ?? null) },
+          { label: "P&L", value: percent(stats?.pnlPercentage ?? null), tone: signTone(stats?.pnlPercentage ?? null) },
+          { label: "NFTs", value: state.portfolio?.nftCount === null ? "—" : `${state.portfolio?.nftCount ?? "—"}` },
+          { label: "Window", value: (state.timeframe ?? "DAY").toLowerCase() },
+        ],
+        footer: age,
+        artwork: piece === undefined ? undefined : this.#pulseArt(piece.imageUrl),
+      };
+    }
+
+    if (this.#pageName === "gallery") {
+      const nfts = state.portfolio?.nfts ?? [];
+      const piece = nfts.length === 0 ? undefined : nfts[(state.rotation ?? 0) % nfts.length];
+      if (piece === undefined) {
+        return {
+          kind: "detail",
+          title: "Gallery",
+          lines: [],
+          footer: state.portfolio === undefined || state.portfolio.detail === "" ? "nothing to show" : age,
+        };
+      }
+      return {
+        kind: "detail",
+        title: piece.name || "Untitled",
+        lines: piece.collection === "" ? [] : [{ label: "Collection", value: piece.collection }],
+        footer: nfts.length > 1 ? `${nfts.length} pieces in rotation` : undefined,
+        artwork: this.#pulseArt(piece.imageUrl),
+      };
+    }
+
+    return null;
+  }
+
   get page(): PageConfig {
     const found = this.#config.pages.find((p) => p.name === this.#pageName) ?? this.#config.pages[0];
     if (found === undefined) throw new Error("a panel needs at least one page");
@@ -399,7 +500,14 @@ export class Panel {
   }
 
   /** Build the frame for a device, filling only the slots that device actually has. */
-  build(device: AnchorDevice, state: PanelState): Frame {
+  build(device: AnchorDevice, rawState: PanelState): Frame {
+    // The gallery dial scrubs how many pieces are in rotation, not how many show at once — eight
+    // keys show eight keys regardless. Sliced once here so every consumer (the gallery keys, the
+    // strip's own artwork) agrees on the same pool, the same way a filter narrows what `rows` sees.
+    const state: PanelState =
+      rawState.portfolio === undefined
+        ? rawState
+        : { ...rawState, portfolio: { ...rawState.portfolio, nfts: rawState.portfolio.nfts.slice(0, this.#nftLimit) } };
     const frame = new Map<string, Surface>();
     const page = this.page;
     const slots = new Set(device.capabilities.slots.filter((slot) => slot.paintable).map((slot) => slot.id));
@@ -447,10 +555,18 @@ export class Panel {
       });
     }
 
-    // A screen device gets the same page as a list. Selection is clamped here because the row count
-    // depends on the filter, which only the panel knows.
+    // A screen device gets the same page as a list, with one exception: `portfolio` and `gallery` are
+    // about a number and a piece of art respectively, and a menu of what would have been eight keys
+    // reads badly at 368x448 — the gap `docs/devices-esp32.md` names outright as still open. A big
+    // portrait panel with no keyboard is not a smaller Stream Deck; it is a display with room to be
+    // one, so those two pages become `pulseDetail` instead.
     for (const slot of device.capabilities.slots) {
       if (!slot.paintable || slot.kind !== "screen") continue;
+      const pulse = this.pulseDetail(state);
+      if (pulse !== null) {
+        frame.set(slot.id, pulse);
+        continue;
+      }
       const rows = this.rows(state);
       this.#selected = rows.length === 0 ? 0 : Math.min(this.#selected, rows.length - 1);
       frame.set(slot.id, {
@@ -468,11 +584,27 @@ export class Panel {
         tone: segment.tone,
         minChars: SEGMENT_MIN_CHARS[segment.source],
       }));
+      const hints = page.dials
+        .filter((dial) => dial.label !== "")
+        .map((dial) => ({ icon: dial.icon || undefined, label: dial.label }));
+      // The gallery is the one page about the art rather than a number, so its strip shows the art:
+      // thumbnails of what is actually held, not a sparkline of what it is worth. Every other portfolio
+      // page keeps the net-worth wash, and the desktop strip gets neither — a page shows one story
+      // behind its readings, not two competing for it.
+      const artwork =
+        this.#pageName === "gallery"
+          ? (state.portfolio?.nfts ?? [])
+              .map((piece) => cachedThumbnail(piece.imageUrl))
+              .filter((art): art is string => art !== null)
+              .slice(0, 8)
+          : undefined;
       frame.set(STRIP_SLOT, {
         kind: "bar",
         segments,
         // Only where it means something: the desktop strip has no portfolio behind it.
-        background: state.portfolio?.history,
+        background: artwork === undefined ? state.portfolio?.history : undefined,
+        artwork: artwork !== undefined && artwork.length > 0 ? artwork : undefined,
+        hints: hints.length > 0 ? hints : undefined,
       });
     }
 
@@ -532,6 +664,16 @@ export class Panel {
           const at = TIMEFRAMES.indexOf(this.#timeframe);
           const next = (at + (input.delta > 0 ? 1 : -1) + TIMEFRAMES.length) % TIMEFRAMES.length;
           this.#timeframe = TIMEFRAMES[next] ?? this.#timeframe;
+          return true;
+        }
+        if (dial.control === "gallery") {
+          // Scrubs the rotation pool, not a volume or a brightness, so the step is a count of pieces
+          // rather than a percentage.
+          const step = dial.step === 0 ? 1 : dial.step;
+          this.#nftLimit = Math.min(
+            MAX_GALLERY_NFTS,
+            Math.max(MIN_GALLERY_NFTS, this.#nftLimit + (input.delta > 0 ? step : -step)),
+          );
           return true;
         }
         const control = actions.DIAL_CONTROLS[dial.control];

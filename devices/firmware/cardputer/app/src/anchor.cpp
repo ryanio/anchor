@@ -91,6 +91,11 @@ struct Seg {
 
 struct Slot {
 	bool used;
+	// Set whenever a frame touches this slot, cleared once `draw()` has repainted it. Segment
+	// readings (clock, cpu, memory) change on most ticks, and a slot's own draw already clears its
+	// rect before it paints — so only redrawing what a frame actually named turns a full-panel flash
+	// every second into a redraw of the one tile that changed.
+	bool dirty;
 	uint8_t kind;
 	bool sel;
 	int16_t x, y, w, h;
@@ -361,6 +366,10 @@ void drawQuery()
 	         textdatum_t::middle_left);
 }
 
+// Whether the last `draw()` actually put slots on the glass, so the standby-to-content transition
+// gets the one full clear it needs and every ordinary update after it does not.
+bool hadContent = false;
+
 void draw()
 {
 	bool any = false;
@@ -371,13 +380,22 @@ void draw()
 		}
 	}
 	if (!any) {
+		hadContent = false;
 		drawStandby(linked ? "host connected, no frame yet" : "waiting for host");
 		return;
 	}
 
-	ui::clearBody(palette[GROUND]);
-	for (const Slot &s : slots) {
-		if (!s.used) {
+	// An overlay paints outside any slot's own rect, and the first frame after standby has nothing
+	// on the glass yet — both need the whole panel cleared. Everything else is a tick that changed
+	// zero or a few slots (a clock, a reading), and redrawing the rest is a visible flash bought for
+	// nothing: `drawTile`/`drawBar` already clear their own rect before they paint.
+	const bool overlay = !linked || queryActive;
+	const bool full = !hadContent || overlay;
+	if (full) {
+		ui::clearBody(palette[GROUND]);
+	}
+	for (Slot &s : slots) {
+		if (!s.used || (!full && !s.dirty)) {
 			continue;
 		}
 		if (s.kind == KIND_TILE) {
@@ -385,7 +403,9 @@ void draw()
 		} else if (s.kind == KIND_BAR) {
 			drawBar(s);
 		}
+		s.dirty = false;
 	}
+	hadContent = true;
 	if (!linked) {
 		drawLinkDown();
 	}
@@ -537,6 +557,7 @@ void applyFrame(JsonObjectConst message)
 		}
 		next.used = true;
 		s = next;
+		s.dirty = true;
 	}
 	view::repaint();
 }

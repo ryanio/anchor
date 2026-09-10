@@ -1,6 +1,8 @@
 {
   "brightness": 70,
-  "excludeCollections": ["arttoken"],
+  "excludeCollections": [
+    "arttoken"
+  ],
   "orderGalleryByValue": true,
   "pages": [
     {
@@ -111,11 +113,6 @@
           "source": "memory",
           "icon": "\uf1c0",
           "tone": "inkDim"
-        },
-        {
-          "source": "theme",
-          "icon": "\uf1fc",
-          "tone": "accent"
         }
       ]
     },
@@ -174,6 +171,13 @@
           "icon": "\uf017",
           "control": "timeframe",
           "step": 1
+        },
+        {
+          "index": 2,
+          "label": "Gallery",
+          "icon": "\uf03e",
+          "control": "gallery",
+          "step": 1
         }
       ],
       "segments": [
@@ -189,11 +193,6 @@
         {
           "source": "anchor.age",
           "icon": "\uf021",
-          "tone": "inkDim"
-        },
-        {
-          "source": "theme",
-          "icon": "\uf1fc",
           "tone": "inkDim"
         }
       ]
@@ -319,6 +318,13 @@
           "icon": "\uf185",
           "control": "deck",
           "step": 10
+        },
+        {
+          "index": 1,
+          "label": "Gallery",
+          "icon": "\uf03e",
+          "control": "gallery",
+          "step": 1
         }
       ],
       "segments": [
@@ -330,11 +336,6 @@
         {
           "source": "anchor.age",
           "icon": "\uf021",
-          "tone": "inkDim"
-        },
-        {
-          "source": "theme",
-          "icon": "\uf1fc",
           "tone": "inkDim"
         }
       ]

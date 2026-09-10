@@ -7,7 +7,9 @@
  */
 
 import assert from "node:assert/strict";
-import { describe, test } from "node:test";
+import { EventEmitter } from "node:events";
+import { after, before, describe, test } from "node:test";
+import { useFakeProcesses } from "./actions.ts";
 import { loadConfig, parseConfig } from "./config.ts";
 import type { PanelState } from "./panel.ts";
 import {
@@ -23,6 +25,25 @@ import {
 import { EMPTY_SNAPSHOT } from "./state/desktop.ts";
 import { toTokens } from "./tokens.ts";
 import type { AnchorDevice, DeviceCapabilities, Frame, SlotSpec } from "./types.ts";
+
+// `panel.handle({ kind: "press", ... })` on a key with a real action really dispatches it —
+// that is the behaviour under test. Without this, a fixture NFT's fake `openseaUrl` was opening a
+// real, broken opensea.io/item/1 in a real browser once per test run, because nothing here stood
+// between `actions.dispatch` and the desktop it was written to command. A restorer per file, not
+// per test: cheap, and it means a new test that presses a key needs to know nothing about this.
+const fakeChild = (): EventEmitter & { unref(): void } => Object.assign(new EventEmitter(), { unref() {} });
+
+let restoreProcesses: () => void;
+before(() => {
+  restoreProcesses = useFakeProcesses(
+    () => fakeChild(),
+    (_command, _args, callback) => {
+      callback(new Error("fake execFile: no real process runs in this test file"), "", "");
+      return fakeChild();
+    },
+  );
+});
+after(() => restoreProcesses());
 
 const TOKENS = toTokens("Test", { accent: "#7aa2f7" });
 
@@ -362,10 +383,13 @@ const screenDevice = (): AnchorDevice =>
   fakeDevice([{ id: SCREEN_SLOT, kind: "screen", paintable: true, width: 240, height: 135 }]);
 
 describe("screen devices", () => {
+  // Named "assets" rather than "portfolio" on purpose: that name is reserved now — a screen device on
+  // the real `portfolio` (or `gallery`) page gets `pulseDetail`'s ambient view instead of a list, and
+  // these tests are about list mechanics generically, not about that page.
   const config = parseConfig({
     pages: [
       {
-        name: "portfolio",
+        name: "assets",
         keys: [
           { index: 0, label: "Total", source: "portfolio.total" },
           { index: 1, label: "Ethereum", action: "exec true" },

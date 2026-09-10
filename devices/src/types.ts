@@ -159,6 +159,19 @@ export type Surface =
        * net-worth line across it costs no space and turns dead pixels into the shape of the day.
        */
       readonly background?: readonly number[];
+      /**
+       * Artwork tiled faintly across the full width, behind the text — the gallery's own answer to
+       * what `background` is for the portfolio's net worth: dead pixels turned into what a wash of
+       * pure colour cannot show, which piece you actually hold. Mutually exclusive with `background`
+       * in practice, since a page shows one story behind its readings, not two competing for it.
+       */
+      readonly artwork?: readonly string[];
+      /**
+       * A caption per rotary dial, laid out in equal zones aligned under where the dials physically
+       * sit — the strip's only way to say what a control with no display of its own does, before a
+       * hand reaches for it rather than after.
+       */
+      readonly hints?: readonly { readonly icon?: string; readonly label: string }[];
     }
   /**
    * Rows on a screen.
@@ -191,6 +204,13 @@ export type Surface =
        */
       readonly footer?: string;
       readonly badge?: string;
+      /**
+       * Full-bleed behind everything, under a scrim so the title and lines stay readable over it —
+       * the tile surface's `image` treatment, for a screen with room to actually show the piece
+       * rather than a thumbnail of it. What a portrait panel with nothing to click is *for*: an
+       * ambient frame, not a smaller Stream Deck.
+       */
+      readonly artwork?: string;
     };
 
 /** One paint: the surfaces to show, keyed by slot id. Slots left out keep what they had. */

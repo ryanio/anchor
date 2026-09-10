@@ -472,38 +472,72 @@ async function galleryFor(data: unknown, options: PortfolioOptions): Promise<Own
   return options.orderByValue === true ? await orderByValue(pieces) : pieces;
 }
 
+/**
+ * `onPartial` fires as each piece lands rather than once at the end. The four requests were already
+ * in flight together — `/portfolio/value` is typically the fastest, since it need not read the
+ * gallery — so a caller that wants the stat tiles painted the moment they are ready, without
+ * waiting on nine wallets' worth of NFTs, has always had the data available and lacked a seam to
+ * hear about it early. This is that seam; the final return value is unchanged; every field it never
+ * touches, `EMPTY_PORTFOLIO`'s "loading…" default still explains.
+ */
+export type PortfolioPartial = Partial<PortfolioSnapshot>;
+
 export async function portfolio(
   timeframe: Timeframe,
   timeoutMs = 25_000,
   options: PortfolioOptions = {},
+  onPartial?: (partial: PortfolioPartial) => void,
 ): Promise<PortfolioSnapshot> {
-  const [value, balances, nfts, history] = await Promise.all([
-    get(`/portfolio/value?timeframe=${timeframe}`, timeoutMs),
-    get("/balances?limit=100", timeoutMs),
-    get("/portfolio?limit=50", timeoutMs),
-    get(`/portfolio/history?timeframe=${timeframe}`, timeoutMs),
-  ]);
+  const valuePromise = get(`/portfolio/value?timeframe=${timeframe}`, timeoutMs);
+  const balancesPromise = get("/balances?limit=100", timeoutMs);
+  const nftsPromise = get("/portfolio?limit=50", timeoutMs);
+  const historyPromise = get(`/portfolio/history?timeframe=${timeframe}`, timeoutMs);
 
+  const value = await valuePromise;
   if (value === null) return { ...EMPTY_PORTFOLIO, detail: "service not running" };
   if (value.status === 428) return { ...EMPTY_PORTFOLIO, detail: "no wallet configured" };
   if (value.status !== 200) return { ...EMPTY_PORTFOLIO, detail: `portfolio ${value.status}` };
 
   const envelope = isEnvelope(value.body) ? value.body : null;
   const { ageSeconds, stale } = metaOf(value.body);
-  const nftData = nfts?.status === 200 && isEnvelope(nfts.body) ? nfts.body.data : null;
-  const collections = nftData === null ? [] : readCollections(nftData);
+  const stats = readStats(envelope?.data);
+  onPartial?.({ stats, ageSeconds, stale, detail: "" });
 
-  const balanceData = balances?.status === 200 && isEnvelope(balances.body) ? balances.body.data : null;
-  return {
-    stats: readStats(envelope?.data),
-    tokens: balanceData === null ? [] : readTokens(balanceData),
-    history: history?.status === 200 && isEnvelope(history.body) ? readHistory(history.body.data) : [],
-    chains: balanceData === null ? [] : readChains(balanceData),
-    nfts: nftData === null ? [] : await galleryFor(nftData, options),
-    nftCount: collections.reduce((sum, entry) => sum + entry.count, 0) || null,
-    topCollections: collections,
-    ageSeconds,
-    stale,
-    detail: "",
-  };
+  const balancesReady = balancesPromise.then((balances) => {
+    const balanceData = balances?.status === 200 && isEnvelope(balances.body) ? balances.body.data : null;
+    const result = {
+      tokens: balanceData === null ? [] : readTokens(balanceData),
+      chains: balanceData === null ? [] : readChains(balanceData),
+    };
+    onPartial?.(result);
+    return result;
+  });
+
+  const galleryReady = nftsPromise.then(async (nfts) => {
+    const nftData = nfts?.status === 200 && isEnvelope(nfts.body) ? nfts.body.data : null;
+    const collections = nftData === null ? [] : readCollections(nftData);
+    const result = {
+      nfts: nftData === null ? [] : await galleryFor(nftData, options),
+      nftCount: collections.reduce((sum, entry) => sum + entry.count, 0) || null,
+      topCollections: collections,
+    };
+    onPartial?.(result);
+    return result;
+  });
+
+  const historyReady = historyPromise.then((history) => {
+    const result = {
+      history: history?.status === 200 && isEnvelope(history.body) ? readHistory(history.body.data) : [],
+    };
+    onPartial?.(result);
+    return result;
+  });
+
+  const [balancesResult, galleryResult, historyResult] = await Promise.all([
+    balancesReady,
+    galleryReady,
+    historyReady,
+  ]);
+
+  return { stats, ageSeconds, stale, detail: "", ...balancesResult, ...galleryResult, ...historyResult };
 }

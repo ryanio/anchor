@@ -209,11 +209,7 @@ function renderTile(surface: Extract<Surface, { kind: "tile" }>, tokens: Tokens,
   // is the fix for the bug this had: the old face drew the accent on a tile tinted 30% toward the
   // accent, which measured 2.25:1 on `rose-pine`.
   const mark = onActive(tokens, tone);
-  // A hairline edge gives the tile a defined boundary against the gap, which is what stops a dark
-  // key reading as a hole. An active key is filled, so its own fill is the edge and the shape comes
-  // from the gap around it instead.
   const hasImage = typeof surface.image === "string" && surface.image !== "";
-  const edge = active ? tone : tokens.line;
   const inset = tileInset(w, h);
   const radius = tileRadius(w, h);
   const innerW = w - inset * 2;
@@ -406,16 +402,13 @@ function renderTile(surface: Extract<Surface, { kind: "tile" }>, tokens: Tokens,
     parts.push(text(w - r - offset, r + offset, Math.round(r * 1.1), tokens.sunken, surface.badge, true));
   }
 
-  // The boundary is drawn last and outside the clip. A hairline edge gives the tile a defined shape
-  // against the gap, which is what stops a dark key reading as a hole — and drawn before the
-  // artwork it was simply painted over, leaving a gallery key as the one key on the deck with no
-  // outline at all. An active key is filled, so its own fill carries the shape and the edge takes
-  // the tone.
+  // No boundary stroke: a Stream Deck key is already a physically separate button with a real gap
+  // around it, and `tokens.sunken` filling that gap already keeps a dark tile from reading as a
+  // hole. A drawn outline on top of a real bezel was decoration duplicating the hardware.
   return (
     `<rect width="${w}" height="${h}" fill="${tokens.sunken}"/>` +
     `<defs><clipPath id="${clipId}"><rect ${shape}/></clipPath></defs>` +
-    `<g clip-path="url(#${clipId})">${parts.join("")}</g>` +
-    `<rect ${shape} fill="none" stroke="${edge}" stroke-width="1"/>`
+    `<g clip-path="url(#${clipId})">${parts.join("")}</g>`
   );
 }
 
@@ -447,10 +440,19 @@ export function barMetrics(h: number): {
 
 function renderBar(surface: Extract<Surface, { kind: "bar" }>, tokens: Tokens, slot: SlotSpec): string {
   const { width: w, height: h } = slot;
-  const { textSize, iconSize, edgePad, gap, rule } = barMetrics(h);
+
+  // A hint row sits above the readings, one zone per dial — laid out where the dials physically are,
+  // so a hand reaching for a control has already been told what it does. Reserved off the top rather
+  // than a fixed constant, the same discipline `barMetrics` uses, so it still holds on the Cardputer's
+  // 18px strip (where `roomForHints` below simply comes out false and the row disappears).
+  const hints = surface.hints ?? [];
+  const roomForHints = hints.length > 0 && h * 0.28 >= MIN_LEGIBLE_PX + 6;
+  const hintH = roomForHints ? Math.round(h * 0.3) : 0;
+  const barH = h - hintH;
+  const { textSize, iconSize, edgePad, gap, rule } = barMetrics(barH);
 
   // Laid out before anything is drawn, because two decisions below need to know how much of the
-  // strip the readings actually take: whether the net-worth wash has any room left to live in, and
+  // strip the readings actually take: whether the wash behind them has any room left to live in, and
   // where each segment starts.
   //
   // A segment needs room to say something. Ellipsising "Catppuccin" down to "Catp…" spends the
@@ -481,32 +483,85 @@ function renderBar(surface: Extract<Surface, { kind: "bar" }>, tokens: Tokens, s
 
   const parts: string[] = [`<rect width="${w}" height="${h}" fill="${tokens.ground}"/>`];
 
-  // Behind the text, at low opacity: present when you look for it, invisible when you are reading.
+  // Behind everything, at low opacity: present when you look for it, invisible when you are reading.
+  // Artwork and the net-worth wash are alternatives — a page tells one story behind its readings, not
+  // two — so at most one of them ever draws.
   //
   // Only where there is a behind. The wash exists because the deck's strip is 800x100 and the
   // readings use a third of it, so the rest was dead pixels — but on an 18px bar the readings use
   // the whole height, and the same curve is then drawn straight through the glyphs. The test is the
   // strip's own proportions rather than a model name.
-  const roomForWash = textSize * 1.2 < h * 0.5;
-  if (roomForWash && Array.isArray(surface.background) && surface.background.length > 1) {
+  const roomForWash = textSize * 1.2 < barH * 0.5;
+  if (roomForWash && Array.isArray(surface.artwork) && surface.artwork.length > 0) {
+    // Tiled edge to edge and cropped to the full bar height: a filmstrip of what is actually held,
+    // faded enough that the readings on top of it stay the thing you read first.
+    const tileW = w / surface.artwork.length;
+    const tiles = surface.artwork
+      .map(
+        (art, i) =>
+          `<image href="${art}" x="${i * tileW}" y="0" width="${tileW}" height="${h}" ` +
+          `preserveAspectRatio="xMidYMid slice"/>`,
+      )
+      .join("");
+    parts.push(`<g opacity="0.22">${tiles}</g>`);
+  } else if (roomForWash && Array.isArray(surface.background) && surface.background.length > 1) {
     parts.push(
-      `<g opacity="0.34">${sparkline(surface.background, 0, h * 0.22, w, h * 0.72, tokens.accent)}</g>`,
+      `<g opacity="0.34">${sparkline(surface.background, 0, hintH + barH * 0.22, w, barH * 0.72, tokens.accent)}</g>`,
     );
   }
-  parts.push(`<rect width="${w}" height="${rule}" fill="${tokens.accent}"/>`);
+
+  if (roomForHints) {
+    // Equal zones across the full width, aligned under where the dials physically sit — a caption
+    // read before a hand reaches for the control, not a status read after.
+    const zoneW = w / hints.length;
+    for (let i = 0; i < hints.length; i++) {
+      const hint = hints[i];
+      if (hint === undefined) continue;
+      const cx = i * zoneW + zoneW / 2;
+      const hintIconSize = Math.max(MIN_LEGIBLE_PX, Math.round(hintH * 0.42));
+      const hintTextSize = Math.max(MIN_LEGIBLE_PX, Math.round(hintH * 0.34));
+      const label = fit(hint.label, hintTextSize, zoneW - edgePad);
+      if (hint.icon) {
+        const iconW = cellWidth(hint.icon, hintIconSize);
+        const labelW = advance(label, hintTextSize);
+        const totalW = iconW + Math.round(hintIconSize * 0.3) + labelW;
+        const startX = cx - totalW / 2;
+        parts.push(
+          `<text x="${startX}" y="${hintH / 2}" font-family="monospace" font-size="${hintIconSize}" ` +
+            `fill="${tokens.inkDim}" dominant-baseline="central">${escapeXml(hint.icon)}</text>` +
+            `<text x="${startX + iconW + Math.round(hintIconSize * 0.3)}" y="${hintH / 2}" ` +
+            `font-family="monospace" font-size="${hintTextSize}" fill="${tokens.inkDim}" ` +
+            `dominant-baseline="central">${escapeXml(label)}</text>`,
+        );
+      } else {
+        parts.push(
+          `<text x="${cx}" y="${hintH / 2}" font-family="monospace" font-size="${hintTextSize}" ` +
+            `fill="${tokens.inkDim}" text-anchor="middle" dominant-baseline="central">${escapeXml(label)}</text>`,
+        );
+      }
+      if (i > 0) {
+        parts.push(
+          `<line x1="${i * zoneW}" y1="${hintH * 0.22}" x2="${i * zoneW}" y2="${hintH * 0.78}" ` +
+            `stroke="${tokens.line}" stroke-width="1"/>`,
+        );
+      }
+    }
+  }
+
+  parts.push(`<rect y="${hintH}" width="${w}" height="${rule}" fill="${tokens.accent}"/>`);
 
   for (const segment of placed) {
     let at = segment.x;
     if (segment.icon) {
       parts.push(
-        `<text x="${at}" y="${h / 2}" font-family="monospace" font-size="${iconSize}" ` +
+        `<text x="${at}" y="${hintH + barH / 2}" font-family="monospace" font-size="${iconSize}" ` +
           `fill="${toneColor(tokens, segment.tone)}" dominant-baseline="central">${escapeXml(segment.icon)}</text>`,
       );
       at += cellWidth(segment.icon, iconSize);
     }
     parts.push(
-      `<text x="${at}" y="${h / 2}" font-family="monospace" font-size="${textSize}" fill="${tokens.inkStrong}" ` +
-        `dominant-baseline="central">${escapeXml(segment.body)}</text>`,
+      `<text x="${at}" y="${hintH + barH / 2}" font-family="monospace" font-size="${textSize}" ` +
+        `fill="${tokens.inkStrong}" dominant-baseline="central">${escapeXml(segment.body)}</text>`,
     );
   }
   return parts.join("");
@@ -629,7 +684,22 @@ function renderDetail(surface: Extract<Surface, { kind: "detail" }>, tokens: Tok
   const lineSize = Math.max(MIN_LEGIBLE_PX, Math.round(short * 0.062));
   const footerSize = Math.max(MIN_LEGIBLE_PX, Math.round(short * 0.05));
   const inner = w - pad * 2;
-  const parts: string[] = [`<rect width="${w}" height="${h}" fill="${tokens.ground}"/>`];
+  const parts: string[] = [];
+  const hasArtwork = typeof surface.artwork === "string" && surface.artwork !== "";
+  if (hasArtwork) {
+    parts.push(
+      `<image href="${surface.artwork}" x="0" y="0" width="${w}" height="${h}" ` +
+        `preserveAspectRatio="xMidYMid slice"/>`,
+    );
+    // A flat scrim, not measured per-theme the way `contrast.test.ts` holds every other mark to —
+    // there is no fixed contrast ratio against a photo whose content is not known until it arrives.
+    // This is the honest limit of that guarantee, not a gap in applying it: strong enough that ink
+    // tuned for `ground` reads on top of most art, on a panel whose whole point is showing the art
+    // underneath it.
+    parts.push(`<rect width="${w}" height="${h}" fill="${tokens.ground}" opacity="0.62"/>`);
+  } else {
+    parts.push(`<rect width="${w}" height="${h}" fill="${tokens.ground}"/>`);
+  }
 
   let footerTop = h - pad;
   if (surface.footer !== undefined) {
