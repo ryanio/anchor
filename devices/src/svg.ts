@@ -441,10 +441,11 @@ export function barMetrics(h: number): {
 function renderBar(surface: Extract<Surface, { kind: "bar" }>, tokens: Tokens, slot: SlotSpec): string {
   const { width: w, height: h } = slot;
 
-  // A hint row sits above the readings, one zone per dial — laid out where the dials physically are,
-  // so a hand reaching for a control has already been told what it does. Reserved off the top rather
-  // than a fixed constant, the same discipline `barMetrics` uses, so it still holds on the Cardputer's
-  // 18px strip (where `roomForHints` below simply comes out false and the row disappears).
+  // A hint row sits below the readings, one zone per dial — on the Stream Deck Plus the strip sits
+  // *above* the row of dials, so the edge closest to a physical dial is the bottom one, and that is
+  // where its caption belongs. Reserved off the bottom rather than a fixed constant, the same
+  // discipline `barMetrics` uses, so it still holds on the Cardputer's 18px strip (where
+  // `roomForHints` below simply comes out false and the row disappears).
   const hints = surface.hints ?? [];
   const roomForHints = hints.length > 0 && h * 0.28 >= MIN_LEGIBLE_PX + 6;
   const hintH = roomForHints ? Math.round(h * 0.3) : 0;
@@ -506,14 +507,31 @@ function renderBar(surface: Extract<Surface, { kind: "bar" }>, tokens: Tokens, s
     parts.push(`<g opacity="0.22">${tiles}</g>`);
   } else if (roomForWash && Array.isArray(surface.background) && surface.background.length > 1) {
     parts.push(
-      `<g opacity="0.34">${sparkline(surface.background, 0, hintH + barH * 0.22, w, barH * 0.72, tokens.accent)}</g>`,
+      `<g opacity="0.34">${sparkline(surface.background, 0, barH * 0.22, w, barH * 0.72, tokens.accent)}</g>`,
+    );
+  }
+
+  for (const segment of placed) {
+    let at = segment.x;
+    if (segment.icon) {
+      parts.push(
+        `<text x="${at}" y="${barH / 2}" font-family="monospace" font-size="${iconSize}" ` +
+          `fill="${toneColor(tokens, segment.tone)}" dominant-baseline="central">${escapeXml(segment.icon)}</text>`,
+      );
+      at += cellWidth(segment.icon, iconSize);
+    }
+    parts.push(
+      `<text x="${at}" y="${barH / 2}" font-family="monospace" font-size="${textSize}" ` +
+        `fill="${tokens.inkStrong}" dominant-baseline="central">${escapeXml(segment.body)}</text>`,
     );
   }
 
   if (roomForHints) {
+    parts.push(`<rect y="${barH}" width="${w}" height="${rule}" fill="${tokens.accent}"/>`);
     // Equal zones across the full width, aligned under where the dials physically sit — a caption
     // read before a hand reaches for the control, not a status read after.
     const zoneW = w / hints.length;
+    const hintMidY = barH + hintH / 2;
     for (let i = 0; i < hints.length; i++) {
       const hint = hints[i];
       if (hint === undefined) continue;
@@ -527,42 +545,30 @@ function renderBar(surface: Extract<Surface, { kind: "bar" }>, tokens: Tokens, s
         const totalW = iconW + Math.round(hintIconSize * 0.3) + labelW;
         const startX = cx - totalW / 2;
         parts.push(
-          `<text x="${startX}" y="${hintH / 2}" font-family="monospace" font-size="${hintIconSize}" ` +
+          `<text x="${startX}" y="${hintMidY}" font-family="monospace" font-size="${hintIconSize}" ` +
             `fill="${tokens.inkDim}" dominant-baseline="central">${escapeXml(hint.icon)}</text>` +
-            `<text x="${startX + iconW + Math.round(hintIconSize * 0.3)}" y="${hintH / 2}" ` +
+            `<text x="${startX + iconW + Math.round(hintIconSize * 0.3)}" y="${hintMidY}" ` +
             `font-family="monospace" font-size="${hintTextSize}" fill="${tokens.inkDim}" ` +
             `dominant-baseline="central">${escapeXml(label)}</text>`,
         );
       } else {
         parts.push(
-          `<text x="${cx}" y="${hintH / 2}" font-family="monospace" font-size="${hintTextSize}" ` +
+          `<text x="${cx}" y="${hintMidY}" font-family="monospace" font-size="${hintTextSize}" ` +
             `fill="${tokens.inkDim}" text-anchor="middle" dominant-baseline="central">${escapeXml(label)}</text>`,
         );
       }
       if (i > 0) {
         parts.push(
-          `<line x1="${i * zoneW}" y1="${hintH * 0.22}" x2="${i * zoneW}" y2="${hintH * 0.78}" ` +
+          `<line x1="${i * zoneW}" y1="${barH + hintH * 0.22}" x2="${i * zoneW}" y2="${barH + hintH * 0.78}" ` +
             `stroke="${tokens.line}" stroke-width="1"/>`,
         );
       }
     }
-  }
-
-  parts.push(`<rect y="${hintH}" width="${w}" height="${rule}" fill="${tokens.accent}"/>`);
-
-  for (const segment of placed) {
-    let at = segment.x;
-    if (segment.icon) {
-      parts.push(
-        `<text x="${at}" y="${hintH + barH / 2}" font-family="monospace" font-size="${iconSize}" ` +
-          `fill="${toneColor(tokens, segment.tone)}" dominant-baseline="central">${escapeXml(segment.icon)}</text>`,
-      );
-      at += cellWidth(segment.icon, iconSize);
-    }
-    parts.push(
-      `<text x="${at}" y="${hintH + barH / 2}" font-family="monospace" font-size="${textSize}" ` +
-        `fill="${tokens.inkStrong}" dominant-baseline="central">${escapeXml(segment.body)}</text>`,
-    );
+  } else {
+    // No hint row to sit above, so the rule reverts to a plain top border — the strip's original
+    // shape, which every device without dials (Cardputer, ESP32) or without room for the row still
+    // uses.
+    parts.push(`<rect width="${w}" height="${rule}" fill="${tokens.accent}"/>`);
   }
   return parts.join("");
 }
