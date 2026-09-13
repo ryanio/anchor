@@ -12,6 +12,7 @@ import type { PageConfig, PanelConfig } from "./config.ts";
 import { cachedThumbnail, thumbnail } from "./images.ts";
 import type { ServiceStatus } from "./state/anchor.ts";
 import { describeAge, type PortfolioSnapshot, TIMEFRAMES, type Timeframe } from "./state/anchor.ts";
+import type { TrendingCollection, TrendingToken } from "./state/discovery.ts";
 import type { DesktopSnapshot } from "./state/desktop.ts";
 import type { Tokens } from "./tokens.ts";
 import type { AnchorDevice, BarSegment, DeviceInput, Frame, ListRow, Surface, TokenName } from "./types.ts";
@@ -25,6 +26,9 @@ export interface PanelState {
   readonly timeframe?: Timeframe;
   /** Advances on a slow beat so galleries rotate. Set by the runner, not by a clock in here. */
   readonly rotation?: number;
+  /** What's moving, not what's owned — the `tokens`/`nfts` pages' data. See `state/discovery.ts`. */
+  readonly discoveryTokens?: readonly TrendingToken[];
+  readonly discoveryCollections?: readonly TrendingCollection[];
 }
 
 /** What a data-backed key shows: a reading, an optional caption, and a tone. */
@@ -477,6 +481,51 @@ export class Panel {
         lines: piece.collection === "" ? [] : [{ label: "Collection", value: piece.collection }],
         footer: nfts.length > 1 ? `${nfts.length} pieces in rotation` : undefined,
         artwork: this.#pulseArt(piece.imageUrl),
+      };
+    }
+
+    // Discovery: what is moving, not what is owned. Neither page needs a wallet configured, and
+    // both rotate on the same wall-clock formula the gallery does — the whole reason several units
+    // at a desk showing the same page settle on the same item at the same time with no coordination
+    // between them at all: `rotation` is `Date.now() / ROTATE_MS`, not a per-process counter.
+    if (this.#pageName === "tokens") {
+      const list = state.discoveryTokens ?? [];
+      const item = list.length === 0 ? undefined : list[(state.rotation ?? 0) % list.length];
+      if (item === undefined) {
+        return { kind: "detail", title: "Trending Tokens", lines: [], footer: "loading…" };
+      }
+      const change = item.priceChange24h;
+      const changeStr = change === null ? "—" : `${change >= 0 ? "+" : ""}${change.toFixed(2)}%`;
+      return {
+        kind: "detail",
+        title: `${item.name || item.symbol} (${item.symbol})`,
+        lines: [
+          { label: "Price", value: item.usdPrice === null ? "—" : usd(String(item.usdPrice)) },
+          {
+            label: "24h",
+            value: changeStr,
+            tone: change === null || change === 0 ? undefined : change > 0 ? "positive" : "negative",
+          },
+          { label: "Volume", value: item.volume24h === null ? "—" : usd(String(item.volume24h)) },
+          { label: "Chain", value: item.chain },
+        ],
+        footer: `${list.length} trending`,
+        artwork: this.#pulseArt(item.imageUrl),
+      };
+    }
+
+    if (this.#pageName === "nfts") {
+      const list = state.discoveryCollections ?? [];
+      const item = list.length === 0 ? undefined : list[(state.rotation ?? 0) % list.length];
+      if (item === undefined) {
+        return { kind: "detail", title: "Trending NFTs", lines: [], footer: "loading…" };
+      }
+      return {
+        kind: "detail",
+        title: item.name || item.slug,
+        lines: [],
+        footer: `${list.length} trending`,
+        artwork: this.#pulseArt(item.imageUrl),
       };
     }
 

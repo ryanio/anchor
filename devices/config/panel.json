@@ -334,6 +334,18 @@
           "tone": "inkDim"
         }
       ]
+    },
+    {
+      "name": "tokens",
+      "keys": [],
+      "dials": [],
+      "segments": []
+    },
+    {
+      "name": "nfts",
+      "keys": [],
+      "dials": [],
+      "segments": []
     }
   ]
 }

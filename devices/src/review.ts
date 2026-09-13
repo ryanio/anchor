@@ -45,6 +45,7 @@ import { keySlot, Panel, type PanelState, SCREEN_SLOT } from "./panel.ts";
 import { composeSvg, type PreviewRect, writePreview } from "./preview.ts";
 import type { OwnedNft, PortfolioSnapshot, Timeframe } from "./state/anchor.ts";
 import { EMPTY_PORTFOLIO, type ServiceStatus } from "./state/anchor.ts";
+import type { TrendingCollection, TrendingToken } from "./state/discovery.ts";
 import { type DesktopSnapshot, EMPTY_SNAPSHOT } from "./state/desktop.ts";
 import { themeOnDisk } from "./themes.ts";
 import { deviceTokens, type Tokens } from "./tokens.ts";
@@ -349,6 +350,9 @@ export interface StateFixture {
   readonly service: ServiceStatus;
   readonly portfolio: PortfolioSnapshot;
   readonly timeframe: Timeframe;
+  /** Only the `tokens`/`nfts` pages read these — every other state fixture omits them. */
+  readonly discoveryTokens?: readonly TrendingToken[];
+  readonly discoveryCollections?: readonly TrendingCollection[];
 }
 
 /**
@@ -394,6 +398,36 @@ export const STATES: readonly StateFixture[] = [
     service: SERVICE_READY,
     portfolio: EMPTY_PORTFOLIO,
     timeframe: "DAY",
+  },
+  {
+    // Real fields, measured against the live service on 2026-09-13 — see state/discovery.test.ts.
+    id: "discovery-ready",
+    desktop: DESKTOP_LIVE,
+    service: SERVICE_READY,
+    portfolio: EMPTY_PORTFOLIO,
+    timeframe: "DAY",
+    discoveryTokens: [
+      {
+        address: "6GmAFSYs4gk3FDao5FzzySQpPZaWsa4rUJHacpMpUNgx",
+        chain: "solana",
+        name: "STONK",
+        symbol: "STONK",
+        imageUrl: "",
+        usdPrice: 0.24363121651577396,
+        marketCapUsd: 243631213.93031165,
+        volume24h: 26444366.05314564,
+        priceChange24h: -0.045847499788359974,
+        openseaUrl: "",
+      },
+    ],
+    discoveryCollections: [
+      {
+        slug: "courtyard-nft",
+        name: "Courtyard.io",
+        imageUrl: "",
+        openseaUrl: "",
+      },
+    ],
   },
   {
     id: "ready",
@@ -901,6 +935,32 @@ export const CASES: readonly CaseSpec[] = [
       "alone in a room. The outline is the panel edge — nothing inside it should carry a figure.",
   },
 
+  // ── discovery: what is moving, not what is owned ─────────────────────────────────────────────
+  {
+    id: "pulse-tokens",
+    category: "Every device",
+    device: "pulse-amoled",
+    state: "discovery-ready",
+    page: "tokens",
+    rotation: 0,
+    title: "ESP32 pulse — a trending token, rotating on the same wall-clock beat as the gallery",
+    looking:
+      "No wallet needed for this page at all. Check the 24h change tone (green up, red down) and " +
+      "that a token with a long name does not push the symbol off the title.",
+  },
+  {
+    id: "pulse-nfts",
+    category: "Every device",
+    device: "pulse-amoled",
+    state: "discovery-ready",
+    page: "nfts",
+    rotation: 0,
+    title: "ESP32 pulse — a trending collection",
+    looking:
+      "The NFT-side mirror of pulse-tokens: same rotation, same ambient treatment, no wallet and " +
+      "no configured watchlist needed — this is discovery, not the owned gallery.",
+  },
+
   // ── contract surfaces ─────────────────────────────────────────────────────────────────────────
   {
     id: "contract-detail",
@@ -1021,6 +1081,8 @@ export function buildFrame(entry: DeviceCase, config: PanelConfig, tokens: Token
     portfolio: state.portfolio,
     timeframe: state.timeframe,
     rotation: spec.rotation ?? 0,
+    discoveryTokens: state.discoveryTokens,
+    discoveryCollections: state.discoveryCollections,
   };
   const frame = panel.build(new StillDevice(device.capabilities), panelState);
 

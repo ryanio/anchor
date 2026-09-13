@@ -65,6 +65,8 @@ import { Panel, STRIP_SLOT } from "./panel.ts";
 import { clearRasterCache } from "./raster.ts";
 import * as anchor from "./state/anchor.ts";
 import { EMPTY_PORTFOLIO, type PortfolioSnapshot, type Timeframe } from "./state/anchor.ts";
+import * as discovery from "./state/discovery.ts";
+import type { TrendingCollection, TrendingToken } from "./state/discovery.ts";
 import { DesktopState, sessionLocked } from "./state/desktop.ts";
 import * as hypr from "./state/hypr.ts";
 import { loadTokens, type Tokens } from "./tokens.ts";
@@ -221,6 +223,10 @@ async function main(): Promise<void> {
   let service = await anchor.status();
   let portfolio: PortfolioSnapshot = EMPTY_PORTFOLIO;
   let portfolioTimeframe: Timeframe | null = null;
+  let discoveryTokens: readonly TrendingToken[] = [];
+  let discoveryCollections: readonly TrendingCollection[] = [];
+  let discoveryTokensFetched = false;
+  let discoveryCollectionsFetched = false;
   let painting = false;
   let repaintQueued = false;
   let reconnecting = false;
@@ -302,6 +308,27 @@ async function main(): Promise<void> {
     }
   };
 
+  /**
+   * Trending tokens/NFTs — what anyone can look up, not what Ryan owns, so unlike `refreshPortfolio`
+   * this never needs a wallet configured. Fetched once per page, then kept warm by the same
+   * `servicePoll` beat portfolio data already rides.
+   */
+  const refreshDiscovery = async (force = false): Promise<void> => {
+    const pageName = panel.pageName;
+    if (pageName !== "tokens" && pageName !== "nfts") return;
+    if (pageName === "tokens") {
+      if (!force && discoveryTokensFetched) return;
+      discoveryTokensFetched = true;
+      discoveryTokens = await discovery.trendingTokens();
+      void prefetch(discoveryTokens.map((t) => t.imageUrl)).then(() => repaint());
+    } else {
+      if (!force && discoveryCollectionsFetched) return;
+      discoveryCollectionsFetched = true;
+      discoveryCollections = await discovery.trendingCollections();
+      void prefetch(discoveryCollections.map((c) => c.imageUrl)).then(() => repaint());
+    }
+  };
+
   const repaint = async (): Promise<void> => {
     if (painting) {
       repaintQueued = true;
@@ -326,6 +353,8 @@ async function main(): Promise<void> {
           portfolio,
           timeframe: panel.timeframe,
           rotation: rotationIndex(),
+          discoveryTokens,
+          discoveryCollections,
         }),
       );
     } catch (error) {
@@ -341,6 +370,7 @@ async function main(): Promise<void> {
   };
 
   await refreshPortfolio();
+  await refreshDiscovery();
 
   if (options.once) {
     await repaint();
@@ -354,6 +384,8 @@ async function main(): Promise<void> {
         portfolio,
         timeframe: panel.timeframe,
         rotation: rotationIndex(),
+        discoveryTokens,
+        discoveryCollections,
       });
       await writePreview(composeSvg(frame, tokens, device.capabilities.slots), options.preview);
       process.stderr.write(`preview written to ${options.preview}\n`);
@@ -380,6 +412,7 @@ async function main(): Promise<void> {
       }
       // A page switch or a timeframe scrub changes what data is wanted, so ask before repainting.
       void refreshPortfolio().then(() => repaint());
+      void refreshDiscovery().then(() => repaint());
     });
   };
   listen();
@@ -430,6 +463,7 @@ async function main(): Promise<void> {
   const servicePoll = setInterval(async () => {
     service = await anchor.status();
     await refreshPortfolio(true);
+    await refreshDiscovery(true);
   }, SERVICE_POLL_MS);
   // Only a device that can lose the link needs one; a Stream Deck notices a dead host by being
   // unplugged from it.

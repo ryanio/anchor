@@ -78,15 +78,18 @@ describe("the packaged default config", () => {
     const { config } = loadConfig();
     assert.deepEqual(
       config.pages.map((page) => page.name),
-      ["desktop", "portfolio", "chains", "gallery"],
+      ["desktop", "portfolio", "chains", "gallery", "tokens", "nfts"],
     );
   });
 
-  test("every page fills the whole device", () => {
+  test("every page with keys at all fills the whole device", () => {
     // Eight keys is what the hardware has. A page using five is five buttons of product and three
-    // of background.
+    // of background. A page with *no* keys is a different thing: it is not for a keyed device at
+    // all — `tokens`/`nfts` exist only for a screen's `pulseDetail`, and a Stream Deck showing one
+    // would get eight blank tiles, which `Panel.build` already handles by clearing them.
     const { config } = loadConfig();
     for (const page of config.pages) {
+      if (page.keys.length === 0) continue;
       assert.equal(page.keys.length, 8, `${page.name} uses ${page.keys.length} of 8 keys`);
     }
   });
@@ -170,6 +173,10 @@ describe("the packaged default config", () => {
       ]),
     );
     for (const page of config.pages) {
+      // A page with no keys at all (`tokens`/`nfts` — a screen-only ambient view, no keyed device
+      // ever shows it) has no key-press navigation to be a dead end *in*: this check is about a
+      // loop of `page` actions, and a page with none cannot form one.
+      if (page.keys.length === 0) continue;
       const seen = new Set<string>();
       const queue = [page.name];
       while (queue.length > 0) {
