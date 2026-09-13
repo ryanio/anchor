@@ -498,9 +498,20 @@ Anchor's wire protocol in the middle of it, for a program flint does not speak t
 audiences, one tree: the ownership was wrong even where the reuse was right.
 
 So the reuse stays and the ownership moves. Anchor builds *against* flint rather than living in it.
-An Anchor build compiles no flint view at all — measured at 33.5% of the app slot against the full
-firmware's 37.7% — so "only the Anchor app is on this unit" is a fact about what was linked rather
-than a setting somebody could get wrong.
+An Anchor build compiled no flint view at all when this was written — measured at 33.5% of the app
+slot against the full firmware's 37.7% — so "only the Anchor app is on this unit" was a fact about
+what was linked rather than a setting somebody could get wrong.
+
+**Updated for the OpenSea offsite: that is no longer quite true, on purpose.** `[anchor]` in
+`platformio.ini` now names three of flint's own views back into the build — Maze, Beat, Calm — and
+`FLINT_PROFILE_VIEWS` lists all four, so a unit boots to a small menu rather than straight into
+Anchor. The reasoning above still holds for why *Anchor's own files* live outside flint's tree, and
+still governs every view that touches Anchor's data or wire protocol; it does not extend to "the
+firmware may never show anything else." A unit handed to a stranger at a table for thirty seconds
+benefits from something to play with that needs no portfolio and no explanation, and all three were
+picked because they cost the build nothing to be wrong about: no network, no store prefix, no
+dependency on anything Anchor owns. Anchor is still first in the menu, and the wire protocol, the
+one thing this section's argument actually protects, is unchanged.
 
 What made it possible is that flint grew a way to host an app it does not contain, which is
 [`docs/APPS.md`](https://github.com/ryanio/cardputer/blob/main/docs/APPS.md) in that repository:

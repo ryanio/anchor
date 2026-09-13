@@ -56,6 +56,8 @@ constexpr uint32_t POWER_MS = 5000;
 // data. Long enough that a cable which is genuinely about to link — the ordinary case — is never
 // pre-empted by a screen change nobody asked for; see standalone.h for why this exists at all.
 constexpr uint32_t STANDALONE_GRACE_MS = 10000;
+// How long the identity screen holds before the first trending tiles show.
+constexpr uint32_t STANDALONE_INTRO_MS = 3000;
 
 // One strip and nine tiles, which is what the host's Cardputer geometry sends.
 // Held as a fixed table rather than a map so a frame allocates nothing.
@@ -138,6 +140,14 @@ uint32_t unlinkedSince = 0;
 // each transition needs, and nothing else does.
 bool standaloneShown = false;
 size_t lastStandaloneCount = 0;
+
+// Three seconds naming what this is before the tiles start, for whoever just
+// picked the unit up off a table and has never seen Anchor before. Zero means
+// "not decided yet"; tick() sets it the moment standalone data is first ready
+// and clears it (with standaloneIntroShown) the next time the cable drops, so
+// somebody who walks up later gets the same three seconds too.
+uint32_t standaloneIntroUntil = 0;
+bool standaloneIntroShown = false;
 
 bool queryActive = false;
 char queryText[72];
@@ -339,6 +349,27 @@ void drawStandby(const char *reason)
 	         textdatum_t::top_center);
 }
 
+// The first thing a stranger sees once standalone data is ready: what this is, and where to go
+// read the code, before it drops into a grid of ticker symbols that mean nothing without that
+// context. A printed card on the table is the reliable way to hand someone a scannable link at
+// arm's length — this screen is the on device echo of it, not a substitute for one.
+void drawStandaloneIntro()
+{
+	M5GFX &g = ui::gfx();
+	ui::clearBody(palette[GROUND]);
+	g.setFont(&fonts::Font4);
+	ui::clip("Anchor", ui::W / 2, 14, ui::W - 12, palette[ACCENT], palette[GROUND],
+	         textdatum_t::top_center);
+	g.setFont(&fonts::Font2);
+	ui::clip("open source, no wallet on this screen", ui::W / 2, 50, ui::W - 12, palette[INK],
+	         palette[GROUND], textdatum_t::top_center);
+	g.setFont(&fonts::Font0);
+	ui::clip("trending, live from OpenSea", ui::W / 2, 76, ui::W - 12, palette[INK_DIM],
+	         palette[GROUND], textdatum_t::top_center);
+	ui::clip("hack it: github.com/ryanio/anchor", ui::W / 2, 90, ui::W - 12, palette[LINE],
+	         palette[GROUND], textdatum_t::top_center);
+}
+
 // No host, past STANDALONE_GRACE_MS, with standalone.cpp actually having something to show — see
 // standalone.h for what this is and why it exists. The same 18px-strip-then-3x3-tiles layout the
 // host itself sends for this geometry, laid out here directly rather than borrowed from the wire
@@ -440,7 +471,11 @@ void draw()
 		const bool standaloneReady =
 		    !linked && (millis() - unlinkedSince > STANDALONE_GRACE_MS) && standalone::hasData();
 		if (standaloneReady) {
-			drawStandaloneTokens();
+			if (standaloneIntroUntil != 0 && millis() < standaloneIntroUntil) {
+				drawStandaloneIntro();
+			} else {
+				drawStandaloneTokens();
+			}
 			standaloneShown = true;
 			return;
 		}
@@ -707,6 +742,8 @@ void enter()
 	lastHello = 0;
 	unlinkedSince = millis();
 	standaloneShown = false;
+	standaloneIntroUntil = 0;
+	standaloneIntroShown = false;
 	sentLevel = -1;
 	savedBrightness = ui::gfx().getBrightness();
 	// The host clears its own per slot cache when a device says hello and
@@ -736,6 +773,9 @@ void tick()
 	if (linked && now - lastHost > LINK_TIMEOUT_MS) {
 		linked = false;
 		unlinkedSince = now;
+		// A fresh unlink is a fresh stranger's chance too, by the same reasoning enter() resets these.
+		standaloneIntroUntil = 0;
+		standaloneIntroShown = false;
 		view::repaint();
 	}
 	if (!linked && now - lastHello > HELLO_MS) {
@@ -756,6 +796,18 @@ void tick()
 		standalone::tick();
 		if (standalone::tokenCount != lastStandaloneCount) {
 			lastStandaloneCount = standalone::tokenCount;
+			view::repaint();
+		}
+		if (!standaloneIntroShown && standalone::hasData()) {
+			standaloneIntroShown = true;
+			standaloneIntroUntil = now + STANDALONE_INTRO_MS;
+			view::repaint();
+		}
+		// Nothing else asks for a repaint on a plain clock tick, so the intro's own end needs its own
+		// one-shot: past the deadline, draw()'s guard reads standaloneIntroUntil == 0 as "not in the
+		// intro any more" the same way it reads it before the intro has ever started.
+		if (standaloneIntroUntil != 0 && now >= standaloneIntroUntil) {
+			standaloneIntroUntil = 0;
 			view::repaint();
 		}
 	}
