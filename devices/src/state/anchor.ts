@@ -14,10 +14,10 @@
  * already cost this project an afternoon.
  */
 
-export interface Envelope {
-  readonly data: unknown;
-  readonly meta: { readonly fetchedAt: string; readonly ageSeconds: number; readonly stale: boolean };
-}
+import { type Envelope, baseUrl, get, isEnvelope, metaOf } from "./service.ts";
+
+export type { Envelope };
+export { baseUrl };
 
 export interface ServiceStatus {
   readonly reachable: boolean;
@@ -47,32 +47,6 @@ interface Health {
   readonly primaryChain?: string;
 }
 
-const DEFAULT_BASE = "http://127.0.0.1:8787";
-
-export function baseUrl(): string {
-  return process.env.ANCHOR_SERVICE_URL ?? DEFAULT_BASE;
-}
-
-async function get(path: string, timeoutMs: number): Promise<{ status: number; body: unknown } | null> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const response = await fetch(`${baseUrl()}${path}`, { signal: controller.signal });
-    const text = await response.text();
-    let body: unknown = null;
-    try {
-      body = JSON.parse(text);
-    } catch {
-      body = text;
-    }
-    return { status: response.status, body };
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
 /** Is the service up? A failure here is ordinary — most users will not be running it. */
 export async function status(timeoutMs = 1500): Promise<ServiceStatus> {
   const offline = { reachable: false, hasWallet: false, primaryChain: "" };
@@ -90,12 +64,6 @@ export async function status(timeoutMs = 1500): Promise<ServiceStatus> {
   };
 }
 
-function isEnvelope(value: unknown): value is Envelope {
-  if (typeof value !== "object" || value === null) return false;
-  const meta = (value as { meta?: unknown }).meta;
-  if (typeof meta !== "object" || meta === null) return false;
-  return typeof (meta as { ageSeconds?: unknown }).ageSeconds === "number";
-}
 
 /**
  * Fetch `/portfolio/value`. Returns the envelope, or null when the service is absent or refused.
@@ -422,10 +390,6 @@ export async function orderByValue(nfts: readonly OwnedNft[], timeoutMs = 8000):
   return [...nfts].sort((a, b) => (floors.get(b.collection) ?? -1) - (floors.get(a.collection) ?? -1));
 }
 
-function metaOf(body: unknown): { ageSeconds: number | null; stale: boolean } {
-  if (!isEnvelope(body)) return { ageSeconds: null, stale: false };
-  return { ageSeconds: body.meta.ageSeconds, stale: body.meta.stale };
-}
 
 /**
  * Fetch everything the portfolio page shows, in one pass.
