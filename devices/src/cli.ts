@@ -160,6 +160,10 @@ const ROTATE_MS = 6000;
 function rotationIndex(): number {
   return Math.floor(Date.now() / ROTATE_MS);
 }
+/** How far into the current rotation window the clock is right now, for `pulseDetail`'s sync bar. */
+function rotationProgress(): number {
+  return (Date.now() % ROTATE_MS) / ROTATE_MS;
+}
 
 async function main(): Promise<void> {
   const options = parseArgs(process.argv.slice(2));
@@ -353,6 +357,7 @@ async function main(): Promise<void> {
           portfolio,
           timeframe: panel.timeframe,
           rotation: rotationIndex(),
+          rotationProgress: rotationProgress(),
           discoveryTokens,
           discoveryCollections,
         }),
@@ -384,6 +389,7 @@ async function main(): Promise<void> {
         portfolio,
         timeframe: panel.timeframe,
         rotation: rotationIndex(),
+        rotationProgress: rotationProgress(),
         discoveryTokens,
         discoveryCollections,
       });

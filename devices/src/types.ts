@@ -211,6 +211,13 @@ export type Surface =
        * ambient frame, not a smaller Stream Deck.
        */
       readonly artwork?: string;
+      /**
+       * 0 to 1: how far through the current rotation window this item is, for a page that rotates —
+       * drawn as a thin fill-up bar so several units rotating on the same wall clock visibly agree
+       * they are about to flip together, rather than that agreement being invisible. Undefined when
+       * the page is not rotating (nothing to show a countdown toward).
+       */
+      readonly syncProgress?: number;
     };
 
 /** One paint: the surfaces to show, keyed by slot id. Slots left out keep what they had. */

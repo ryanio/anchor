@@ -26,6 +26,12 @@ export interface PanelState {
   readonly timeframe?: Timeframe;
   /** Advances on a slow beat so galleries rotate. Set by the runner, not by a clock in here. */
   readonly rotation?: number;
+  /**
+   * 0 to 1: how far through the current rotation window `rotation` is, for `pulseDetail`'s sync
+   * bar. Set by the runner from the same wall clock `rotation` comes from, so it needs no state of
+   * its own to stay in step with it.
+   */
+  readonly rotationProgress?: number;
   /** What's moving, not what's owned — the `tokens`/`nfts` pages' data. See `state/discovery.ts`. */
   readonly discoveryTokens?: readonly TrendingToken[];
   readonly discoveryCollections?: readonly TrendingCollection[];
@@ -461,6 +467,7 @@ export class Panel {
         ],
         footer: age,
         artwork: piece === undefined ? undefined : this.#pulseArt(piece.imageUrl),
+        syncProgress: nfts.length > 1 ? state.rotationProgress : undefined,
       };
     }
 
@@ -481,6 +488,7 @@ export class Panel {
         lines: piece.collection === "" ? [] : [{ label: "Collection", value: piece.collection }],
         footer: nfts.length > 1 ? `${nfts.length} pieces in rotation` : undefined,
         artwork: this.#pulseArt(piece.imageUrl),
+        syncProgress: nfts.length > 1 ? state.rotationProgress : undefined,
       };
     }
 
@@ -511,6 +519,7 @@ export class Panel {
         ],
         footer: `${list.length} trending`,
         artwork: this.#pulseArt(item.imageUrl),
+        syncProgress: list.length > 1 ? state.rotationProgress : undefined,
       };
     }
 
@@ -526,6 +535,7 @@ export class Panel {
         lines: [],
         footer: `${list.length} trending`,
         artwork: this.#pulseArt(item.imageUrl),
+        syncProgress: list.length > 1 ? state.rotationProgress : undefined,
       };
     }
 

@@ -707,6 +707,13 @@ function renderDetail(surface: Extract<Surface, { kind: "detail" }>, tokens: Tok
     parts.push(`<rect width="${w}" height="${h}" fill="${tokens.ground}"/>`);
   }
 
+  if (typeof surface.syncProgress === "number") {
+    const barH = Math.max(2, Math.round(short * 0.012));
+    const filled = Math.max(0, Math.min(1, surface.syncProgress));
+    parts.push(`<rect x="0" y="0" width="${w}" height="${barH}" fill="${tokens.sunken}" opacity="0.55"/>`);
+    parts.push(`<rect x="0" y="0" width="${(w * filled).toFixed(1)}" height="${barH}" fill="${tokens.accent}"/>`);
+  }
+
   let footerTop = h - pad;
   if (surface.footer !== undefined) {
     // Shrink first, then wrap, so the whole sentence survives on a narrow screen.
