@@ -11,6 +11,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { combineList, combinePortfolio, fanOut } from "./aggregate.ts";
 import { MissingPatError, WalletTokenError } from "./auth.ts";
 import type { CacheEntry } from "./cache.ts";
+import { isChainIdentifier } from "./chains.ts";
 import type { Config } from "./config.ts";
 import { MissingApiKeyError, type OpenSeaClient, TOKEN_SORT_BY, type TokenSort } from "./opensea.ts";
 import type { WalletSource } from "./wallet-token.ts";
@@ -28,15 +29,21 @@ const ROUTES = [
   "/balances",
   "/activity",
   "/collections",
+  "/collections/trending",
+  "/collections/top",
   "/collections/:slug",
   "/collections/:slug/stats",
   "/collections/:slug/listings",
   "/collections/:slug/offers",
+  "/collections/:slug/holders",
   "/tokens",
   "/tokens/trending",
   "/tokens/top",
   "/tokens/:address",
   "/tokens/:address/price_history",
+  "/tokens/:address/holders",
+  "/tokens/:address/activity",
+  "/tokens/:address/activity_stats",
 ];
 
 /** Routes that read the configured wallet, and so need one configured. */
@@ -320,6 +327,22 @@ export function createApp(config: Config, client: OpenSeaClient, deps: ServerDep
         return;
       }
 
+      // Discovery, ahead of the watched-collection routes below for the same reason
+      // /tokens/trending is checked ahead of /tokens: "trending"/"top" would otherwise be read as a
+      // collection slug by the /^\/collections\/([^/]+).../ match further down.
+      if (path === "/collections/trending" || path === "/collections/top") {
+        const limit = intParam(url.searchParams.get("limit"), 100) ?? 20;
+        const timeframe = url.searchParams.get("timeframe") ?? undefined;
+        const category = url.searchParams.get("category") ?? undefined;
+        const sortBy = url.searchParams.get("sort_by") ?? undefined;
+        const entry =
+          path === "/collections/trending"
+            ? await client.trendingCollections(config.ttl.stats, limit, { timeframe, category })
+            : await client.topCollections(config.ttl.stats, limit, { sortBy, category });
+        send(res, 200, envelope(entry), headOnly);
+        return;
+      }
+
       // Stats for every watched collection. A missing API key is a whole-service condition, not a
       // per-slug one — swallowing it here returned 200 with error strings, and a widget checking
       // res.ok rendered "no collections" instead of prompting for a key.
@@ -351,27 +374,70 @@ export function createApp(config: Config, client: OpenSeaClient, deps: ServerDep
         return;
       }
 
-      const tokenMatch = /^\/tokens\/([^/]+)(?:\/(price_history))?$/.exec(path);
+      const tokenMatch = /^\/tokens\/([^/]+)(?:\/(price_history|holders|activity|activity_stats))?$/.exec(
+        path,
+      );
       if (tokenMatch) {
         const address = decodeURIComponent(tokenMatch[1]!);
-        if (tokenMatch[2] === "price_history") {
-          const startTime =
-            url.searchParams.get("start_time") ??
-            new Date(Date.now() - DEFAULT_PRICE_WINDOW_MS).toISOString();
-          const endTime = url.searchParams.get("end_time") ?? undefined;
-          send(
-            res,
-            200,
-            envelope(await client.tokenPriceHistory(address, config.ttl.prices, { startTime, endTime })),
-            headOnly,
-          );
+        const limit = intParam(url.searchParams.get("limit"), 200);
+        const cursor = url.searchParams.get("cursor") ?? undefined;
+        // A trending/top token can be on any configured chain, not just the primary one — see
+        // opensea.ts `tokenHolders`. An explicit, invalid chain is a 400: silently falling back to
+        // the primary chain would answer with someone else's token and call it correct.
+        const chainParam = url.searchParams.get("chain") ?? undefined;
+        if (chainParam !== undefined && !isChainIdentifier(chainParam)) {
+          send(res, 400, { error: `Unknown chain: ${chainParam}` }, headOnly);
           return;
         }
-        send(res, 200, envelope(await client.token(address, config.ttl.tokens)), headOnly);
-        return;
+        switch (tokenMatch[2]) {
+          case "price_history": {
+            const startTime =
+              url.searchParams.get("start_time") ??
+              new Date(Date.now() - DEFAULT_PRICE_WINDOW_MS).toISOString();
+            const endTime = url.searchParams.get("end_time") ?? undefined;
+            send(
+              res,
+              200,
+              envelope(await client.tokenPriceHistory(address, config.ttl.prices, { startTime, endTime })),
+              headOnly,
+            );
+            return;
+          }
+          case "holders":
+            send(
+              res,
+              200,
+              envelope(
+                await client.tokenHolders(address, config.ttl.tokens, { limit, cursor, chain: chainParam }),
+              ),
+              headOnly,
+            );
+            return;
+          case "activity":
+            send(
+              res,
+              200,
+              envelope(
+                await client.tokenActivity(address, config.ttl.tokens, { limit, cursor, chain: chainParam }),
+              ),
+              headOnly,
+            );
+            return;
+          case "activity_stats":
+            send(
+              res,
+              200,
+              envelope(await client.tokenActivityStats(address, config.ttl.tokens, chainParam)),
+              headOnly,
+            );
+            return;
+          default:
+            send(res, 200, envelope(await client.token(address, config.ttl.tokens)), headOnly);
+            return;
+        }
       }
 
-      const match = /^\/collections\/([^/]+)(?:\/(stats|listings|offers))?$/.exec(path);
+      const match = /^\/collections\/([^/]+)(?:\/(stats|listings|offers|holders))?$/.exec(path);
       if (match) {
         const slug = decodeURIComponent(match[1]!);
         switch (match[2]) {
@@ -384,6 +450,17 @@ export function createApp(config: Config, client: OpenSeaClient, deps: ServerDep
           case "offers":
             send(res, 200, envelope(await client.collectionOffers(slug, config.ttl.offers)), headOnly);
             return;
+          case "holders": {
+            const limit = intParam(url.searchParams.get("limit"), 200);
+            const cursor = url.searchParams.get("cursor") ?? undefined;
+            send(
+              res,
+              200,
+              envelope(await client.collectionHolders(slug, config.ttl.stats, { limit, cursor })),
+              headOnly,
+            );
+            return;
+          }
           default:
             send(res, 200, envelope(await client.collection(slug, config.ttl.stats)), headOnly);
             return;

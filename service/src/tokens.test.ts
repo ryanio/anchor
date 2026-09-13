@@ -106,6 +106,12 @@ describe("token routes", () => {
     ["/tokens/top", "/api/v2/tokens/top"],
     [`/tokens/${SOL_MINT}`, `/api/v2/chain/ethereum/token/${SOL_MINT}`],
     [`/tokens/${SOL_MINT}/price_history`, `/api/v2/chain/ethereum/token/${SOL_MINT}/price_history`],
+    [`/tokens/${SOL_MINT}/holders`, `/api/v2/chain/ethereum/token/${SOL_MINT}/holders`],
+    [`/tokens/${SOL_MINT}/activity`, `/api/v2/chain/ethereum/token/${SOL_MINT}/activity`],
+    [`/tokens/${SOL_MINT}/activity_stats`, `/api/v2/chain/ethereum/token/${SOL_MINT}/activity/stats`],
+    ["/collections/trending", "/api/v2/collections/trending"],
+    ["/collections/top", "/api/v2/collections/top"],
+    ["/collections/cool-cats/holders", "/api/v2/collections/cool-cats/holders"],
   ];
 
   for (const [route, expected] of routes) {
@@ -157,6 +163,31 @@ describe("chains reach the endpoints that take them", () => {
     const r = await open({ chains: ["solana", "ethereum"] });
     await fetch(`${r.base}/tokens/${SOL_MINT}`, { headers: {} });
     assert.equal(upstream(r.calls).pathname, `/api/v2/chain/solana/token/${SOL_MINT}`);
+  });
+
+  /**
+   * A token reached through `/tokens/trending` can be on any configured chain, not just the primary
+   * one — measured against a live response where the top trending token was on Solana while the
+   * primary chain was Ethereum. `?chain=` is how a caller who already knows the answer says so,
+   * rather than getting an answer about the wrong token on the primary chain.
+   */
+  test("holders/activity take an explicit ?chain=, overriding the primary one", async () => {
+    const r = await open({ chains: ["ethereum", "solana"] });
+    await fetch(`${r.base}/tokens/${SOL_MINT}/holders?chain=solana`);
+    assert.equal(upstream(r.calls).pathname, `/api/v2/chain/solana/token/${SOL_MINT}/holders`);
+  });
+
+  test("holders/activity default to the primary chain when ?chain= is omitted", async () => {
+    const r = await open({ chains: ["ethereum", "solana"] });
+    await fetch(`${r.base}/tokens/${SOL_MINT}/activity`);
+    assert.equal(upstream(r.calls).pathname, `/api/v2/chain/ethereum/token/${SOL_MINT}/activity`);
+  });
+
+  test("an unrecognised ?chain= is a 400, not a silent fallback to the primary chain", async () => {
+    const r = await open();
+    const res = await fetch(`${r.base}/tokens/${SOL_MINT}/holders?chain=not-a-real-chain`);
+    assert.equal(res.status, 400);
+    assert.equal(r.calls.length, 0, "must refuse before ever calling upstream");
   });
 
   test("/health reports the configured chains and which one is path-scoped", async () => {

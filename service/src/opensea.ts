@@ -529,6 +529,32 @@ export class OpenSeaClient {
     );
   }
 
+  /**
+   * Discovery, not the watchlist: every other collection method above reads one of
+   * `config.collections`, chosen ahead of time. These two are how a collection gets onto that list
+   * in the first place. GET /collections/trending, GET /collections/top
+   */
+  trendingCollections(ttl: number, limit = 20, opts: { timeframe?: string; category?: string } = {}) {
+    return this.#call(ttl, "public", "/collections/trending", (api) =>
+      api.collections.getTrendingCollections({ limit, chains: [...this.#chains], ...opts }),
+    );
+  }
+
+  /** GET /collections/top. `sortBy` is a loose string upstream (no published enum to validate
+   * against, unlike `TOKEN_SORT_BY`) — passed through rather than guessed at. */
+  topCollections(ttl: number, limit = 20, opts: { sortBy?: string; category?: string } = {}) {
+    return this.#call(ttl, "public", "/collections/top", (api) =>
+      api.collections.getTopCollections({ limit, chains: [...this.#chains], ...opts }),
+    );
+  }
+
+  /** Ranked owners of a collection. GET /collections/{slug}/holders */
+  collectionHolders(slug: string, ttl: number, opts: { limit?: number; cursor?: string } = {}) {
+    return this.#call(ttl, "public", "/collections/:slug/holders", (api) =>
+      api.collections.getCollectionHolders(slug, opts),
+    );
+  }
+
   // ---------------------------------------------------------------------------------------------
   // Tokens. OpenSea is both marketplaces (docs/tokens.md), and every one of these is chain-aware.
   // ---------------------------------------------------------------------------------------------
@@ -602,6 +628,53 @@ export class OpenSeaClient {
         startTime: opts.startTime,
         ...(opts.endTime === undefined ? {} : { endTime: opts.endTime }),
       }),
+    );
+  }
+
+  /**
+   * Ranked holders of a token. GET /chain/{chain}/token/{address}/holders
+   *
+   * Defaults to the primary chain, like `token()` — but unlike a watched token (always the primary
+   * chain, by config), a token reached through `trendingTokens`/`topTokens` can be on any configured
+   * chain: measured against a live `/tokens/trending` response, the top result was on Solana while
+   * this service's primary chain is Ethereum. A caller that knows which chain a token is actually on
+   * says so; one that doesn't gets the same behaviour as before this existed.
+   */
+  tokenHolders(
+    address: string,
+    ttl: number,
+    { chain: chainOpt, ...rest }: { limit?: number; cursor?: string; chain?: ChainIdentifier } = {},
+  ) {
+    const chain = toSdkChain(chainOpt ?? this.primaryChain);
+    return this.#call(ttl, "public", "/tokens/:address/holders", (api) =>
+      api.tokens.getTokenHolders(chain, address, rest),
+    );
+  }
+
+  /**
+   * The buy/sell feed for a token — transfers, swaps, wraps and unwraps, per the SDK's own
+   * description. GET /chain/{chain}/token/{address}/activity. See `tokenHolders` above for why
+   * `chain` is a parameter rather than always the primary one.
+   */
+  tokenActivity(
+    address: string,
+    ttl: number,
+    { chain: chainOpt, ...rest }: { limit?: number; cursor?: string; chain?: ChainIdentifier } = {},
+  ) {
+    const chain = toSdkChain(chainOpt ?? this.primaryChain);
+    return this.#call(ttl, "public", "/tokens/:address/activity", (api) =>
+      api.tokens.getTokenActivity(chain, address, rest),
+    );
+  }
+
+  /**
+   * Materialized trade count, USD volume and average trade size, over fixed windows the API computes
+   * rather than derives here. GET /chain/{chain}/token/{address}/activity_stats
+   */
+  tokenActivityStats(address: string, ttl: number, chainOpt?: ChainIdentifier) {
+    const chain = toSdkChain(chainOpt ?? this.primaryChain);
+    return this.#call(ttl, "public", "/tokens/:address/activity_stats", (api) =>
+      api.tokens.getTokenActivityStats(chain, address),
     );
   }
 }
