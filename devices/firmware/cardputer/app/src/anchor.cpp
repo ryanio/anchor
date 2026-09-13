@@ -5,6 +5,7 @@
 
 #include "art.h"
 #include "cable.h"
+#include "standalone.h"
 #include "ui.h"
 #include "view.h"
 
@@ -50,6 +51,11 @@ constexpr const char *FIRMWARE = "flint-anchor 0.1.0";
 constexpr uint32_t LINK_TIMEOUT_MS = 15000;
 constexpr uint32_t HELLO_MS = 2000;
 constexpr uint32_t POWER_MS = 5000;
+
+// How long to keep saying "waiting for host" before falling back to standalone.cpp's own trending
+// data. Long enough that a cable which is genuinely about to link — the ordinary case — is never
+// pre-empted by a screen change nobody asked for; see standalone.h for why this exists at all.
+constexpr uint32_t STANDALONE_GRACE_MS = 10000;
 
 // One strip and nine tiles, which is what the host's Cardputer geometry sends.
 // Held as a fixed table rather than a map so a frame allocates nothing.
@@ -123,6 +129,15 @@ uint32_t lastHello = 0;
 uint32_t lastPower = 0;
 int32_t sentLevel = -1;
 bool sentCharging = false;
+
+// When unlinked started, so STANDALONE_GRACE_MS is measured from the right moment whether this is
+// a fresh boot with no cable at all or a cable that dropped after a real session.
+uint32_t unlinkedSince = 0;
+// Whether the last draw() was standalone.cpp's content rather than slots[] or the standby screen —
+// tracked separately from hadContent so switching between the three still gets the one full clear
+// each transition needs, and nothing else does.
+bool standaloneShown = false;
+size_t lastStandaloneCount = 0;
 
 bool queryActive = false;
 char queryText[72];
@@ -324,6 +339,47 @@ void drawStandby(const char *reason)
 	         textdatum_t::top_center);
 }
 
+// No host, past STANDALONE_GRACE_MS, with standalone.cpp actually having something to show — see
+// standalone.h for what this is and why it exists. The same 18px-strip-then-3x3-tiles layout the
+// host itself sends for this geometry, laid out here directly rather than borrowed from the wire
+// protocol: there is no host to send a PaintOp, so this is the one screen the device lays out for
+// itself.
+void drawStandaloneTokens()
+{
+	constexpr int STRIP_H = 18;
+	constexpr int COLS = 3;
+	constexpr int ROWS = 3;
+	const int tileW = ui::W / COLS;
+	const int tileH = (ui::BODY_H - STRIP_H) / ROWS;
+
+	ui::clearBody(palette[GROUND]);
+
+	M5GFX &g = ui::gfx();
+	g.fillRect(0, 0, ui::W, STRIP_H, palette[SUNKEN]);
+	g.setFont(&fonts::Font0);
+	ui::clip("trending · live from OpenSea, no host", 3, STRIP_H / 2, ui::W - 6, palette[INK_DIM],
+	         palette[SUNKEN], textdatum_t::middle_left);
+
+	const size_t max = (size_t)(COLS * ROWS);
+	const size_t count = standalone::tokenCount < max ? standalone::tokenCount : max;
+	for (size_t i = 0; i < count; i++) {
+		const standalone::Token &t = standalone::tokens[i];
+		Slot s = {};
+		s.used = true;
+		s.kind = KIND_TILE;
+		s.x = (int16_t)((i % COLS) * tileW);
+		s.y = (int16_t)(STRIP_H + (int)(i / COLS) * tileH);
+		s.w = (int16_t)tileW;
+		s.h = (int16_t)tileH;
+		s.emphasis = EM_GROUND;
+		s.tone = t.changePositive ? palette[POSITIVE] : palette[NEGATIVE];
+		takeText(s.label, sizeof(s.label), t.symbol);
+		takeText(s.value, sizeof(s.value), t.price);
+		takeText(s.badge, sizeof(s.badge), t.change);
+		drawTile(s);
+	}
+}
+
 // The link has gone: cable out, host asleep, the desktop tool stopped. What is
 // on the glass stays on the glass, because a blank screen is indistinguishable
 // from a unit that is off, and the strip says how old the reading is. A panel
@@ -381,9 +437,18 @@ void draw()
 	}
 	if (!any) {
 		hadContent = false;
+		const bool standaloneReady =
+		    !linked && (millis() - unlinkedSince > STANDALONE_GRACE_MS) && standalone::hasData();
+		if (standaloneReady) {
+			drawStandaloneTokens();
+			standaloneShown = true;
+			return;
+		}
+		standaloneShown = false;
 		drawStandby(linked ? "host connected, no frame yet" : "waiting for host");
 		return;
 	}
+	standaloneShown = false;
 
 	// An overlay paints outside any slot's own rect, and the first frame after standby has nothing
 	// on the glass yet — both need the whole panel cleared. Everything else is a tick that changed
@@ -640,6 +705,8 @@ void enter()
 	protocolOk = true;
 	lastHost = millis();
 	lastHello = 0;
+	unlinkedSince = millis();
+	standaloneShown = false;
 	sentLevel = -1;
 	savedBrightness = ui::gfx().getBrightness();
 	// The host clears its own per slot cache when a device says hello and
@@ -668,6 +735,7 @@ void tick()
 	const uint32_t now = millis();
 	if (linked && now - lastHost > LINK_TIMEOUT_MS) {
 		linked = false;
+		unlinkedSince = now;
 		view::repaint();
 	}
 	if (!linked && now - lastHello > HELLO_MS) {
@@ -678,6 +746,18 @@ void tick()
 	if (now - lastPower > POWER_MS) {
 		lastPower = now;
 		reportPower();
+	}
+	// standalone::tick() rate-limits its own network attempts, so calling it every tick costs
+	// nothing on the calls that do not fetch. A repaint fires only when the token list actually
+	// changed — not on the ticks in between, which is the same discipline draw()'s dirty-slot
+	// tracking already holds the cable-fed path to, for the same reason: a redraw nobody can see a
+	// difference in is a flash bought for nothing.
+	if (!linked && now - unlinkedSince > STANDALONE_GRACE_MS) {
+		standalone::tick();
+		if (standalone::tokenCount != lastStandaloneCount) {
+			lastStandaloneCount = standalone::tokenCount;
+			view::repaint();
+		}
 	}
 }
 

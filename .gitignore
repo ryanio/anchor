@@ -4,6 +4,9 @@
 *.key
 *.pem
 secrets.*
+# ...except a template with nothing real in it. Firmware secrets follow flint's own
+# `include/secrets.h.example` convention, and the pattern above was catching the template too.
+!secrets.*.example
 
 # local state / cache
 .cache/
