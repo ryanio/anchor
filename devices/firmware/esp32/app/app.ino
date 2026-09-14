@@ -294,8 +294,10 @@ static void say_hello(void) {
     snprintf(id, sizeof(id), "anchor-pulse-s3-fault-%d", (int)last_fault);
   }
   /*
-   * The input mask is zero: this board reports nothing. There is no touch panel, no keyboard and no
-   * IMU on it. Adding one later is a bit in this mask and a call to `anchor_pulse_input` — and it
+   * The input mask is zero: this firmware reports nothing, not because the board has nothing to
+   * report. `docs/devices-esp32.md`'s I2C probe found a CST820 capacitive touch controller and a
+   * QMI8658 IMU actually on this board — measured, not assumed — so this zero is "not wired up yet",
+   * not "not present". Wiring one in is a bit in this mask and a call to `anchor_pulse_input`, which
    * still could not say anything but a slot id and two numbers.
    */
   size_t n = anchor_pulse_hello(out, sizeof(out), panel_width, panel_height,

@@ -31,20 +31,74 @@ import { NoDeviceError, open as openStreamDeck } from "./adapters/streamdeck.ts"
  * announcing itself to no one. Over a cable there is no socket to bind and no pairing key to hold,
  * which is why this path needs neither — the network transport in `esp32.ts` still keeps both.
  */
+/**
+ * Try every port that could be this device, and keep the one that answers as it.
+ *
+ * Every ESP32-S3 with native USB enumerates through the same Espressif JTAG/serial descriptor, so a
+ * port name identifies a chip family and never a device: a Cardputer and a pulse display sitting on
+ * one desk are indistinguishable until one of them speaks. Taking `listPorts()[0]` was therefore a
+ * coin flip whenever both were plugged in, and the lost half of that flip is not a clean error — the
+ * pulse driver opened the Cardputer's port, waited out its handshake timeout, exited 2, and systemd
+ * restarted it into the same coin flip. That loop ran 6,601 times before anybody read the journal.
+ *
+ * A named path is still taken at its word, exactly as before: one candidate, and its error is the
+ * one reported. Probing only decides between *several* candidates, and a probe that is not ours is
+ * closed immediately rather than left holding a port another service needs.
+ */
+async function firstPortThatAnswers<T>(
+  kind: string,
+  candidates: readonly string[],
+  attempt: (port: string) => Promise<T>,
+): Promise<T> {
+  if (candidates.length === 0) {
+    process.stderr.write(`no serial port found for ${kind}\n`);
+    process.exit(2);
+  }
+  const failures: string[] = [];
+  for (const port of candidates) {
+    try {
+      return await attempt(port);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      failures.push(`  ${port}: ${detail}`);
+      // One candidate and it failed: that is a named port, or the only port there is. Its own error
+      // is more use than a summary of a list with one entry in it.
+      if (candidates.length === 1) {
+        process.stderr.write(`${detail}\n`);
+        process.exit(2);
+      }
+    }
+  }
+  process.stderr.write(`no port answered as ${kind}:\n${failures.join("\n")}\n`);
+  process.exit(2);
+}
+
 async function openEsp32(tokens: Tokens, path?: string) {
   const { listPorts, openSerialLink } = await import("./adapters/esp32-serial.ts");
   const { attach } = await import("./adapters/esp32.ts");
-  const port = path ?? listPorts()[0];
-  if (port === undefined) {
-    process.stderr.write("no serial port found for an ESP32 pulse display\n");
-    process.exit(2);
-  }
-  return await attach(openSerialLink(port), tokens);
+  const candidates = path === undefined ? listPorts() : [path];
+  // Shorter than the 5s default when there is a list to get through: a pulse display sends HELLO
+  // unprompted every 500ms, so a port that has not spoken in two seconds is not one.
+  const timeoutMs = candidates.length > 1 ? 2000 : 5000;
+  return await firstPortThatAnswers("an ESP32 pulse display", candidates, async (port) => {
+    const link = openSerialLink(port);
+    try {
+      return await attach(link, tokens, {}, timeoutMs);
+    } catch (error) {
+      // Whatever this port is, it is not ours to hold open — the Cardputer service needs its own.
+      link.close();
+      throw error;
+    }
+  });
 }
 
 async function openCardputer(tokens: Tokens, path?: string) {
-  const { open } = await import("./adapters/cardputer.ts");
-  return await open(tokens, path, { confirmMs: path === undefined ? 3000 : 0 });
+  const { listPorts, open } = await import("./adapters/cardputer.ts");
+  const candidates = path === undefined ? listPorts() : [path];
+  return await firstPortThatAnswers("a Cardputer", candidates, (port) =>
+    // A named path keeps its old behaviour of being taken at its word; a guessed one has to answer.
+    open(tokens, port, { confirmMs: path === undefined ? 3000 : 0 }),
+  );
 }
 
 /** Build a hardware-free device for `--dry-run`. */
