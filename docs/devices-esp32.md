@@ -492,13 +492,27 @@ two, so a panel somebody tapped and walked away from is ambient again — and ba
 units beside it — inside a quarter of a minute. Nothing has yet put a real thumb on this glass to
 say whether that is the right number.
 
-Two refusals are as deliberate as the action, and both are in the same `case`. A tap whose slot is
-not a screen's does nothing: the Stream Deck's touch strip emits taps too, and letting one advance
-the rotation would jump the eight gallery *keys* beside it. And a tap on a page that does not rotate
-does nothing rather than something approximate — a list page's obvious gesture is "open the row I
-touched", and the panel cannot know which row that is, because a tap carries pixels and pixel
-geometry lives in the renderer. The only thing it could act on is the current selection, which would
-fire an action from a sleeve brushing the panel.
+One refusal is as deliberate as the action. A tap whose slot is not a screen's does nothing: the
+Stream Deck's touch strip emits taps too, and letting one advance the rotation would jump the eight
+gallery *keys* beside it.
+
+A tap on a page that does *not* rotate used to be refused as well, and the refusal named exactly
+what was missing: a page of keys wants "open the thing I touched", the panel cannot know where a
+cell was drawn because a tap carries pixels and pixel geometry lives in the renderer, and the only
+thing it could have acted on was the current selection — which would fire an action from a sleeve
+brushing the glass. `svg.gridCellAt` is the missing half, and it is the same function `renderGrid`
+lays the cells out with rather than a second opinion about where they went; a hit test that
+disagrees with the picture is worse than none, because it is wrong about the one thing the person
+can see. The panel remembers the slot and the keys behind the last grid it composed — a tap arrives
+later with nothing attached to it — and answers the touch with the cell under it.
+
+The sleeve is still answered, three times over. The gutter between two tiles is dead space, so a
+touch between two targets resolves to neither rather than to whichever won a rounding. The page name
+travels with the remembered grid, so a tap landing between a page change and the repaint that
+follows resolves against nothing. And what a cell can reach is `key.action` from `panel.json` and
+nothing else — never the action a *source* supplied for what the cell happens to be showing, which
+is a string built out of marketplace data. `actions.ts` has no verb that signs, spends or approves,
+so invariant 1 holds here structurally rather than by care.
 
 ## When things are down
 
@@ -535,8 +549,9 @@ which is what made them contract changes instead of adapter workarounds.
 
 1. **`panel.ts` composes a `screen` slot.** *Done.* `Panel.build()` had no branch for
    `kind: "screen"`, so a device whose only slot was a screen received an empty frame. It now paints
-   a page's rows onto a screen slot as a `list`, with `selected` clamped by the panel because only
-   the panel knows the row count after a filter. `SCREEN_SLOT` **moved** to `panel.ts` next to
+   a page's keys onto a screen slot — as a `list` at first, and as a `grid` since the panel it runs
+   on turned out to have a finger on it — with `selected` clamped by the panel because only the
+   panel knows the cell count after a filter. `SCREEN_SLOT` **moved** to `panel.ts` next to
    `keySlot`, `dialSlot` and `STRIP_SLOT`, rather than being copied; `esp32.ts` imports it from
    there and re-exports it for its own callers. A slot id defined in two places gets spelled two
    ways.
@@ -551,8 +566,8 @@ which is what made them contract changes instead of adapter workarounds.
    content is a row of bar segments — or a list of what would otherwise have been eight keys — reads
    badly on it. The answer is `Panel.pulseDetail()` in `devices/src/panel.ts`, and what shipped is a
    page *type* rather than a new surface: `build` offers every `screen` slot to it first and falls
-   back to the `list` it used to paint whenever it returns null, so a desktop or chains page — a set
-   of things to choose between — stays a list and is not forced into an ambient frame.
+   back to the page's own keys whenever it returns null, so a desktop or chains page — a set of
+   things to choose between — stays something to choose from and is not forced into an ambient frame.
 
    Which pages it claims is named once, in `ROTATING_PAGES`: `portfolio`, `gallery`, `tokens` and
    `nfts`. The tap handler reads the same set, which is what stops the two drifting — a page added to
@@ -578,9 +593,24 @@ which is what made them contract changes instead of adapter workarounds.
    `pulse-tokens` and `pulse-nfts` as rendered cards, alongside `pulse-round` for the panel whose
    corners are not there and a blanked one for the lock case.
 
-Two surfaces the contract gained alongside these are what a screen device actually paints: `list`
-(rows, with panel-owned selection) and `detail` (a title, labelled lines, and a footer that is never
-truncated). Committed-`text` input arrived with them, for devices that have a keyboard; this board
+The surfaces the contract gained alongside these are what a screen device actually paints: `detail`
+(a title, labelled lines, and a footer that is never truncated), `list` (rows, with panel-owned
+selection) and `grid`.
+
+`grid` is what a page of keys became once this panel had a touch layer on it. A row was about a
+fourteenth of the screen's height — roughly 2.5 mm of target, on a panel whose whole point is now
+that you can put a thumb on it — and a column of thin rows is also the wrong use of a big portrait
+screen. The cells are the page's keys in reading order, and nothing outside the renderer names a
+column count: `gridMetrics` divides the slot by `TOUCH_TARGET_PX`, which is 120 because this
+panel's own diagonal is √(368² + 448²) ≈ 580 px across 1.8 in ≈ 322 ppi ≈ 12.7 px/mm, and 9-10 mm
+of finger is 114-127 px there. On this board that comes out three columns of 122 × 149; on the
+1.28 in round 240×240 it comes out two by two, with the rest of the page a whole page-turn away
+rather than squeezed on. Each cell is drawn by `renderTile` into a translated group rather than by
+a second tile painter, so a screen device and a Stream Deck key are the same face at two sizes —
+and a cell carries `emphasis`, which is the one thing a row had no word for: a list could not say
+that night light is currently on.
+
+Committed-`text` input arrived with them, for devices that have a keyboard; this board
 has none, so `text` stays unclaimed here. The rest of the mask is no longer zero — it claims `tap`
 and `swipe`, for the reasons under
 [The inputs this board had all along](#the-inputs-this-board-had-all-along).
