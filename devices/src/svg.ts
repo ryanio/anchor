@@ -644,6 +644,198 @@ function renderList(surface: Extract<Surface, { kind: "list" }>, tokens: Tokens,
 }
 
 /**
+ * A comfortable touch target, in device pixels.
+ *
+ * **Worked out from the one panel that has been driven**, not picked: the 1.8in AMOLED is 368x448,
+ * so its diagonal is √(368² + 448²) ≈ 580px across 1.8in ≈ 322 ppi ≈ 12.7 px/mm. The usual guidance
+ * for a finger is 9-10mm, which is 114-127px here; 120 sits in the middle of that. The other panels
+ * in `PANELS` are coarser rather than finer — the 1.28in round 240x240 is ≈ 265 ppi, where 120px is
+ * 11.5mm — so this floor is at worst generous on them, never mean.
+ *
+ * It is a *target* rather than a minimum: a panel is divided into whole columns, so the cells that
+ * come out are usually larger. 368 wide gives three columns of 122px, and 448 tall three rows of
+ * 149px — the same 3x3 the Cardputer settled on for the same reason, which is why the two devices
+ * look like one product rather than like two layouts that happen to agree.
+ */
+export const TOUCH_TARGET_PX = 120;
+
+export interface GridMetrics {
+  readonly columns: number;
+  readonly rows: number;
+  readonly cellWidth: number;
+  readonly cellHeight: number;
+  /** Where the tiled area starts, so the leftover pixels are a margin rather than a fat last cell. */
+  readonly originX: number;
+  readonly originY: number;
+  /** Cells drawn at once. Anything past this is on another page of the grid — see `gridWindow`. */
+  readonly capacity: number;
+}
+
+/**
+ * How many boxes of what size this slot has room for.
+ *
+ * Exported because the renderer is not the only thing that needs it: a tap arrives as two numbers,
+ * and the only honest way to say which cell it landed on is to ask the thing that drew them. That
+ * is the missing half `Panel.handle` named when it refused to act on a tap at all.
+ *
+ * Columns are capped at the cell count so a two-key page fills the panel with two wide cells rather
+ * than leaving a column of nothing, and rows likewise — a page that fits never leaves a dead band.
+ */
+export function gridMetrics(slot: SlotSpec, count: number): GridMetrics {
+  const { width: w, height: h } = slot;
+  const wanted = Math.max(1, count);
+  const columns = Math.max(1, Math.min(wanted, Math.floor(w / TOUCH_TARGET_PX)));
+  const rows = Math.max(1, Math.min(Math.ceil(wanted / columns), Math.floor(h / TOUCH_TARGET_PX)));
+  const cellWidth = Math.floor(w / columns);
+  const cellHeight = Math.floor(h / rows);
+  return {
+    columns,
+    rows,
+    cellWidth,
+    cellHeight,
+    originX: Math.round((w - cellWidth * columns) / 2),
+    originY: Math.round((h - cellHeight * rows) / 2),
+    capacity: columns * rows,
+  };
+}
+
+/**
+ * The first cell of the page the selection is on.
+ *
+ * Whole pages rather than the row-at-a-time scroll `renderList` does. A grid that scrolls by one
+ * cell puts the same eight labels in eight different places depending on where the cursor is, and
+ * the thing a grid is *for* is that a target stays where the hand last found it. Paging keeps every
+ * cell in the same box until the page turns.
+ */
+export function gridWindow(count: number, selected: number, capacity: number): number {
+  if (count <= capacity || capacity <= 0) return 0;
+  const at = Math.min(Math.max(0, selected), count - 1);
+  return Math.floor(at / capacity) * capacity;
+}
+
+/**
+ * Which cell a tap at (x, y) landed on, or null for a tap that hit nothing.
+ *
+ * Null is a real answer and not a failure: the gutter between two tiles is `sunken` showing through
+ * the insets, and a touch there is a touch *between* two targets. Refusing it is what keeps a
+ * glancing contact from being resolved to whichever neighbour won a rounding, which on this panel
+ * would be a keypress nobody made.
+ */
+export function gridCellAt(
+  slot: SlotSpec,
+  count: number,
+  selected: number,
+  x: number,
+  y: number,
+): number | null {
+  if (count <= 0) return null;
+  const metrics = gridMetrics(slot, count);
+  const localX = x - metrics.originX;
+  const localY = y - metrics.originY;
+  if (localX < 0 || localY < 0) return null;
+  const column = Math.floor(localX / metrics.cellWidth);
+  const row = Math.floor(localY / metrics.cellHeight);
+  if (column >= metrics.columns || row >= metrics.rows) return null;
+  // Inside the tile, not merely inside its cell. `renderTile` insets the box it paints by this
+  // much on every side, so this is the same edge the eye sees rather than a second opinion about it.
+  const inset = tileInset(metrics.cellWidth, metrics.cellHeight);
+  const inX = localX - column * metrics.cellWidth;
+  const inY = localY - row * metrics.cellHeight;
+  if (inX < inset || inX > metrics.cellWidth - inset) return null;
+  if (inY < inset || inY > metrics.cellHeight - inset) return null;
+  const index = gridWindow(count, selected, metrics.capacity) + row * metrics.columns + column;
+  return index < count ? index : null;
+}
+
+/**
+ * Tiles on a screen.
+ *
+ * Every cell is drawn by `renderTile` into a translated group, rather than by a second tile
+ * painter written for this surface. That is not only thrift: the reading, the caption, the active
+ * fill and the collision rules that decide what to drop on a short tile are the whole visual
+ * language of a key, and a grid that reimplemented them would be a device-family look with one
+ * device quietly outside it. What this function owns is the geometry and the selection ring.
+ */
+function renderGrid(surface: Extract<Surface, { kind: "grid" }>, tokens: Tokens, slot: SlotSpec): string {
+  const { width: w, height: h } = slot;
+
+  if (surface.cells.length === 0) {
+    // The same treatment an empty list gets, and for the same reason: a blank panel is
+    // indistinguishable from a broken one, so it has to say why it is blank.
+    const size = Math.max(MIN_LEGIBLE_PX, Math.round(Math.min(w, h) * 0.06));
+    return (
+      `<rect width="${w}" height="${h}" fill="${tokens.ground}"/>` +
+      `<text x="${w / 2}" y="${h / 2}" font-family="monospace" font-size="${size}" ` +
+      `fill="${tokens.inkDim}" text-anchor="middle" dominant-baseline="central">` +
+      `${escapeXml(surface.empty ?? "nothing to show")}</text>`
+    );
+  }
+
+  const metrics = gridMetrics(slot, surface.cells.length);
+  const first = gridWindow(surface.cells.length, surface.selected ?? 0, metrics.capacity);
+  // `sunken` behind everything, so the gaps between tiles read as the gaps between keys do on a
+  // deck — the ground a tile sits on, not a hole in the page.
+  const parts: string[] = [`<rect width="${w}" height="${h}" fill="${tokens.sunken}"/>`];
+
+  surface.cells.slice(first, first + metrics.capacity).forEach((cell, offset) => {
+    const index = first + offset;
+    const x = metrics.originX + (offset % metrics.columns) * metrics.cellWidth;
+    const y = metrics.originY + Math.floor(offset / metrics.columns) * metrics.cellHeight;
+    const cellSlot: SlotSpec = {
+      // Unique per cell: `renderTile` derives its clip-path id from this, and two tiles sharing one
+      // id would clip the second to the first one's box.
+      id: `${slot.id}c${index}`,
+      kind: "key",
+      paintable: true,
+      width: metrics.cellWidth,
+      height: metrics.cellHeight,
+    };
+    const tile = renderTile(
+      {
+        kind: "tile",
+        icon: cell.icon,
+        label: cell.label,
+        value: cell.value,
+        tone: cell.tone,
+        emphasis: cell.emphasis,
+      },
+      tokens,
+      cellSlot,
+    );
+    const ring = index === surface.selected ? selectionRing(tokens, cell, metrics) : "";
+    parts.push(`<g transform="translate(${x},${y})">${tile}${ring}</g>`);
+  });
+
+  return parts.join("");
+}
+
+/**
+ * The cursor, as a ring around the chosen cell.
+ *
+ * Not a fill: `emphasis` already spends the fill on whether the thing the cell controls is *on*,
+ * and a selection that also filled the tile would make a selected-and-off cell look identical to an
+ * unselected-and-on one. A ring is the one mark that composes with any of the three tile fills —
+ * and on an active tile it is drawn in the same colour every other mark on that tile resolves to,
+ * because an accent ring on an accent fill is a ring nobody can see.
+ */
+function selectionRing(
+  tokens: Tokens,
+  cell: { readonly tone?: TokenName; readonly emphasis: Emphasis },
+  metrics: GridMetrics,
+): string {
+  const inset = tileInset(metrics.cellWidth, metrics.cellHeight);
+  const width = Math.max(2, Math.round(Math.min(metrics.cellWidth, metrics.cellHeight) * 0.03));
+  const color = cell.emphasis === "active" ? onActive(tokens, toneColor(tokens, cell.tone)) : tokens.accent;
+  const x = inset + width / 2;
+  return (
+    `<rect x="${x}" y="${x}" width="${metrics.cellWidth - inset * 2 - width}" ` +
+    `height="${metrics.cellHeight - inset * 2 - width}" ` +
+    `rx="${tileRadius(metrics.cellWidth, metrics.cellHeight)}" fill="none" stroke="${color}" ` +
+    `stroke-width="${width}"/>`
+  );
+}
+
+/**
  * Break `words` into at most `maxLines` lines that each fit `maxWidth`.
  *
  * Returns null when it cannot be done, which is the caller's cue to shrink and ask again rather
@@ -805,6 +997,9 @@ export function toSvg(surface: Surface, tokens: Tokens, slot: SlotSpec): string 
       break;
     case "list":
       body = renderList(surface, tokens, slot);
+      break;
+    case "grid":
+      body = renderGrid(surface, tokens, slot);
       break;
     default:
       body = renderDetail(surface, tokens, slot);

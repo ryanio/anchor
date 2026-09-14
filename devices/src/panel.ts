@@ -8,14 +8,24 @@
  */
 
 import * as actions from "./actions.ts";
-import type { PageConfig, PanelConfig } from "./config.ts";
+import type { KeyConfig, PageConfig, PanelConfig } from "./config.ts";
 import { cachedThumbnail, thumbnail } from "./images.ts";
 import type { ServiceStatus } from "./state/anchor.ts";
 import { describeAge, type PortfolioSnapshot, TIMEFRAMES, type Timeframe } from "./state/anchor.ts";
 import type { TrendingCollection, TrendingToken } from "./state/discovery.ts";
 import type { DesktopSnapshot } from "./state/desktop.ts";
 import type { Tokens } from "./tokens.ts";
-import type { AnchorDevice, BarSegment, DeviceInput, Frame, ListRow, Surface, TokenName } from "./types.ts";
+import { gridCellAt } from "./svg.ts";
+import type {
+  AnchorDevice,
+  BarSegment,
+  DeviceInput,
+  Frame,
+  GridCell,
+  SlotSpec,
+  Surface,
+  TokenName,
+} from "./types.ts";
 
 export interface PanelState {
   readonly desktop: DesktopSnapshot;
@@ -367,6 +377,18 @@ export class Panel {
    */
   readonly #dynamicActions = new Map<string, string>();
   /**
+   * The grid a screen slot was last painted with: the slot it went into, the page it came from, and
+   * the key behind each cell.
+   *
+   * Recorded during `build` for the same reason `#dynamicActions` is — an input arrives later with
+   * nothing attached to it — and it is what lets a tap be answered at all. A tap carries pixels;
+   * `svg.gridCellAt` turns those into a cell index, and that needs the slot's own dimensions, which
+   * only a device ever states. The page name travels with it so a tap landing between a page change
+   * and the repaint that follows resolves against nothing rather than against the page it left.
+   */
+  #grid: { readonly slot: SlotSpec; readonly page: string; readonly keys: readonly KeyConfig[] } | null =
+    null;
+  /**
    * `url|size` keys currently being fetched by `#pulseArt`, so a piece that stays on screen for
    * several ticks before the network answers gets one request rather than one every second.
    */
@@ -443,29 +465,43 @@ export class Panel {
   }
 
   /**
-   * The page's keys as rows, filtered.
+   * The page's keys as grid cells, filtered, each still holding the key it came from.
    *
-   * A key and a row are the same thing said for different hardware: a label, an optional reading,
-   * and something to do when it is chosen. Composing rows here rather than in an adapter is what
-   * stops a screen device having to fetch its own data.
+   * A key and a cell are the same thing said for different hardware: a label, an optional reading,
+   * whether the thing it controls is currently on, and something to do when it is chosen. Composing
+   * them here rather than in an adapter is what stops a screen device having to fetch its own data.
+   *
+   * The `key` alongside each cell is what makes a filtered page safe to act on. `#selected` indexes
+   * the cells a person can actually see, and the page's own key list is longer whenever a filter is
+   * narrowing it — so resolving a choice through `page.keys[selected]` runs the wrong key the moment
+   * anything has been typed. Nothing on a pulse panel types today; the Cardputer's keyboard does.
    */
-  rows(state: PanelState): ListRow[] {
+  #keyCells(state: PanelState): Array<{ readonly key: KeyConfig; readonly cell: GridCell }> {
     const needle = this.#filter.trim().toLowerCase();
     return this.page.keys
       .map((key) => {
         const reading = key.source === "" ? null : readKeySource(key.source, state);
         return {
           key,
-          row: {
+          cell: {
             label: key.label || reading?.label || `Key ${key.index}`,
             value: reading?.value,
             icon: key.icon || undefined,
             tone: reading?.tone ?? key.tone,
-          } satisfies ListRow,
+            // The one thing a row had no word for, and the reason a grid is worth more than bigger
+            // rows: a list of the desktop page could not say that night light is currently on.
+            emphasis: actions.resolveActive(key.state, state.desktop, this.#pageName)
+              ? ("active" as const)
+              : ("ground" as const),
+          } satisfies GridCell,
         };
       })
-      .filter(({ row }) => needle === "" || row.label.toLowerCase().includes(needle))
-      .map(({ row }) => row);
+      .filter(({ cell }) => needle === "" || cell.label.toLowerCase().includes(needle));
+  }
+
+  /** The page's keys as grid cells, filtered. The shape a screen device is painted from. */
+  cells(state: PanelState): GridCell[] {
+    return this.#keyCells(state).map(({ cell }) => cell);
   }
 
   /**
@@ -741,24 +777,33 @@ export class Panel {
       });
     }
 
-    // A screen device gets the same page as a list, with one exception: `portfolio` and `gallery` are
-    // about a number and a piece of art respectively, and a menu of what would have been eight keys
-    // reads badly at 368x448 — the gap `docs/devices-esp32.md` names outright as still open. A big
-    // portrait panel with no keyboard is not a smaller Stream Deck; it is a display with room to be
-    // one, so those two pages become `pulseDetail` instead.
+    // A screen device gets the same page as a grid of tiles, with one exception: `portfolio` and
+    // `gallery` are about a number and a piece of art respectively, and a menu of what would have
+    // been eight keys reads badly at 368x448 — the gap `docs/devices-esp32.md` names outright. A big
+    // portrait panel is not a smaller Stream Deck; it is a display with room to be one, so those
+    // pages become `pulseDetail` instead.
+    //
+    // Everything else is a set of things to choose between, and it was a list of thin rows until the
+    // panel it runs on turned out to have a finger on it. A row about a fourteenth of a 448px screen
+    // is roughly 2.5mm of target; the grid's cells are 122x149, which is nearer 10mm — the size a
+    // thumb actually is. `svg.ts` owns that arithmetic, per rule 1 in `types.ts`.
     for (const slot of device.capabilities.slots) {
       if (!slot.paintable || slot.kind !== "screen") continue;
       const pulse = this.pulseDetail(state);
       if (pulse !== null) {
+        // No grid on the glass, so no tap has a cell to land on. Forgetting it here is what keeps a
+        // tap on a rotating page from hit-testing against boxes that are no longer drawn.
+        this.#grid = null;
         frame.set(slot.id, pulse);
         continue;
       }
-      const rows = this.rows(state);
-      this.#selected = rows.length === 0 ? 0 : Math.min(this.#selected, rows.length - 1);
+      const cells = this.#keyCells(state);
+      this.#selected = cells.length === 0 ? 0 : Math.min(this.#selected, cells.length - 1);
+      this.#grid = { slot, page: this.#pageName, keys: cells.map(({ key }) => key) };
       frame.set(slot.id, {
-        kind: "list",
-        rows,
-        selected: rows.length === 0 ? undefined : this.#selected,
+        kind: "grid",
+        cells: cells.map(({ cell }) => cell),
+        selected: cells.length === 0 ? undefined : this.#selected,
         empty: this.#filter === "" ? "nothing on this page" : `nothing matches "${this.#filter}"`,
       });
     }
@@ -798,6 +843,25 @@ export class Panel {
   }
 
   /**
+   * Run what the chosen cell of a screen's grid says to do.
+   *
+   * Config only — `key.action`, never the action a *source* supplied for whatever the cell happens
+   * to be showing. A Stream Deck key press does fall through to that dynamic action, which is how a
+   * gallery key opens the piece on it; but a dynamic action is a string built out of marketplace
+   * data, which AGENTS.md treats as hostile, and a screen is the surface that can be made to run one
+   * by a touch nobody deliberately made. So everything reachable from this glass is a verb a person
+   * typed into `panel.json`, and `actions.ts` has no verb that signs, spends or approves anything —
+   * invariant 1 holds structurally here rather than by care.
+   *
+   * Resolved through the grid's own key list rather than `page.keys[index]`, because a filter makes
+   * those two different lists.
+   */
+  #chooseCell(index: number, context: actions.ActionContext): void {
+    const key = this.#grid?.keys[index] ?? this.page.keys[index];
+    if (key !== undefined && key.action !== "") actions.dispatch(key.action, context);
+  }
+
+  /**
    * Apply an input. Returns true when the panel should repaint.
    *
    * Press and release both repaint so a key visibly depresses; without it the panel feels dead on a
@@ -811,9 +875,8 @@ export class Panel {
       case "press": {
         this.#pressed.add(input.slot);
         if (input.slot.startsWith("screen:")) {
-          // On a screen device the chosen row is the action, and the panel knows which row that is.
-          const key = this.page.keys[this.#selected];
-          if (key !== undefined && key.action !== "") actions.dispatch(key.action, context);
+          // On a screen device the chosen cell is the action, and the panel knows which cell that is.
+          this.#chooseCell(this.#selected, context);
           return true;
         }
         const key = page.keys.find((k) => keySlot(k.index) === input.slot);
@@ -893,16 +956,31 @@ export class Panel {
         // gallery *keys* beside it — a device where brushing the strip reshuffles the whole face is
         // a worse device, and that behaviour has never been looked at on a review page.
         if (!input.slot.startsWith("screen:")) return false;
-        // Nothing sensible on a page that does not rotate, and deliberately nothing rather than
-        // something approximate. A list page's obvious gesture is "open the row I touched", and the
-        // panel cannot know which row that is: a tap carries pixels, and `types.ts` rule 1 keeps
-        // pixel geometry inside the renderer, so the panel has no idea how tall a row came out or
-        // where the list starts. The only thing it could act on is `#selected` — which would make
-        // any touch anywhere launch whatever happens to be highlighted, from a sleeve brushing the
-        // panel. Row hit-testing needs the renderer to report back the boxes it drew; until it
-        // does, a tap here repaints nothing.
-        if (!ROTATING_PAGES.has(this.#pageName)) return false;
-        this.#tapAdvances++;
+        if (ROTATING_PAGES.has(this.#pageName)) {
+          this.#tapAdvances++;
+          return true;
+        }
+        // A page of keys answers the obvious gesture instead: open the thing you touched.
+        //
+        // This used to refuse, and the refusal was right at the time. The panel cannot know where a
+        // row was drawn — `types.ts` rule 1 keeps pixel geometry inside the renderer — so the only
+        // thing it could have acted on was `#selected`, which would make a sleeve brushing the glass
+        // launch whatever happened to be highlighted. That comment named the missing piece: "row
+        // hit-testing needs the renderer to report back the boxes it drew". `svg.gridCellAt` is
+        // that, and it is the same function `renderGrid` lays the cells out with rather than a
+        // second opinion about where they went — a hit test that disagrees with the picture is
+        // worse than none, because it is wrong about the one thing the person can see.
+        //
+        // The brush is still answered, twice over: the gutter between tiles is dead, so a touch
+        // between two targets resolves to neither, and what a cell can reach is only what
+        // `#chooseCell` allows. Selection moves to the cell first, so the repaint this asks for
+        // shows which box was hit — feedback a device with no key travel has no other way to give.
+        const grid = this.#grid;
+        if (grid === null || grid.slot.id !== input.slot || grid.page !== this.#pageName) return false;
+        const hit = gridCellAt(grid.slot, grid.keys.length, this.#selected, input.x, input.y);
+        if (hit === null) return false;
+        this.#selected = hit;
+        this.#chooseCell(hit, context);
         return true;
       }
       default:

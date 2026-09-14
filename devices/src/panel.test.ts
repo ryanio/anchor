@@ -382,6 +382,10 @@ describe("the timeframe dial", () => {
 const screenDevice = (): AnchorDevice =>
   fakeDevice([{ id: SCREEN_SLOT, kind: "screen", paintable: true, width: 240, height: 135 }]);
 
+/** The panel Ryan is actually looking at: 368x448 of portrait AMOLED with a finger on it. */
+const PULSE_SLOT: SlotSpec = { id: SCREEN_SLOT, kind: "screen", paintable: true, width: 368, height: 448 };
+const pulseDevice = (): AnchorDevice => fakeDevice([PULSE_SLOT]);
+
 describe("screen devices", () => {
   // Named "assets" rather than "portfolio" on purpose: that name is reserved now — a screen device on
   // the real `portfolio` (or `gallery`) page gets `pulseDetail`'s ambient view instead of a list, and
@@ -399,25 +403,44 @@ describe("screen devices", () => {
     ],
   });
 
-  test("the same page composes as a list, with no adapter fetching anything", () => {
+  test("the same page composes as a grid, with no adapter fetching anything", () => {
     // This is the claim of the whole layer: one page config, two very different devices.
     const frame = new Panel(config, TOKENS).build(screenDevice(), withPortfolio);
-    const list = frame.get(SCREEN_SLOT);
-    assert.equal(list?.kind, "list");
-    if (list?.kind !== "list") return;
+    const grid = frame.get(SCREEN_SLOT);
+    assert.equal(grid?.kind, "grid");
+    if (grid?.kind !== "grid") return;
     assert.deepEqual(
-      list.rows.map((r) => r.label),
+      grid.cells.map((c) => c.label),
       ["Total", "Ethereum", "Solana"],
     );
-    assert.equal(list.rows[0]?.value, "$125,431");
+    assert.equal(grid.cells[0]?.value, "$125,431");
   });
 
-  test("a key grid and a list carry the same readings", () => {
+  test("a key grid and a screen grid carry the same readings", () => {
     const panel = new Panel(config, TOKENS);
     const tile = panel.build(streamDeckPlus(), withPortfolio).get(keySlot(0));
-    const list = panel.build(screenDevice(), withPortfolio).get(SCREEN_SLOT);
+    const grid = panel.build(screenDevice(), withPortfolio).get(SCREEN_SLOT);
     assert.equal(tile?.kind === "tile" && tile.value, "$125,431");
-    assert.equal(list?.kind === "list" && list.rows[0]?.value, "$125,431");
+    assert.equal(grid?.kind === "grid" && grid.cells[0]?.value, "$125,431");
+  });
+
+  test("a cell says whether the thing it controls is on, which a row could not", () => {
+    // The reason a grid is worth more than taller rows: the desktop page's toggles have a state,
+    // and the list surface had no word for it, so a screen device could not show night light on.
+    const toggles = parseConfig({
+      pages: [
+        {
+          name: "desktop",
+          keys: [
+            { index: 0, label: "Night", action: "noop", state: "nightlight" },
+            { index: 1, label: "Shot", action: "noop" },
+          ],
+        },
+      ],
+    });
+    const lit = { ...withPortfolio, desktop: { ...withPortfolio.desktop, nightlight: true } };
+    const grid = new Panel(toggles, TOKENS).build(pulseDevice(), lit).get(SCREEN_SLOT);
+    assert.deepEqual(grid?.kind === "grid" ? grid.cells.map((c) => c.emphasis) : [], ["active", "ground"]);
   });
 
   test("rotation moves the selection, and the panel owns it", () => {
@@ -431,11 +454,119 @@ describe("screen devices", () => {
     assert.equal(panel.selected, 0, "must not select above the first row");
   });
 
-  test("selection is clamped to the rows that exist", () => {
+  test("selection is clamped to the cells that exist", () => {
     const panel = new Panel(config, TOKENS);
     for (let i = 0; i < 10; i++) panel.handle({ kind: "rotate", slot: SCREEN_SLOT, delta: 1 });
-    const list = panel.build(screenDevice(), withPortfolio).get(SCREEN_SLOT);
-    assert.equal(list?.kind === "list" && list.selected, 2, "three rows means the last index is 2");
+    const grid = panel.build(screenDevice(), withPortfolio).get(SCREEN_SLOT);
+    assert.equal(grid?.kind === "grid" && grid.selected, 2, "three cells means the last index is 2");
+  });
+});
+
+/**
+ * A tap on a cell, on a page that does not rotate.
+ *
+ * The geometry is `svg.gridCellAt`'s and is asserted there; what these are about is the panel's
+ * half — that a touch reaches the key under the finger and only that key, that a touch reaching
+ * nothing stays nothing, and that a filtered page does not run the key it used to have at that
+ * index.
+ */
+describe("a tap on a grid cell", () => {
+  const NAMES = ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot"];
+  const config = parseConfig({
+    pages: [
+      {
+        name: "desktop",
+        // Each key switches to its own page, so "which action ran" is a question with six distinct
+        // answers rather than one that any of them could have produced.
+        keys: NAMES.map((name, index) => ({ index, label: name, action: `page ${name}` })),
+      },
+      ...NAMES.map((name) => ({ name })),
+    ],
+  });
+
+  /**
+   * The centre of each cell on a 368x448 panel holding six of them.
+   *
+   * Written out rather than computed from `gridMetrics`, so a change to the layout arithmetic shows
+   * up here as a failing test instead of being followed silently by the thing it is meant to check.
+   * Three columns of 122 (offset by the 1px margin the leftover two pixels leave) and two rows of 224.
+   */
+  const CENTRES = [
+    { x: 62, y: 112 },
+    { x: 184, y: 112 },
+    { x: 306, y: 112 },
+    { x: 62, y: 336 },
+    { x: 184, y: 336 },
+    { x: 306, y: 336 },
+  ];
+
+  const painted = (panel: Panel): Panel => {
+    panel.build(pulseDevice(), state());
+    return panel;
+  };
+
+  test("selects the cell the finger landed on", () => {
+    const panel = painted(new Panel(config, TOKENS));
+    const third = CENTRES[2] ?? { x: 0, y: 0 };
+    assert.equal(panel.handle({ kind: "tap", slot: SCREEN_SLOT, ...third }), true, "repaints");
+    assert.equal(panel.selected, 2);
+    // Back to the page that has the cells on it: the tap ran `page charlie`, and charlie has none.
+    panel.setPage("desktop");
+    const grid = panel.build(pulseDevice(), state()).get(SCREEN_SLOT);
+    assert.equal(grid?.kind === "grid" && grid.selected, 2, "and the frame shows which one");
+  });
+
+  test("runs that cell's action, not the one that happened to be selected", () => {
+    const panel = painted(new Panel(config, TOKENS));
+    panel.handle({ kind: "rotate", slot: SCREEN_SLOT, delta: 1 });
+    painted(panel);
+    assert.equal(panel.selected, 1);
+    const fifth = CENTRES[4] ?? { x: 0, y: 0 };
+    panel.handle({ kind: "tap", slot: SCREEN_SLOT, ...fifth });
+    assert.equal(panel.pageName, "echo", "the tapped cell's action ran, not the selected one's");
+    assert.equal(panel.selected, 4);
+  });
+
+  test("every cell reaches its own key and no other", () => {
+    for (const [index, at] of CENTRES.entries()) {
+      const panel = painted(new Panel(config, TOKENS));
+      panel.handle({ kind: "tap", slot: SCREEN_SLOT, ...at });
+      assert.equal(panel.pageName, NAMES[index], `cell ${index} ran the wrong key`);
+    }
+  });
+
+  test("a touch in the gutter between two tiles reaches neither", () => {
+    // The sleeve case the old refusal existed for: between two targets is not a target.
+    const panel = painted(new Panel(config, TOKENS));
+    assert.equal(panel.handle({ kind: "tap", slot: SCREEN_SLOT, x: 123, y: 112 }), false);
+    assert.equal(panel.pageName, "desktop", "nothing was dispatched");
+  });
+
+  test("a tap before anything has been painted resolves against nothing", () => {
+    // `build` is what records where the boxes went. A tap that arrives first has no geometry to be
+    // answered against, and guessing one would be answering with a key nobody can see.
+    const panel = new Panel(config, TOKENS);
+    const first = CENTRES[0] ?? { x: 0, y: 0 };
+    assert.equal(panel.handle({ kind: "tap", slot: SCREEN_SLOT, ...first }), false);
+  });
+
+  test("a filtered page runs the key that is showing, not the key at that index", () => {
+    const panel = new Panel(config, TOKENS);
+    panel.handle({ kind: "text", slot: SCREEN_SLOT, value: "delta" });
+    painted(panel);
+    const first = CENTRES[0] ?? { x: 0, y: 0 };
+    panel.handle({ kind: "tap", slot: SCREEN_SLOT, ...first });
+    // One cell survives the filter, and it is the fourth key. Resolving through `page.keys[0]`
+    // would have run alpha — a key that is not on the screen at all.
+    assert.equal(panel.pageName, "delta");
+    assert.equal(panel.selected, 0);
+  });
+
+  test("a tap landing between a page change and its repaint does nothing", () => {
+    const panel = painted(new Panel(config, TOKENS));
+    panel.setPage("alpha");
+    const first = CENTRES[0] ?? { x: 0, y: 0 };
+    assert.equal(panel.handle({ kind: "tap", slot: SCREEN_SLOT, ...first }), false);
   });
 });
 
@@ -445,7 +576,10 @@ describe("a tap steers the rotation", () => {
   const config = parseConfig({
     pages: [
       { name: "gallery" },
-      { name: "desktop", keys: [{ index: 0, label: "One", action: "hypr workspace 1" }] },
+      // `noop` rather than a real verb: a tap on a keyed page now *dispatches*, and `hypr ...` goes
+      // out through `state/hypr.ts` rather than through the exits `useFakeProcesses` replaces —
+      // this test file would have started talking to the running compositor.
+      { name: "desktop", keys: [{ index: 0, label: "One", action: "noop" }] },
     ],
   });
 
@@ -540,12 +674,17 @@ describe("a tap steers the rotation", () => {
     assert.equal(free?.kind === "detail" ? free.syncProgress : undefined, 0.25, "back to the shared window");
   });
 
-  test("a tap on a page that does not rotate does nothing, and says so by repainting nothing", () => {
+  test("a tap on a page of keys chooses a cell rather than steering the rotation", () => {
+    // Two gestures share one input kind, and the page decides which it is. A tap on the desktop
+    // page must not leave a rotation pin behind for the gallery page to inherit.
     const panel = new Panel(config, TOKENS);
     panel.setPage("desktop");
-    assert.equal(panel.handle({ kind: "tap", slot: SCREEN_SLOT, x: 1, y: 1 }), false);
-    const list = panel.build(screenDevice(), clock(10, 0)).get(SCREEN_SLOT);
-    assert.equal(list?.kind, "list", "a list page stays a list");
+    panel.build(screenDevice(), clock(10, 0));
+    const grid = panel.build(screenDevice(), clock(10, 0)).get(SCREEN_SLOT);
+    assert.equal(grid?.kind, "grid", "a page of keys is a grid");
+    assert.equal(panel.handle({ kind: "tap", slot: SCREEN_SLOT, x: 120, y: 67 }), true, "hit a cell");
+    panel.setPage("gallery");
+    assert.equal(showing(panel, clock(10, 0)), "Gamma", "the gallery is where the clock says");
   });
 
   test("a tap on the touch strip leaves the rotation alone", () => {
@@ -579,20 +718,20 @@ describe("text input", () => {
     ],
   });
 
-  test("narrows the rows and nothing else", () => {
+  test("narrows the cells and nothing else", () => {
     const panel = new Panel(config, TOKENS);
     panel.handle({ kind: "text", slot: SCREEN_SLOT, value: "sol" });
     assert.equal(panel.filter, "sol");
-    const list = panel.build(screenDevice(), state()).get(SCREEN_SLOT);
-    assert.deepEqual(list?.kind === "list" ? list.rows.map((r) => r.label) : [], ["Solana"]);
+    const grid = panel.build(screenDevice(), state()).get(SCREEN_SLOT);
+    assert.deepEqual(grid?.kind === "grid" ? grid.cells.map((c) => c.label) : [], ["Solana"]);
   });
 
-  test("an empty list says why it is empty", () => {
+  test("an empty grid says why it is empty", () => {
     const panel = new Panel(config, TOKENS);
     panel.handle({ kind: "text", slot: SCREEN_SLOT, value: "zzz" });
-    const list = panel.build(screenDevice(), state()).get(SCREEN_SLOT);
-    assert.equal(list?.kind === "list" && list.rows.length, 0);
-    assert.match(list?.kind === "list" ? (list.empty ?? "") : "", /zzz/);
+    const grid = panel.build(screenDevice(), state()).get(SCREEN_SLOT);
+    assert.equal(grid?.kind === "grid" && grid.cells.length, 0);
+    assert.match(grid?.kind === "grid" ? (grid.empty ?? "") : "", /zzz/);
   });
 
   test("filter text is never dispatched as an action", () => {
@@ -606,7 +745,7 @@ describe("text input", () => {
     assert.equal(panel.filter, "page other", "it is kept, verbatim, as a filter");
   });
 
-  test("committing text resets the selection to the top of the new list", () => {
+  test("committing text resets the selection to the top of the new grid", () => {
     const panel = new Panel(config, TOKENS);
     panel.handle({ kind: "rotate", slot: SCREEN_SLOT, delta: 1 });
     panel.handle({ kind: "text", slot: SCREEN_SLOT, value: "a" });

@@ -106,6 +106,19 @@ export interface ListRow {
   readonly tone?: TokenName;
 }
 
+/**
+ * One cell of a grid surface: a list row, plus the state vocabulary a key already has.
+ *
+ * Deliberately `ListRow` extended rather than a parallel set of names. A cell and a row are the same
+ * page key said for two layouts, and a second spelling of `label`/`value`/`icon`/`tone` is how the
+ * two drift until a source has to know which surface it is feeding. `emphasis` is the one thing a
+ * row has no word for, and it is borrowed from `tile` rather than invented: a cell showing a toggle
+ * that is on is `active`, exactly as the same key is on a Stream Deck.
+ */
+export interface GridCell extends ListRow {
+  readonly emphasis: Emphasis;
+}
+
 /** One labelled line of a detail surface. */
 export interface DetailLine {
   readonly label: string;
@@ -182,12 +195,38 @@ export type Surface =
    *
    * `selected` belongs to the panel rather than the device, because only the panel knows how many
    * rows there are once a filter has been applied.
+   *
+   * **The panel no longer composes one.** A screen device's keyed page became a `grid` when the
+   * panel it runs on turned out to have a finger on it — rows about 60px tall are a poor target on
+   * a touch panel, and a thin one is the wrong use of a big portrait screen. This stays in the
+   * contract because it is still the honest shape for a screen too narrow for two legible columns,
+   * and because `renderList` is what a future producer would reach for rather than write again.
    */
   | {
       readonly kind: "list";
       readonly rows: readonly ListRow[];
       readonly selected?: number;
       /** Shown when there are no rows. An empty list must say why it is empty. */
+      readonly empty?: string;
+    }
+  /**
+   * Tiles on a screen: the page's keys as boxes big enough to put a thumb on.
+   *
+   * One screen device has exactly one paintable slot, so a grid cannot be eight surfaces the way a
+   * Stream Deck's face is — it is one surface carrying its cells in reading order, and the renderer
+   * decides how many columns that particular panel has room for. Nothing here names a column count
+   * or a cell size, per rule 1 at the top of this file: the same surface is three columns on a
+   * 368x448 panel and one on a narrow strip, and the panel composing it knows neither.
+   *
+   * `selected` is the panel's, for the same reason it is on `list` — only the panel knows how many
+   * cells survived a filter. A device reports a tap in pixels; turning those into a cell is the
+   * renderer's job, because the renderer is the only thing that knows where it drew the boxes.
+   */
+  | {
+      readonly kind: "grid";
+      readonly cells: readonly GridCell[];
+      readonly selected?: number;
+      /** Shown when there are no cells. An empty grid must say why it is empty. */
       readonly empty?: string;
     }
   /**

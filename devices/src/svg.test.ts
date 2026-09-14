@@ -14,6 +14,10 @@ import {
   escapeXml,
   fit,
   fitEnds,
+  gridCellAt,
+  gridMetrics,
+  gridWindow,
+  TOUCH_TARGET_PX,
   tileInset,
   tileRadius,
   toSvg,
@@ -237,6 +241,155 @@ describe("marks scale with the slot they are drawn in", () => {
       KEY,
     );
     assert.equal(svg.includes("Opepen 018"), false);
+  });
+});
+
+/**
+ * The grid, which is the surface a finger uses.
+ *
+ * Every assertion here is about a rule rather than a rasterised pixel, for the reason the block
+ * above says: CI has neither this machine's fonts nor its themes. What a touch panel adds is that
+ * one of those rules is about a *hand* — a cell under about 9mm is a cell people miss — so the
+ * arithmetic that turns a panel into columns is held to the size it claims to produce.
+ */
+describe("a grid of tappable cells", () => {
+  const PULSE: SlotSpec = { id: "screen:0", kind: "screen", paintable: true, width: 368, height: 448 };
+  const ROUND: SlotSpec = { id: "screen:0", kind: "screen", paintable: true, width: 240, height: 240 };
+  const NARROW: SlotSpec = { id: "screen:0", kind: "screen", paintable: true, width: 170, height: 320 };
+
+  const cells = (count: number) =>
+    Array.from({ length: count }, (_v, i) => ({ label: `Cell ${i}`, emphasis: "ground" as const }));
+
+  test("the 368x448 panel comes out three columns of roughly a thumb", () => {
+    const metrics = gridMetrics(PULSE, 8);
+    assert.equal(metrics.columns, 3);
+    assert.equal(metrics.rows, 3);
+    // 322 ppi measured off the panel's own diagonal: 120px is about 9.5mm, and these are larger.
+    assert.ok(metrics.cellWidth >= TOUCH_TARGET_PX, `${metrics.cellWidth}px is under a finger`);
+    assert.ok(metrics.cellHeight >= TOUCH_TARGET_PX);
+  });
+
+  test("a panel too narrow for two legible columns takes one rather than two cramped ones", () => {
+    const metrics = gridMetrics(NARROW, 8);
+    assert.equal(metrics.columns, 1);
+    assert.ok(metrics.cellWidth >= TOUCH_TARGET_PX);
+  });
+
+  test("never more columns or rows than there are cells to put in them", () => {
+    // Two keys on a 368px panel is two wide cells, not two cells and a column of nothing.
+    const metrics = gridMetrics(PULSE, 2);
+    assert.equal(metrics.columns, 2);
+    assert.equal(metrics.rows, 1);
+  });
+
+  test("a grid that does not fit pages, rather than scrolling by one cell", () => {
+    // The thing a grid is for is that a target stays where the hand last found it.
+    assert.equal(gridWindow(8, 0, 4), 0);
+    assert.equal(gridWindow(8, 3, 4), 0);
+    assert.equal(gridWindow(8, 4, 4), 4, "the page turns whole");
+    assert.equal(gridWindow(8, 7, 4), 4);
+    assert.equal(gridWindow(4, 3, 4), 0, "everything fits, so there is nothing to page");
+  });
+
+  test("the centre of every cell resolves to that cell, and to no other", () => {
+    const metrics = gridMetrics(PULSE, 8);
+    const seen = new Set<number>();
+    for (let index = 0; index < metrics.capacity; index++) {
+      const x = metrics.originX + (index % metrics.columns) * metrics.cellWidth + metrics.cellWidth / 2;
+      const y =
+        metrics.originY + Math.floor(index / metrics.columns) * metrics.cellHeight + metrics.cellHeight / 2;
+      const hit = gridCellAt(PULSE, 8, 0, x, y);
+      assert.equal(hit, index < 8 ? index : null, `the centre of cell ${index} resolved to ${hit}`);
+      if (hit !== null) seen.add(hit);
+    }
+    assert.equal(seen.size, 8, "eight cells, eight distinct answers");
+  });
+
+  test("the gutter between two tiles belongs to neither", () => {
+    // The guard that lets a tap dispatch at all: between two targets is not a target, so a sleeve
+    // brushing the boundary cannot be rounded into a keypress.
+    const metrics = gridMetrics(PULSE, 8);
+    const boundary = metrics.originX + metrics.cellWidth;
+    assert.equal(gridCellAt(PULSE, 8, 0, boundary, 100), null);
+    assert.equal(gridCellAt(PULSE, 8, 0, boundary - 1, 100), null, "the inset side of it too");
+  });
+
+  test("a touch off the grid, or on a cell that is not there, is not a cell", () => {
+    assert.equal(gridCellAt(PULSE, 8, 0, -4, 100), null);
+    assert.equal(gridCellAt(PULSE, 8, 0, 1000, 100), null);
+    assert.equal(gridCellAt(PULSE, 0, 0, 60, 100), null, "an empty page has nothing to hit");
+    // Nine boxes and eight cells: the ninth is drawn as nothing and must answer as nothing.
+    const metrics = gridMetrics(PULSE, 8);
+    const last = {
+      x: metrics.originX + metrics.cellWidth * 2.5,
+      y: metrics.originY + metrics.cellHeight * 2.5,
+    };
+    assert.equal(gridCellAt(PULSE, 8, 0, last.x, last.y), null);
+  });
+
+  test("the hit test answers for the page the selection is on", () => {
+    // 240x240 holds four cells, so keys five to eight are on the second page — and the top-left box
+    // is cell 0 or cell 4 depending on where the cursor is. A hit test that ignored that would run
+    // a key the person is not looking at.
+    const metrics = gridMetrics(ROUND, 8);
+    assert.equal(metrics.capacity, 4);
+    const topLeft = { x: metrics.originX + 20, y: metrics.originY + 20 };
+    assert.equal(gridCellAt(ROUND, 8, 0, topLeft.x, topLeft.y), 0);
+    assert.equal(gridCellAt(ROUND, 8, 5, topLeft.x, topLeft.y), 4);
+  });
+
+  test("every colour in a grid of plain cells comes from the token set", () => {
+    const svg = toSvg({ kind: "grid", cells: cells(8), selected: 1 }, TOKENS, PULSE);
+    for (const color of [...svg.matchAll(/#[0-9a-fA-F]{3,6}/g)].map((m) => m[0].toLowerCase())) {
+      assert.ok(
+        new Set(
+          Object.values(TOKENS)
+            .filter((v) => typeof v === "string")
+            .map((v) => v.toLowerCase()),
+        ).has(color),
+        `${color} is not a token`,
+      );
+    }
+  });
+
+  test("the selection is a ring, so it composes with a tile that is already filled", () => {
+    // `emphasis` spends the fill on whether the thing is on. A selection that also filled would
+    // make selected-and-off identical to unselected-and-on.
+    const plain = toSvg({ kind: "grid", cells: cells(8) }, TOKENS, PULSE);
+    const chosen = toSvg({ kind: "grid", cells: cells(8), selected: 1 }, TOKENS, PULSE);
+    assert.equal(plain.includes("stroke-width"), false, "nothing is ringed when nothing is selected");
+    assert.ok(chosen.includes('fill="none" stroke='));
+  });
+
+  test("cells past the panel's capacity are not drawn at all", () => {
+    // Four boxes on the round panel; the other four are a page turn away, not a half-tile.
+    const svg = toSvg({ kind: "grid", cells: cells(8), selected: 0 }, TOKENS, ROUND);
+    assert.ok(svg.includes("Cell 0"));
+    assert.equal(svg.includes("Cell 4"), false);
+  });
+
+  test("an empty grid says why it is empty rather than going blank", () => {
+    const svg = toSvg({ kind: "grid", cells: [], empty: 'nothing matches "zzz"' }, TOKENS, PULSE);
+    assert.ok(svg.includes("zzz"));
+  });
+
+  test("a cell is a tile, so a hostile label cannot become an element", () => {
+    const svg = toSvg(
+      { kind: "grid", cells: [{ label: '</text><rect fill="#f00"/>', emphasis: "ground" }] },
+      TOKENS,
+      PULSE,
+    );
+    assert.equal(svg.includes('<rect fill="#f00"'), false);
+    assert.equal(svg.replace(/<\/?[a-zA-Z][^>]*>/g, "").includes("<"), false);
+  });
+
+  test("each cell clips to its own box, never to its neighbour's", () => {
+    // `renderTile` derives its clip-path id from the slot id it is given. Two cells sharing one id
+    // would clip the second tile to the first one's rectangle — a bug that only shows on a device.
+    const svg = toSvg({ kind: "grid", cells: cells(8) }, TOKENS, PULSE);
+    const ids = [...svg.matchAll(/<clipPath id="([^"]+)"/g)].map((m) => m[1]);
+    assert.equal(ids.length, 8);
+    assert.equal(new Set(ids).size, 8);
   });
 });
 

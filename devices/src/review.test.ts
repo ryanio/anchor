@@ -99,11 +99,14 @@ describe("a frame built for a case", () => {
     assert.ok(frame.has(STRIP_SLOT));
   });
 
-  test("a screen device gets a list rather than tiles, on a page pulseDetail does not claim", () => {
+  test("a screen device gets a grid of cells, on a page pulseDetail does not claim", () => {
     // Not the "pulse-amoled" case: that one is on the portfolio page, which is `pulseDetail`'s and
-    // renders as "detail" on purpose. "list-selected" is the desktop page, which still becomes rows.
-    const frame = buildFrame(caseNamed("list-selected"), config, TOKENS);
-    assert.equal(frame.get(SCREEN_SLOT)?.kind, "list");
+    // renders as "detail" on purpose. "pulse-grid" is the desktop page, which is a set of things to
+    // choose between and becomes boxes big enough to choose one with.
+    const frame = buildFrame(caseNamed("pulse-grid"), config, TOKENS);
+    const surface = frame.get(SCREEN_SLOT);
+    assert.equal(surface?.kind, "grid");
+    assert.ok(surface?.kind === "grid" && surface.cells.length > 0, "an empty grid reviews nothing");
   });
 
   /**

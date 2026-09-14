@@ -14,8 +14,26 @@ becomes `## [0.1.0] - YYYY-MM-DD` at the moment the tag is pushed, and not befor
 
 ### Added
 
+**A page of keys is a grid of tappable tiles on a screen device, not a list of thin rows.** The
+`grid` surface carries the page's keys as cells — a label, a reading, an icon, a tone and whether
+the thing it controls is currently on — and `svg.ts` divides the panel into whole columns of at
+least `TOUCH_TARGET_PX`. That is 120 px, worked out from the one panel that has been driven: 368×448
+across a 1.8 in diagonal is about 322 ppi, so 9-10 mm of finger is 114-127 px. The 368×448 board
+comes out three columns of 122×149; the 1.28 in round 240×240 comes out two by two with the rest of
+the page a whole page-turn away. Each cell is drawn by `renderTile`, so a pulse panel and a Stream
+Deck key are one face at two sizes. The rotating ambient pages — `portfolio`, `gallery`, `tokens`,
+`nfts` — are unchanged and still `pulseDetail`'s.
+
+**A tap on a pulse panel opens the cell under the finger.** The panel used to refuse, because a tap
+carries pixels and pixel geometry lives in the renderer; `svg.gridCellAt` is the same function
+`renderGrid` places the cells with, so the hit test cannot disagree with the picture. The gutter
+between two tiles is dead space, a tap landing between a page change and its repaint resolves
+against nothing, and a cell can only reach the action its page config declares — never one built
+from marketplace data. Per invariant 1, `actions.ts` still has no verb that signs, spends or
+approves anything.
+
 **Every device, in every state, on the review page.** `node scripts/review.ts devices` renders
-thirty-three frames — Stream Deck +, XL and Mini, two ESP32 panels and a Cardputer, across the
+thirty-eight frames — Stream Deck +, XL and Mini, two ESP32 panels and a Cardputer, across the
 states the panel is actually in: service down, service refusing, no wallet configured, still
 loading, a reading absent while everything else arrived, stale data, an empty gallery, labels that
 must truncate, a light theme, `white`, `vantablack`, and a device blanked by the lock. It needs no

@@ -587,6 +587,23 @@ export const CASES: readonly CaseSpec[] = [
       "that the scrim still leaves the title readable over a mostly-light piece of art.",
   },
   {
+    id: "pulse-grid",
+    category: "Every device",
+    device: "pulse-amoled",
+    // `toggled` rather than `ready`: night light is on in it, so the filled tile of a toggle and the
+    // ring of the selected cell are on the same frame, which is the only way to judge that the two
+    // do not read as each other.
+    state: "toggled",
+    page: "desktop",
+    title: "ESP32 pulse — a page of keys as a grid of tappable tiles",
+    looking:
+      "The page that is a set of things to choose between, on the device you choose with a finger. " +
+      "Three columns of 122×149 is about 10mm a side on this panel, which is the size a thumb " +
+      "actually is — check each tile reads as a target rather than as a label, that the icon and " +
+      "caption sit like they do on a Stream Deck key, and that the accent ring says which cell is " +
+      "selected without being mistakable for the filled tile of a toggle that is on.",
+  },
+  {
     id: "pulse-round",
     category: "Every device",
     device: "pulse-round",
@@ -842,15 +859,30 @@ export const CASES: readonly CaseSpec[] = [
       "being told which key to look at?",
   },
   {
-    id: "list-selected",
+    id: "grid-long",
     category: "The awkward cases",
     device: "pulse-amoled",
+    state: "long",
+    page: "chains",
+    title: "A grid of readings, with every label long",
+    looking:
+      "Six chain readings and two links out, at 122×149 each. A cell is a tile, so the money is " +
+      "`autoSize`d and the caption is `fitEnds`ed — check `arbitrum-nova` is still identifiable " +
+      "after the cut, that no reading has shrunk out of step with the ones beside it, and that " +
+      "nothing overflows into the tile next door.",
+  },
+  {
+    id: "grid-round",
+    category: "The awkward cases",
+    device: "pulse-round",
     state: "ready",
     page: "desktop",
-    title: "A list with a row selected",
+    title: "The same grid on a 240×240 round panel",
     looking:
-      "The selected row gets a raised fill. Check it is distinguishable from the ground on this " +
-      "theme, that the fill spans the full row width, and that the row's own text stays legible.",
+      "Two columns by two rows is all this panel has room for at a legible target size, so four of " +
+      "the page's eight keys are on a second page of the grid rather than squeezed onto this one. " +
+      "The panel is round: check the labels and icons stay well inside the circle, and that a tile " +
+      "whose corner is off the glass still reads as a tile.",
   },
 
   // ── wearing the theme ─────────────────────────────────────────────────────────────────────────
