@@ -131,6 +131,17 @@ be the one surface ignoring the user's choice.
    scrolling list — extend `types.ts` deliberately and say why in your PR. Do not work around it in
    an adapter; the next device will need the same thing.
 
+**Find your device; never take the first port that looks right.** Two of these boards are ESP32-S3s
+with native USB, so they enumerate through the same Espressif JTAG/serial descriptor and
+`listPorts()` cannot tell a Cardputer from a pulse display. `cli.ts` used to take `listPorts()[0]`,
+which with both on the desk is a coin flip, and losing it is not a clean failure: a handshake
+timeout, an exit, and a restart into the same coin flip — 6,601 restarts, read off the unit's own
+journal. Both drivers now probe every candidate and keep the one that answers as the device they
+asked for, closing the rest rather than holding a port that belongs to another service; a path given
+by name is still taken at its word, with its own error reported. A unit file pins its board by the
+stable `by-id` path, because probing is the right fallback for a person running this by hand and the
+wrong thing for a daemon to rely on twice.
+
 Run the gates: `npm run typecheck` and `npm test` in `devices/`, `npm run lint` at the root.
 
 ## Status
@@ -139,11 +150,13 @@ Run the gates: `npm run typecheck` and `npm test` in `devices/`, `npm run lint` 
 |---|---|
 | Elgato Stream Deck + | Working. Measured on firmware 2.0.3.5: 8 keys at 120x120, an 800x100 LCD segment, 4 encoders with no display. Input and output verified on hardware. |
 | Other Stream Deck models | Should work — capabilities are read from the device, not hard-coded — but untested. |
-| Waveshare ESP32-S3-Touch-AMOLED-1.8 (V2) | **Working, on the glass.** A 368x448 CO5300 AMOLED on an ESP32-S3 N16R8, driven over USB CDC. The host renders and the device blits: an Anchor surface in the live Omarchy theme appears on the panel. Measured with the panel presenting: a full frame is 23 KB on the wire and ~213ms end to end, a changed reading is 70ms, and an unchanged frame costs zero bytes. Touch, IMU and buttons are present but unused. See `devices-esp32.md` and `devices/firmware/esp32/README.md`. |
-| M5Stack Cardputer | Both ends written, neither run on hardware. The adapter is here, and so is the device end: `devices/firmware/cardputer/app/`, built against **flint** (`ryanio/cardputer`), Ryan's Cardputer ADV firmware, vendored as a pinned submodule beside it. Built and photographed in flint's simulator. See `devices-cardputer.md`. |
+| Waveshare ESP32-S3-Touch-AMOLED-1.8 (V2) | **Working, on the glass.** A 368x448 CO5300 AMOLED on an ESP32-S3 N16R8, driven over USB CDC. The host renders and the device blits: an Anchor surface in the live Omarchy theme appears on the panel. Measured with the panel presenting: a full frame is 23 KB on the wire and ~213ms end to end, a changed reading is 70ms, and an unchanged frame costs zero bytes. It has its own screen-shaped page now — `Panel.pulseDetail`, an ambient view rather than a list of rows. **Touch is claimed but unproven**: a CST820 is on the I2C bus, `firmware/esp32/app/sensors.cpp` reads it, and HELLO now declares `tap` and `swipe` — but the controller has only ever identified itself, never produced a coordinate. **The IMU is proven and deliberately unused**: a QMI8658, measured in `firmware/esp32/sensors/`, wired to no input on purpose — `app/sensors.h` says why. See `devices-esp32.md` and `devices/firmware/esp32/README.md`. |
+| M5Stack Cardputer (ADV) | **Running on hardware.** Flashed, linked over USB CDC, and fixed against the physical unit: writes are chunked to 64 bytes with a pace between them after a burst was dropped before the firmware could drain it, and a frame repaints only the slots it touched after a full-screen redraw read as a blink. The adapter is here and so is the device end: `devices/firmware/cardputer/app/`, built against **flint** (`ryanio/cardputer`), Ryan's Cardputer ADV firmware, vendored as a pinned submodule beside it. Three later additions build and run in flint's simulator but **have not been felt on the unit**: tilt-to-page off flint's `motion::`, a standalone WiFi mode that fetches OpenSea trending when no host is on the cable, and two of flint's own views (Maze, Calm) sharing the menu carousel. See `devices-cardputer.md`. |
 
-The Anchor page currently shows service reachability and whether a wallet is configured. It does not
-render a portfolio value: the shape of `/portfolio/value`'s `data` comes from the OpenSea SDK and has
-not been measured against a live credentialed service, and this project has already spent an
-afternoon on a plausible number taken for a true one. The envelope's `meta` — `fetchedAt`,
-`ageSeconds`, `stale` — *is* read from `service/src`, and is what provenance will be drawn from.
+The Anchor pages render real readings now, not just reachability: a portfolio total with its token
+and NFT split, PnL over the timeframe a dial scrubs, per-chain shares, held pieces, and trending
+tokens and collections from the discovery routes. That was measured against real portfolio data and
+real cached art on the devices themselves rather than reasoned about — the caution it replaces was
+written when `/portfolio/value`'s shape had only been read out of the SDK, and this project has
+already spent an afternoon on a plausible number taken for a true one. The envelope's `meta` —
+`fetchedAt`, `ageSeconds`, `stale` — is read from `service/src` and is what provenance is drawn from.

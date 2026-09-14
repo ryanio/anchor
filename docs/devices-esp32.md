@@ -56,9 +56,11 @@ it is the reviewed reason this design needs sign-off on.
 
 ### The cable comes first
 
-Everything above describes the display on a shelf, and it is still the end state. The firmware that
-now exists in `devices/firmware/esp32/` speaks the identical protocol over **USB CDC serial**, and
-the first Anchor frame on real glass will arrive down a cable rather than a radio.
+Everything above describes the display on a shelf, and it is still the end state. The firmware in
+`devices/firmware/esp32/` speaks the identical protocol over **USB CDC serial**, and that is how the
+first Anchor frame on real glass arrived — down a cable, not a radio. It is still how every frame
+arrives today: there is no Wi-Fi and no TLS-PSK in the running firmware, which is a deliberate
+ordering rather than an unfinished one.
 
 Two reasons, and the second is the one that matters.
 
@@ -393,9 +395,12 @@ What actually decides it, and what to measure before committing:
 - **AMOLED earns its price on an ambient device**, not on refresh rate. Black pixels cost nothing, and
   an Anchor surface is mostly ground. An always-on LCD backlight on a desk at night is the thing that
   makes a device get unplugged.
-- **Refresh cost is dominated by the bus, not the link.** 17 KB over Wi-Fi is nothing; pushing a full
-  466×466 framebuffer out over QSPI is the part to time. **Measure:** full-frame blit time, and dirty-
-  rect blit time for a 3 KB rectangle.
+- **Refresh cost is dominated by the panel, not the link** — and that prediction has now been paid
+  out. This bullet used to end "**Measure:** full-frame blit time, and dirty-rect blit time for a
+  3 KB rectangle", because 17 KB over a link is nothing and pushing a framebuffer over QSPI is the
+  part that costs. Both were measured; the answer is in the bullet two below and in the ledger at the
+  end, and the guess was right about *where* the cost was and wrong about how much of it the bus
+  itself accounts for.
 - **PSRAM was the constraint that bites, and it does not bite.** **Measured on the board on this
   desk:** 8 MB of embedded PSRAM, 7,943,664 bytes free at boot, and its 368×448 framebuffer —
   329,728 bytes — allocates out of it with room to spare. A 466×466 panel would need 434,312 and
@@ -410,9 +415,90 @@ What actually decides it, and what to measure before committing:
 - **Power.** Assume USB-C power for the first build. A battery-powered pulse display is a different
   project: it needs deep sleep between frames, and this protocol's persistent connection is the wrong
   shape for that. Say so rather than half-supporting it.
-- **The Tilt-to-Explore Gallery** needs an accelerometer/gyro on the board (many of these carry a
-  QMI8658-class IMU). It costs no protocol change: the firmware turns motion into `swipe` with a
-  `from`/`to`, which is already an `InputKind` and already what the panel uses to change page.
+- **The Tilt-to-Explore Gallery** needs an accelerometer/gyro, and this board has one: the QMI8658 at
+  0x6B, now proven on silicon rather than assumed from a product page. It costs no protocol change —
+  motion becomes a `swipe` with a `from`/`to`, which is already an `InputKind` and already what the
+  panel uses to change page. It is deliberately not wired here, and the tilt gesture shipped on the
+  Cardputer instead; see [The inputs this board had all along](#the-inputs-this-board-had-all-along).
+
+### The inputs this board had all along
+
+For a long time this document and the firmware both said the panel had no input. That was never a
+measurement. `probe/` had already found a **CST820 at 0x15 and a QMI8658 at 0x6B** on the bus above —
+the same table that identified the display driver names two input devices — and the firmware's zero
+input mask meant "nobody wired it up", written in a comment as though it were a fact about the
+hardware. It is the `amoled-466` mistake in a different register: a plausible sentence standing in
+for a question nobody asked.
+
+`devices/firmware/esp32/sensors/sensors.ino` is a standalone bringup sketch in the shape `probe/`
+established, and it asks the two chips what they say when a person actually uses them rather than
+only what they are called. What it reported, against this silicon:
+
+- **The IMU is proven.** WHO_AM_I `0x05`, revision `0x7C`, its configuration registers reading back
+  exactly as written, and a clean **1.05 g** gravity vector at the ±2 g scale factor. The registers
+  reading back what was written to them are the control: a bus answering with noise, or with zeroes,
+  could not have produced that, and a scale factor applied to the wrong part would not have landed
+  on gravity.
+- **The touch controller is not.** It identifies itself — chip `0xB7`, vendor `0x41` — and then
+  produced **no coordinate at all**. It also refused a six-byte burst read from register `0x01`
+  while answering single-register reads of the same registers, which is a real finding and the
+  reason `app/sensors.cpp` reads one register at a time with a stop rather than a repeated start.
+  **Whether that is what was wrong is not known.** It needs a finger on the lit glass, and until
+  somebody puts one there nothing in this file claims that touch works.
+- **A bounded `Wire.setTimeOut` is not optional.** On this device `Serial` *is* the protocol and the
+  decoder is fed from `loop()`, so an I2C transaction that never gives up turns a quiet sensor into
+  a display that appears to freeze. Bounded at 10 ms, polled on a 20 ms beat, every read checked,
+  and a missing chip simply never producing an event.
+
+So HELLO now claims `tap` and `swipe` — `(1<<ANCHOR_INPUT_TAP)|(1<<ANCHOR_INPUT_SWIPE)` in
+`say_hello()`. The mask is what the firmware is *prepared to send*, not what the glass is known to be
+good for: the host reads it to decide what this device can do at all, so claiming a kind and never
+sending it costs nothing, while sending an unclaimed kind is a device breaking its own HELLO.
+Recognition happens in `app/sensors.cpp` from raw coordinates rather than out of the controller's
+gesture register, because parts in this family differ over whether that register is populated at all
+while the coordinates are always there. A finger that goes down and comes up within 24 px is a tap;
+one that travels 80 px or more sideways is a swipe; the in-between case is deliberately neither,
+because a smudge should not page a display. Nothing is sent before READY, and nothing is ever
+printed — a stray `printf` here lands in the middle of a frame and is correctly read as a device
+talking nonsense.
+
+**The IMU is deliberately not wired to any input**, and `app/sensors.h` gives the reason rather than
+leaving it to be guessed at: it is the one of the two that works, and it still should not turn pages
+on *this* device, because a display whose job is to sit still on a desk and be glanced at is made
+worse, not richer, by a page that turns because somebody set a mug down next to it. Tilt went to the
+Cardputer, which is the unit already in a hand. That is a judgement about what this device is for,
+not a limit on what it can do.
+
+### What a tap does on the host
+
+`Panel.handle`'s `tap` case used to end `return false;`. Taps were decoded end to end, with passing
+tests, and then dropped on the floor. Now a tap on a rotating ambient page advances to the next item
+and pins it there for `TAP_HOLD_MS` — ten seconds.
+
+The mechanism matters more than the gesture, and it lives in `#steerRotation` in `panel.ts`. The
+rotation index is derived from the wall clock, and that is the whole reason several units on one desk
+land on the same piece at the same moment with nothing passing between them. A tap that answered by
+starting a private counter would break exactly that property: the panel would never rejoin, and the
+desk would look wrong in a way no single unit could reveal. So a tap is an *offset* laid over the
+clock index with a deadline under it. An untouched unit's behaviour is unchanged to the millisecond;
+a tapped one is out of step only for as long as somebody is looking at it; when the clock catches up
+the pin is dropped and the panel is an untouched one again. During the hold the sync bar's claim
+changes with it — it counts toward the end of the hold rather than the next shared flip, because a
+bar that fills while nothing changes is the sync promise made falsely.
+
+Ten seconds is **reasoned, not measured**: longer than one six-second rotation window, so a tap
+landing 200 ms before a flip does not have its answer yanked away before the eye arrives, and under
+two, so a panel somebody tapped and walked away from is ambient again — and back in step with the
+units beside it — inside a quarter of a minute. Nothing has yet put a real thumb on this glass to
+say whether that is the right number.
+
+Two refusals are as deliberate as the action, and both are in the same `case`. A tap whose slot is
+not a screen's does nothing: the Stream Deck's touch strip emits taps too, and letting one advance
+the rotation would jump the eight gallery *keys* beside it. And a tap on a page that does not rotate
+does nothing rather than something approximate — a list page's obvious gesture is "open the row I
+touched", and the panel cannot know which row that is, because a tap carries pixels and pixel
+geometry lives in the renderer. The only thing it could act on is the current selection, which would
+fire an action from a sleeve brushing the panel.
 
 ## When things are down
 
@@ -442,10 +528,10 @@ font, a layout and a design system in it, and the whole point of shipping pixels
 
 ## What this needed from the shared contract
 
-Three things were listed here as needed before the display could show anything real. Two have
-landed, and the record of what they were is worth keeping, because both turned out to be shared
-needs rather than ESP32 ones — the Cardputer design asked for the same two independently, which is
-what made them contract changes instead of adapter workarounds.
+Three things were listed here as needed before the display could show anything real. All three have
+landed, and the record of what they were is worth keeping, because the first two turned out to be
+shared needs rather than ESP32 ones — the Cardputer design asked for the same two independently,
+which is what made them contract changes instead of adapter workarounds.
 
 1. **`panel.ts` composes a `screen` slot.** *Done.* `Panel.build()` had no branch for
    `kind: "screen"`, so a device whose only slot was a screen received an empty frame. It now paints
@@ -461,27 +547,68 @@ what made them contract changes instead of adapter workarounds.
    adapter that had *only* `blank()` would be skipped silently by a lock subscriber — the display
    stays lit and nothing reports a fault. Unblanking repaints rather than restoring brightness, since
    the frame was dropped when the panel went dark.
-3. **A screen-shaped page.** *Still open, and now the only one of the three that is.* A 368×448
-   portrait panel is not a strip, and a page whose only content is a row of bar segments reads badly
-   on it. That wants a `pulse` page type, answered with `scripts/review.ts` in front of it rather
-   than in a PR description. AGENTS.md: do not ship a visual change you have only reasoned about —
-   and there is now a panel on the desk to look at, so there is no longer an excuse not to.
+3. **A screen-shaped page.** *Done.* A 368×448 portrait panel is not a strip, and a page whose only
+   content is a row of bar segments — or a list of what would otherwise have been eight keys — reads
+   badly on it. The answer is `Panel.pulseDetail()` in `devices/src/panel.ts`, and what shipped is a
+   page *type* rather than a new surface: `build` offers every `screen` slot to it first and falls
+   back to the `list` it used to paint whenever it returns null, so a desktop or chains page — a set
+   of things to choose between — stays a list and is not forced into an ambient frame.
+
+   Which pages it claims is named once, in `ROTATING_PAGES`: `portfolio`, `gallery`, `tokens` and
+   `nfts`. The tap handler reads the same set, which is what stops the two drifting — a page added to
+   one and not the other renders nothing at all, noticed on the first look, rather than accepting a
+   tap that quietly does nothing.
+
+   What it paints is a `detail`. `portfolio` is total, P&L, NFT count and window over a rotating
+   piece of the wallet's own art, footed with the reading's age. `gallery` is one piece, with its own
+   name as the title and its collection under it. `tokens` and `nfts` are the discovery pages — price,
+   24h change with a tone, volume and chain; or a trending collection — and neither needs a wallet
+   configured at all. All four rotate on the same wall-clock formula, which is the property the
+   tap design had to be built around.
+
+   The artwork is full-bleed: `svg.ts` draws it at panel size with `preserveAspectRatio="xMidYMid
+   slice"` and lays a flat `ground` scrim over it at 0.62 opacity. That scrim is the one mark in the
+   renderer that `contrast.test.ts` does not hold to a measured ratio, and deliberately so — there is
+   no fixed contrast against a photograph whose content is not known until it arrives. It is the
+   honest limit of that guarantee rather than a gap in applying it, and it is the first thing to look
+   at on a mostly-light piece.
+
+   And it was answered in front of `scripts/review.ts` rather than in a PR description, which is what
+   this entry asked for. `devices/src/review.ts` carries `pulse-amoled`, `pulse-gallery`,
+   `pulse-tokens` and `pulse-nfts` as rendered cards, alongside `pulse-round` for the panel whose
+   corners are not there and a blanked one for the lock case.
 
 Two surfaces the contract gained alongside these are what a screen device actually paints: `list`
 (rows, with panel-owned selection) and `detail` (a title, labelled lines, and a footer that is never
 truncated). Committed-`text` input arrived with them, for devices that have a keyboard; this board
-has none, and its HELLO input mask is zero.
+has none, so `text` stays unclaimed here. The rest of the mask is no longer zero — it claims `tap`
+and `swipe`, for the reasons under
+[The inputs this board had all along](#the-inputs-this-board-had-all-along).
 
-Nothing in the firmware or this adapter modifies `types.ts` or `panel.ts` today.
+The firmware and this adapter still add nothing to `types.ts`: every input this board sends is a
+kind the contract already had, and every surface it is painted is one the contract already carried.
+What changed to serve this screen changed in `panel.ts`, which is where a decision about what a page
+*means* belongs.
 
 ## Firmware
 
-Written, and still not flashed. `devices/firmware/esp32/` holds the real thing: `anchor_pulse.c`
+**Flashed, running, and painting.** `devices/firmware/esp32/` holds the real thing: `anchor_pulse.c`
 is the decoder below, in portable C99 with no allocation and no platform calls, and it is compiled
 and run on every `npm test` against frames produced by the real host adapter — so the wire format
-now has two implementations that are checked against each other rather than one checked against
-itself. What is *not* proved is everything platform-specific: the Arduino sketch has never been
-compiled, no board has been flashed, and no pixel has been lit. That README keeps the two apart.
+has two implementations that are checked against each other rather than one checked against itself.
+The Arduino application around it is built with `arduino-cli` against ESP32 core 3.3.11 and flashed
+over USB-C, and every hardware number in [Measured, and assumed](#measured-and-assumed) came off that
+board rather than off this desktop.
+
+This paragraph read "written, and still not flashed" for longer than it was true, and the sentence
+after it said that no board had been flashed and no pixel had been lit. Keeping the correction
+visible rather than quietly deleting it is the point, because the gap it was describing is real and
+turned out to be where the bugs were: six of them are listed in `devices/firmware/esp32/README.md`,
+none was visible from the host, and every one of them sat between a decoder that passed its
+conformance suite and a device that paints. That README is still the file that keeps measured and
+unmeasured apart. What is *not* proved on this board today is a shorter and more specific list than
+it was: Wi-Fi, TLS-PSK, free heap with a radio and a session up, colour fidelity on the glass, and
+touch.
 
 The sketch below is the ESP-IDF shape this document originally argued for and remains the right
 target for the networked build; what shipped first is the same core behind an Arduino transport,
@@ -513,7 +640,8 @@ app_main
       BRIGHTNESS -> set backlight
       BLANK      -> clear to ground, drop the framebuffer
       PING       -> PONG
-      touch/IMU  -> send INPUT { kind, slot, a, b }
+      touch      -> send INPUT { kind, slot, a, b }   // the IMU is present and proven, and is
+                                                      // deliberately not behind one of these bits
     on stale timer: dim; on longer timer: blank
 ```
 
@@ -534,7 +662,26 @@ Rules the firmware must hold, each of which the host depends on:
 the serial device — that is `uucp` on Arch for `/dev/ttyUSB*`, and native-USB S3 boards enumerate as
 `/dev/ttyACM*` where logind grants the seat owner access. Hold BOOT while plugging in if the board
 does not auto-reset into the bootloader. `esptool.py erase_flash` is the way back to first boot if
-provisioning goes wrong and the reset button has not been wired yet.
+provisioning goes wrong and the reset button has not been wired yet. The flow actually used on this
+board is arduino-cli, and it is written out step by step in `devices/firmware/esp32/README.md`,
+including the two build flags that are not cosmetic.
+
+**Running it as a service, and the coin flip that ran 6,601 times.** A pulse display and a Cardputer
+on one desk are indistinguishable from their USB descriptors — every ESP32-S3 with native USB
+enumerates through the same Espressif JTAG/serial descriptor — so `listPorts()`' name match
+identifies a chip family and never a device. `cli.ts` took `listPorts()[0]`, which with both boards
+plugged in is a coin flip, and losing it is not a clean failure: it is a five-second handshake
+timeout against the *other* device's port, an exit, and a restart into the same coin flip. The
+journal had 6,601 restarts in it before anybody read it, which is the shape of a fault that reports
+itself continuously and is therefore never read. `firstPortThatAnswers` in `devices/src/cli.ts` now
+tries every candidate and keeps the one that answers as the device asked for, with the probe timeout
+at 2s when there is a list to get through — a pulse display re-announces itself every 500 ms, so two
+seconds of silence is an answer rather than a guess — and a port that turns out not to be ours is
+closed immediately rather than left holding something another service needs. A named path is still
+taken at its word, with its own error reported. The systemd unit additionally pins this display by
+its stable `/dev/serial/by-id` path: probing is the right fallback for a person running this by
+hand, but a daemon whose first act is opening another service's port is not a thing to rely on
+twice.
 
 ## Measured, and assumed
 
@@ -555,6 +702,13 @@ Kept separate on purpose. AGENTS.md: a control that cannot be made to fail is no
   the decoder started reporting which *rows* had changed, which brought it to 70 ms.
 - The instrument is the protocol's own PONG, which cannot come back before the frame is presented.
   Details, and the bugs the hardware found, are in `devices/firmware/esp32/README.md`.
+- **The two chips on the I2C bus, asked what they say rather than what they are called.** The
+  QMI8658 answers WHO_AM_I `0x05`, revision `0x7C`, with its control registers reading back exactly
+  as written and a 1.05 g gravity vector at the ±2 g scale factor. The CST820 answers chip `0xB7`,
+  vendor `0x41`, refuses a six-byte burst read from register `0x01` while answering single-register
+  reads, and **has never answered with a coordinate**.
+- The application firmware compiles at 390,004 bytes with the sensor code in it, 804 bytes more than
+  without — which is the check that it linked rather than being stripped out as unreachable.
 
 **Measured here, today, on this machine (Node 26.8.1, ImageMagick 7.1.2-30):**
 
@@ -569,12 +723,23 @@ Kept separate on purpose. AGENTS.md: a control that cannot be made to fail is no
 
 **Assumed, from vendor documentation and general knowledge, and not verified:**
 
-- Every panel dimension, driver IC and bus in the display table.
+- Every panel dimension, driver IC and bus in the candidate table **except this board's**. The
+  368×448 CO5300 row is measured; the other three are vendor documentation for boards nobody here
+  has held.
 - That an ESP-IDF mbedTLS build offers either PSK ciphersuite.
 - ESP32-S3 Wi-Fi throughput and QSPI blit times. **PSRAM availability is no longer assumed** — see
   the hardware measurements above — but the free-heap figure with a radio and a TLS session up still
   is, and that is the number the networked build actually depends on.
-- Every panel dimension in the display table. No panel has been attached to anything.
+- **That the CST820 will ever produce a coordinate.** It answers its identity registers and has
+  never answered with a touch. The single-register reads in `app/sensors.cpp` are a hypothesis about
+  why, not a fix anyone has seen work, and the HELLO mask claims `tap` and `swipe` because the
+  firmware is prepared to send them — not because anything has been sent. **Nothing in this document
+  says touch works.** It needs a finger on the lit glass, and that is the next thing to do.
+- That ten seconds is the right hold for a tapped item, and that the 24 px tap slop and 80 px swipe
+  threshold are the right ones for this panel. All three are reasoned against the rotation window
+  and the panel's own geometry, and none has been felt.
+- Colour fidelity. The framebuffer goes to the driver as native-endian RGB565 with no swap pass, and
+  that it is *correct* on the glass is a thing a person has to look at.
 
 The falsification test for the central claim — *shipping pixels is affordable* — is simple: if a full
 frame on real hardware costs more than a few hundred milliseconds end to end, or a dirty rect costs
