@@ -659,6 +659,34 @@ void applyTheme(JsonObjectConst message)
 			palette[i] = colour;
 		}
 	}
+
+	// And the chrome around this screen, through flint's `ui::setPalette` seam.
+	//
+	// Until this line a themed unit was themed in one rectangle: the panel wore whatever Omarchy
+	// was wearing and the menu, the status bar and the other views stayed flint's coral against
+	// near black, so backing out of Anchor left the theme behind at the edge of its own view. The
+	// desktop is already sending a whole scheme rather than the handful of colours this file draws
+	// with, so passing it on costs one mapping and no new message.
+	//
+	// The names map by the job each colour does, not by how they look: flint's `bar` is the status
+	// bar's ground and Anchor's nearest is `sunken`, its `panel` is an unselected card and Anchor's
+	// is `raised`, and its `accent` is whatever this scheme uses to mean "this one" — which is the
+	// field flint deliberately named for the job rather than for coral.
+	//
+	// setPalette drops a palette equal to the one already up, so a host repeating its theme on every
+	// frame does not repaint on every frame.
+	ui::Palette chrome;
+	chrome.bg = palette[GROUND];
+	chrome.fg = palette[INK];
+	chrome.dim = palette[INK_DIM];
+	chrome.rule = palette[LINE];
+	chrome.bar = palette[SUNKEN];
+	chrome.panel = palette[RAISED];
+	chrome.accent = palette[ACCENT];
+	chrome.good = palette[POSITIVE];
+	chrome.warn = palette[WARNING];
+	chrome.bad = palette[NEGATIVE];
+	ui::setPalette(chrome);
 }
 
 // A rectangle is clamped to the body before a pixel is written. The status bar
@@ -971,8 +999,41 @@ VIEW_REGISTER(kAnchor);
 // host is answered from the moment the unit is up, whether or not anybody has
 // opened this screen yet, and the banner names the build on the same serial
 // line the protocol runs over, so `pio device monitor` says what is flashed.
+/*
+ * Anchor's own colours, for everything on the unit that is not this view.
+ *
+ * Taken from the mark in `site/brand/favicon.svg`: #06131a ground, #5fd4e4 accent, #0d6b80 for the
+ * quieter structural tones, #f7fafb ink. The same scheme the site and the tray icon wear.
+ *
+ * This exists because of the order things happen in. The live Omarchy theme reaches this firmware
+ * over the cable and is applied in `applyTheme`, which runs from this view's `tick` — and `tick`
+ * only runs while this view is open. A unit that boots into the menu (which it now does, with three
+ * views registered) therefore sat in flint's coral-on-black until somebody opened Anchor once, so
+ * the first thing a new unit showed was the wrong brand entirely.
+ *
+ * So the palette is set once at boot, before any view opens, and the desktop's theme replaces it the
+ * moment one arrives. Anchor-branded is the right thing to fall back to: it is what this unit is,
+ * and a unit with no host attached at an offsite will never receive a theme at all.
+ */
+void applyBrandPalette()
+{
+	ui::Palette brand;
+	brand.bg = ui::rgb565(0x06, 0x13, 0x1a);
+	brand.fg = ui::rgb565(0xf7, 0xfa, 0xfb);
+	brand.dim = ui::rgb565(0x7f, 0x9b, 0xa4);
+	brand.rule = ui::rgb565(0x0d, 0x3b, 0x47);
+	brand.bar = ui::rgb565(0x04, 0x0d, 0x12);
+	brand.panel = ui::rgb565(0x0a, 0x21, 0x2a);
+	brand.accent = ui::rgb565(0x5f, 0xd4, 0xe4);
+	brand.good = ui::rgb565(0x3d, 0xdc, 0x84);
+	brand.warn = ui::rgb565(0xff, 0xb0, 0x20);
+	brand.bad = ui::rgb565(0xff, 0x53, 0x70);
+	ui::setPalette(brand);
+}
+
 void view::appBegin()
 {
+	applyBrandPalette();
 	cable::begin();
 	Serial.printf("app: %s, protocol %d\n", FIRMWARE, PROTOCOL_VERSION);
 }
