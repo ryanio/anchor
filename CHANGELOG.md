@@ -497,6 +497,39 @@ assuming it, so a machine without one shows the command exactly as before.
   request cannot hold a slot. 500 is excluded deliberately: `/account/{address}/portfolio` returns a
   deterministic one, and retrying it only delays the stale-cache fallback.
 
+- **The pulse display lights when a session starts, not at its first frame.** `set_backlight(0)`
+  runs at boot and brightness was only raised on the first COMMIT, so a board that had handshaked
+  and was waiting for pixels sat at brightness zero — which on an AMOLED is indistinguishable from a
+  unit that is off, faulted, or was never flashed. An evening went into that ambiguity while the
+  tearing line reported the panel refreshing the whole time. READY now paints a flat ground fill and
+  raises the backlight, which is not a reading and cannot be mistaken for one — the argument the
+  Cardputer's own "host connected, no frame yet" standby already makes. The firmware also announces
+  `anchor-pulse-s3-nopanel` when `panel->begin()` fails, because from the host's end a panel that
+  never came up and a host that never painted are the same dark screen.
+- **Writes to the pulse display are serialised.** `send` was async with nothing ordering it, and the
+  adapter keeps a keepalive on a 2s timer, so any paint outlasting one interval had a PING spliced
+  into the middle of its pixels and the decoder faulted on a header read out of a payload. It was
+  misread as the Cardputer's dropped-write bug and "fixed" by carrying that device's 64-byte/8ms
+  pacing across — 8 KB/s against a 368×448 panel, which turned a 213ms frame into tens of seconds
+  and made the collision certain rather than occasional. Now a promise chain with backpressure on
+  `drain`, in 8KB pieces matching the 64KB receive buffer the firmware sizes to absorb them.
+- **The daemon probes serial ports instead of taking the first.** Every ESP32-S3 with native USB
+  enumerates through the same Espressif descriptor, so `listPorts()[0]` was a coin flip whenever a
+  Cardputer and a pulse display were both plugged in; losing it cost a five second handshake
+  timeout, an exit, and a restart into the same coin flip. That loop ran 6,601 times before anybody
+  read the journal. Candidates are now tried until one answers as the device asked for, a port that
+  is not ours is closed rather than held, and the unit files pin their port by its by-id path.
+- **A key that does nothing but look like a key now fails the build.** Four keys shipped with
+  `"icon": ""` and rendered as labels floating in empty squares. The existing icon test collected
+  icons with `if (key.icon)`, so an absent one skipped the check entirely — a test that steps over
+  the case it exists for. A key with no `source` must now carry an icon.
+- **The Cardputer wears one brand.** The desktop's live theme reached only Anchor's own view, so
+  backing out to the menu landed on flint's coral. flint grew `ui::setPalette` (upstream, in
+  `ryanio/cardputer`), Anchor hands the desktop's tokens to it, and a brand palette taken from
+  `site/brand/favicon.svg` is set at boot so a unit with no host on the cable still looks like
+  Anchor. flint's carousel also stopped wrapping below four views while the selection wrapped
+  anyway, which left a three-view unit selecting the first card without moving the strip.
+
 ### Known limitations
 
 - **The wallet-token exchange has never been run end to end.** Its request and response shapes are
