@@ -152,27 +152,68 @@ export function openSerialLink(path: string): Link {
   output.on("error", (error: Error) => closed?.(error.message));
   input.on("close", () => closed?.("serial port closed"));
 
-  // A whole message in one `write()` call is not a whole message delivered. Measured on a real
-  // Cardputer (same ESP32-S3 native-USB CDC stack as this board): `output.write()`'s callback
-  // fires once Node hands the bytes to the kernel, not once the CDC-ACM bulk transfer actually
-  // lands, and a burst of a few hundred bytes to a few KB arriving faster than the firmware's main
-  // loop drains its RX buffer is silently dropped by the driver rather than errored. The dropped
-  // byte does not look like a dropped byte — it shifts the stream, and the next header is read out
-  // of the middle of a payload, which is exactly the `ANCHOR_FAULT_MAGIC` / `ANCHOR_FAULT_LENGTH`
-  // class this firmware's own README documents from bring-up. Pacing to a size a USB full-speed
-  // packet does not have to split, with a short pause between chunks for the firmware to drain what
-  // arrived, is the same fix that resolved it on the Cardputer. `splitRect` already bounds a single
-  // TILE to `maxTileBytes`; this bounds what actually reaches the wire in one go.
-  const CHUNK_BYTES = 64;
-  const CHUNK_DELAY_MS = 8;
-  const send = async (chunk: Buffer): Promise<void> => {
+  /*
+   * One message at a time, all the way out.
+   *
+   * This is the fix for a `fault-3` (`ANCHOR_FAULT_LENGTH`) that has now been misdiagnosed twice,
+   * and the history is worth keeping because the second diagnosis made the first one much worse.
+   *
+   * `send` is async. Nothing here serialised it. `Esp32PulseDevice` runs a keepalive on a 2s
+   * `setInterval` and paints from its own path, so the moment a paint takes longer than a keepalive
+   * interval the two interleave: the ping's bytes land in the middle of the frame's, the decoder
+   * reads a PING header out of the middle of a TILE payload, and correctly concludes it is being
+   * lied to. That is the fault, and it is a race, not a throughput problem — which is why it showed
+   * up intermittently and looked like a flaky cable.
+   *
+   * It was read as the Cardputer's dropped-write problem instead, and the Cardputer's fix — 64 byte
+   * writes with an 8ms pause between them — was carried across. On the Cardputer, whose messages
+   * are NDJSON lines of tens to hundreds of bytes, that costs nothing. Here it is 8 KB/s against a
+   * 368x448 panel: a frame that this document measured at 213ms end to end now takes tens of
+   * seconds, which guarantees the keepalive fires mid-frame every single time. A pacing change
+   * meant to prevent the fault made it certain.
+   *
+   * So: a promise chain, so two callers cannot have bytes on the wire at once, and backpressure
+   * instead of a sleep. The firmware sizes its receive buffer at 64KB precisely to absorb back to
+   * back 8KB tiles (see `app.ino`'s `setRxBufferSize`, and the comment above it about why it needs
+   * `Serial.end()` first), so the drain signal is the honest limit rather than a guessed delay.
+   */
+  const CHUNK_BYTES = 8192;
+  let tail: Promise<void> = Promise.resolve();
+
+  const writeAll = async (chunk: Buffer): Promise<void> => {
     for (let i = 0; i < chunk.length; i += CHUNK_BYTES) {
       const piece = chunk.subarray(i, i + CHUNK_BYTES);
-      await new Promise<void>((resolve, reject) => {
-        output.write(piece, (error) => (error ? reject(error) : resolve()));
-      });
-      if (i + CHUNK_BYTES < chunk.length) await new Promise((r) => setTimeout(r, CHUNK_DELAY_MS));
+      const flushed = output.write(piece);
+      if (!flushed) {
+        // The kernel's buffer is full; wait for it rather than piling on and hoping.
+        await new Promise<void>((resolve, reject) => {
+          const onDrain = (): void => {
+            output.off("error", onError);
+            resolve();
+          };
+          const onError = (error: Error): void => {
+            output.off("drain", onDrain);
+            reject(error);
+          };
+          output.once("drain", onDrain);
+          output.once("error", onError);
+        });
+      }
     }
+  };
+
+  const send = (chunk: Buffer): Promise<void> => {
+    // Queue on the tail whether or not the previous send succeeded: a failed write must not leave
+    // the chain broken for every message after it, and the caller already hears its own rejection.
+    const next = tail.then(
+      () => writeAll(chunk),
+      () => writeAll(chunk),
+    );
+    tail = next.then(
+      () => undefined,
+      () => undefined,
+    );
+    return next;
   };
 
   return {

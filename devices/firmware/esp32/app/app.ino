@@ -289,10 +289,20 @@ static anchor_fault_t last_fault = ANCHOR_OK;
 static void say_hello(void) {
   uint8_t out[96];
   char id[40];
-  if (last_fault == ANCHOR_OK) {
-    snprintf(id, sizeof(id), "anchor-pulse-s3");
-  } else {
+  if (last_fault != ANCHOR_OK) {
     snprintf(id, sizeof(id), "anchor-pulse-s3-fault-%d", (int)last_fault);
+  } else if (!panel_ready) {
+    /*
+     * `panel->begin()` failed, so there is no glass to paint on. Worth its own name in the id for
+     * the same reason a fault has one: this is the difference between "the host is not painting"
+     * and "the host is painting perfectly onto a panel that never came up", and from the far end of
+     * a cable those are identical — a dark screen and a healthy looking session. The boot banner
+     * does report it, but only to a host that connects inside setup's wait window, and a service
+     * that starts a second later never sees it. This says it in the one message the device repeats.
+     */
+    snprintf(id, sizeof(id), "anchor-pulse-s3-nopanel");
+  } else {
+    snprintf(id, sizeof(id), "anchor-pulse-s3");
   }
   /*
    * Tap and swipe, from the CST820 `probe/` found on this board's I2C bus. The mask is what the
