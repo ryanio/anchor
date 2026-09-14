@@ -27,6 +27,7 @@
 #include <esp_heap_caps.h>
 
 #include "anchor_pulse.h"
+#include "sensors.h"
 
 /*
  * The panel this device claims, measured rather than chosen.
@@ -294,14 +295,17 @@ static void say_hello(void) {
     snprintf(id, sizeof(id), "anchor-pulse-s3-fault-%d", (int)last_fault);
   }
   /*
-   * The input mask is zero: this firmware reports nothing, not because the board has nothing to
-   * report. `docs/devices-esp32.md`'s I2C probe found a CST820 capacitive touch controller and a
-   * QMI8658 IMU actually on this board — measured, not assumed — so this zero is "not wired up yet",
-   * not "not present". Wiring one in is a bit in this mask and a call to `anchor_pulse_input`, which
-   * still could not say anything but a slot id and two numbers.
+   * Tap and swipe, from the CST820 `probe/` found on this board's I2C bus. The mask is what the
+   * *firmware* is prepared to send, not what the panel is known to be good for: the host reads it
+   * to decide what this device can do at all, so claiming a kind and never sending it costs
+   * nothing, while sending a kind unclaimed is a device breaking its own HELLO.
+   *
+   * Rotate and press stay unclaimed because there is no knob and no button here. See `sensors.h`
+   * for why the IMU, which works, is deliberately not behind one of these bits.
    */
+  const uint8_t input_mask = (uint8_t)((1u << ANCHOR_INPUT_TAP) | (1u << ANCHOR_INPUT_SWIPE));
   size_t n = anchor_pulse_hello(out, sizeof(out), panel_width, panel_height,
-                                ANCHOR_PIXEL_RGB565_LE, (uint16_t)MAX_TILE_BYTES, 0u, id);
+                                ANCHOR_PIXEL_RGB565_LE, (uint16_t)MAX_TILE_BYTES, input_mask, id);
   if (n > 0) Serial.write(out, n);
 }
 
@@ -406,6 +410,8 @@ void setup() {
   while (Serial.available() > 0) (void)Serial.read();
 
   banner();
+  // After `banner()`, because `scan_i2c()` inside it is what calls `Wire.begin()`.
+  sensors::begin();
   last_heard_ms = millis();
   say_hello();
 }
@@ -448,6 +454,30 @@ void loop() {
         say_hello();
         break;
       }
+    }
+  }
+
+  /*
+   * A finger, if there was one.
+   *
+   * Only once READY has landed: before that the host has not finished introducing itself, and the
+   * protocol's own rule is that a device says nothing between HELLO and READY. A gesture made at a
+   * display that is not yet in a session is not worth the risk of desynchronising the one it is
+   * about to be in.
+   *
+   * `poll()` is bounded and throttled internally, so calling it every pass costs a comparison on
+   * the passes where it does nothing, and never costs the decoder a frame.
+   */
+  if (have_ready) {
+    const sensors::Event gesture = sensors::poll();
+    if (gesture.kind != sensors::Kind::None) {
+      static uint16_t input_seq = 0;
+      uint8_t out[64];
+      const uint8_t kind =
+          gesture.kind == sensors::Kind::Tap ? ANCHOR_INPUT_TAP : ANCHOR_INPUT_SWIPE;
+      const size_t n = anchor_pulse_input(out, sizeof(out), ++input_seq, kind, "screen:0",
+                                          gesture.a, gesture.b);
+      if (n > 0) Serial.write(out, n);
     }
   }
 

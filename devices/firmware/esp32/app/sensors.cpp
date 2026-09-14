@@ -1,0 +1,149 @@
+#include "sensors.h"
+
+#include <Wire.h>
+
+namespace sensors {
+
+namespace {
+
+constexpr uint8_t TOUCH_ADDR = 0x15;
+constexpr uint8_t TOUCH_REG_GESTURE = 0x01; /* then fingers, xh, xl, yh, yl */
+
+/*
+ * How often to ask the touch controller. 20ms is fast enough that a deliberate tap is never missed
+ * — a finger is on the glass for well over a tenth of a second — and slow enough that the protocol
+ * loop is not spending its time on the I2C bus. A frame arriving is worth more than a gesture
+ * arriving 20ms earlier.
+ */
+constexpr uint32_t POLL_MS = 20;
+
+/*
+ * A finger that lands and lifts within this many pixels of where it started was pointing at
+ * something, not dragging. 368 pixels across a 1.8in panel is roughly 200 per inch, so 24 is about
+ * an eighth of an inch: comfortably inside the wobble of a real fingertip and far short of any
+ * movement somebody meant.
+ */
+constexpr int16_t TAP_SLOP_PX = 24;
+
+/* And this far sideways is a drag somebody meant. Two thirds of the gap is left as neither. */
+constexpr int16_t SWIPE_MIN_PX = 80;
+
+/*
+ * A lift is only believed after this long without a finger, because these controllers report a
+ * momentary zero finger count mid-contact often enough to matter, and a tap that becomes two taps
+ * is worse than one reported 40ms late.
+ */
+constexpr uint32_t LIFT_SETTLE_MS = 40;
+
+uint32_t lastPoll = 0;
+bool seen = false;
+
+bool down = false;
+int16_t downX = 0;
+int16_t downY = 0;
+int16_t lastX = 0;
+int16_t lastY = 0;
+uint32_t liftedAt = 0;
+bool lifting = false;
+
+/*
+ * One register at a time, with a stop rather than a repeated start between the address and the
+ * read.
+ *
+ * `sensors/` tried the six byte burst first, because that is the obvious way to read a coordinate
+ * pair, and this part would not serve it. Reading singly is four extra transactions on a 400kHz bus
+ * — tens of microseconds — which is a price worth paying for an access pattern this chip has
+ * actually demonstrated, against one it refused.
+ */
+int readReg(uint8_t reg)
+{
+	Wire.beginTransmission(TOUCH_ADDR);
+	Wire.write(reg);
+	if (Wire.endTransmission(true) != 0) return -1;
+	if (Wire.requestFrom((int)TOUCH_ADDR, 1) != 1) return -1;
+	return Wire.read();
+}
+
+}  // namespace
+
+void begin()
+{
+	/*
+	 * A bounded timeout, so a slave that stops clocking cannot take the protocol loop down with it.
+	 * The default blocks, and a blocking bus on this device does not look like a broken sensor — it
+	 * looks like a display that froze.
+	 */
+	Wire.setTimeOut(10);
+	lastPoll = millis();
+}
+
+bool touchSeen()
+{
+	return seen;
+}
+
+Event poll()
+{
+	Event event;
+	const uint32_t now = millis();
+	if (now - lastPoll < POLL_MS) return event;
+	lastPoll = now;
+
+	const int fingers = readReg(TOUCH_REG_GESTURE + 1);
+	if (fingers < 0) return event; /* No answer. Not an error worth reporting every 20ms. */
+
+	if (fingers > 0) {
+		const int xh = readReg(TOUCH_REG_GESTURE + 2);
+		const int xl = readReg(TOUCH_REG_GESTURE + 3);
+		const int yh = readReg(TOUCH_REG_GESTURE + 4);
+		const int yl = readReg(TOUCH_REG_GESTURE + 5);
+		if (xh < 0 || xl < 0 || yh < 0 || yl < 0) return event;
+		/* Twelve bits: the low nibble of the high byte carries bits 11..8. */
+		const int16_t x = (int16_t)(((xh & 0x0F) << 8) | xl);
+		const int16_t y = (int16_t)(((yh & 0x0F) << 8) | yl);
+		seen = true;
+		lifting = false;
+		lastX = x;
+		lastY = y;
+		if (!down) {
+			down = true;
+			downX = x;
+			downY = y;
+		}
+		return event;
+	}
+
+	if (!down) return event;
+
+	/* Zero fingers. Wait out a possible dropout before calling it a lift. */
+	if (!lifting) {
+		lifting = true;
+		liftedAt = now;
+		return event;
+	}
+	if (now - liftedAt < LIFT_SETTLE_MS) return event;
+
+	down = false;
+	lifting = false;
+	const int16_t dx = (int16_t)(lastX - downX);
+	const int16_t dy = (int16_t)(lastY - downY);
+	const int16_t adx = (int16_t)(dx < 0 ? -dx : dx);
+	const int16_t ady = (int16_t)(dy < 0 ? -dy : dy);
+
+	if (adx < TAP_SLOP_PX && ady < TAP_SLOP_PX) {
+		event.kind = Kind::Tap;
+		event.a = downX;
+		event.b = downY;
+		return event;
+	}
+	if (adx >= SWIPE_MIN_PX && adx > ady) {
+		event.kind = Kind::Swipe;
+		event.a = downX;
+		event.b = lastX;
+		return event;
+	}
+	/* Travelled, but not far enough or not sideways enough to have meant anything. */
+	return event;
+}
+
+}  // namespace sensors
