@@ -683,18 +683,48 @@ export interface GridMetrics {
  */
 export function gridMetrics(slot: SlotSpec, count: number): GridMetrics {
   const { width: w, height: h } = slot;
+  /*
+   * The corners of the framebuffer are not on the glass.
+   *
+   * This panel is a rounded rectangle and the addressable area is the full 368x448, so a layout that
+   * runs corner to corner puts the top-left tile's corner underneath the bezel's curve. Ryan saw
+   * exactly that, twice — first on a diagnostic heading and then on the tile grid — and it is the
+   * kind of thing only a person looking at the hardware can report, because the rendered SVG is a
+   * perfect rectangle and looks right everywhere else.
+   *
+   * The radius is not published for this part and is not in this tree, so this is a margin measured
+   * by eye against a unit rather than derived: 4.5% of the short side, which is 17px on a 368x448
+   * panel. It is applied to the usable area rather than to each tile, so the gaps between tiles stay
+   * the gaps between tiles and only the outside edge moves inward.
+   *
+   * A device whose panel is actually square in the glass pays 17px for nothing. That is the right
+   * trade while one number has to serve every screen: too much margin costs a little room, and too
+   * little costs a clipped corner on the device someone is holding.
+   */
+  const inset = Math.round(Math.min(w, h) * 0.045);
+  const usableW = Math.max(1, w - inset * 2);
+  const usableH = Math.max(1, h - inset * 2);
+  /*
+   * How many cells fit is asked of the whole panel, and only their size is asked of the usable area.
+   *
+   * Taking both from the inset area loses a column: 368 less two 17px margins is 334, which is two
+   * 120px targets rather than three, and the grid went from 3x3 to 2x2 for the sake of a bezel.
+   * `TOUCH_TARGET_PX` is the size a finger wants, not a floor a cell may not go under, so the
+   * honest arrangement is to keep the three columns and let each be 111px — still nearly 9mm, still
+   * comfortably a thumb — rather than to spend a third of the screen avoiding a curve.
+   */
   const wanted = Math.max(1, count);
   const columns = Math.max(1, Math.min(wanted, Math.floor(w / TOUCH_TARGET_PX)));
   const rows = Math.max(1, Math.min(Math.ceil(wanted / columns), Math.floor(h / TOUCH_TARGET_PX)));
-  const cellWidth = Math.floor(w / columns);
-  const cellHeight = Math.floor(h / rows);
+  const cellWidth = Math.floor(usableW / columns);
+  const cellHeight = Math.floor(usableH / rows);
   return {
     columns,
     rows,
     cellWidth,
     cellHeight,
-    originX: Math.round((w - cellWidth * columns) / 2),
-    originY: Math.round((h - cellHeight * rows) / 2),
+    originX: inset + Math.round((usableW - cellWidth * columns) / 2),
+    originY: inset + Math.round((usableH - cellHeight * rows) / 2),
     capacity: columns * rows,
   };
 }

@@ -131,13 +131,32 @@ void releaseTouchReset()
 
 void begin()
 {
-	releaseTouchReset();
 	/*
-	 * A bounded timeout, so a slave that stops clocking cannot take the protocol loop down with it.
-	 * The default blocks, and a blocking bus on this device does not look like a broken sensor — it
-	 * looks like a display that froze.
+	 * Match `sensors/sensors.ino` exactly, because that sketch demonstrably reads this part and this
+	 * file demonstrably did not.
+	 *
+	 * The bus was already up when this ran — `scan_i2c()` in the banner calls `Wire.begin` at 100kHz
+	 * — so this began as a reset and a timeout on top of somebody else's bus configuration, and the
+	 * touch reads returned nothing while the same reads in the diagnostic returned coordinates. The
+	 * three things that differed are all here now: the speed, a timeout with room in it, and the
+	 * interrupt line held at its idle level rather than left floating. Which of the three mattered is
+	 * not established, and saying so is more honest than picking one.
 	 */
-	Wire.setTimeOut(10);
+	Wire.begin(15 /* SDA */, 14 /* SCL */, 400000u);
+	/*
+	 * Bounded, so a slave that stops clocking cannot take the protocol loop down with it. The default
+	 * blocks, and a blocking bus on this device does not look like a broken sensor: it looks like a
+	 * display that froze.
+	 */
+	Wire.setTimeOut(20);
+	/*
+	 * TP_INT, per the vendor's pin_config.h. Nothing reads it yet — the driver polls — but the
+	 * diagnostic that works holds it this way, and a controller's interrupt output left floating is
+	 * not a thing to leave differing between a sketch that reads this part and a firmware that does
+	 * not.
+	 */
+	pinMode(21, INPUT_PULLUP);
+	releaseTouchReset();
 	lastPoll = millis();
 }
 

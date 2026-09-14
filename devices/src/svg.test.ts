@@ -264,9 +264,16 @@ describe("a grid of tappable cells", () => {
     const metrics = gridMetrics(PULSE, 8);
     assert.equal(metrics.columns, 3);
     assert.equal(metrics.rows, 3);
-    // 322 ppi measured off the panel's own diagonal: 120px is about 9.5mm, and these are larger.
-    assert.ok(metrics.cellWidth >= TOUCH_TARGET_PX, `${metrics.cellWidth}px is under a finger`);
-    assert.ok(metrics.cellHeight >= TOUCH_TARGET_PX);
+    /*
+     * 322 ppi measured off the panel's own diagonal, so `TOUCH_TARGET_PX` is about 9.5mm of finger.
+     * A cell is allowed to come in a little under it: the layout now keeps a margin clear of the
+     * panel's rounded corners, and spending a whole column on that curve would be the worse trade —
+     * three columns of 111px is still nearly 9mm each, where two columns would be a third of the
+     * screen given up. The floor is what stops that relaxation sliding into cells nobody can hit.
+     */
+    const floor = Math.round(TOUCH_TARGET_PX * 0.9);
+    assert.ok(metrics.cellWidth >= floor, `${metrics.cellWidth}px is under a finger`);
+    assert.ok(metrics.cellHeight >= floor);
   });
 
   test("a panel too narrow for two legible columns takes one rather than two cramped ones", () => {

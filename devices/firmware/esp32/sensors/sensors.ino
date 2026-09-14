@@ -137,10 +137,19 @@ static bool releaseTouchReset() {
   return true;
 }
 
+/*
+ * The left margin is 20, not 8.
+ *
+ * This panel's corners are physically rounded, so the top left of the addressable framebuffer is
+ * not on the glass: at x=8 the first character of a heading has its corner cut off, which is what a
+ * reader reported of the T in "TOUCH TEST". The radius is not published anywhere in this tree, so
+ * 20 is a margin that clears it by eye rather than a measurement, and anything that must be read is
+ * kept inside it.
+ */
 static void line(const char *s, int y, uint16_t colour, uint8_t size = 2) {
   gfx->setTextSize(size);
   gfx->setTextColor(colour, RGB565_BLACK);
-  gfx->setCursor(8, y);
+  gfx->setCursor(20, y);
   gfx->print(s);
 }
 

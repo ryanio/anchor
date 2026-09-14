@@ -23,6 +23,7 @@ import {
   usd,
 } from "./panel.ts";
 import { EMPTY_SNAPSHOT } from "./state/desktop.ts";
+import { gridMetrics } from "./svg.ts";
 import { toTokens } from "./tokens.ts";
 import type { AnchorDevice, DeviceCapabilities, Frame, SlotSpec } from "./types.ts";
 
@@ -485,20 +486,26 @@ describe("a tap on a grid cell", () => {
   });
 
   /**
-   * The centre of each cell on a 368x448 panel holding six of them.
+   * The centre of each cell, derived from `gridMetrics` rather than written out.
    *
-   * Written out rather than computed from `gridMetrics`, so a change to the layout arithmetic shows
-   * up here as a failing test instead of being followed silently by the thing it is meant to check.
-   * Three columns of 122 (offset by the 1px margin the leftover two pixels leave) and two rows of 224.
+   * These were six hardcoded pixel pairs, on the reasoning that a layout change should surface here
+   * as a failing test rather than being followed silently. That reasoning is right and the place for
+   * it is `svg.test.ts`, which pins the columns, the rows and the cell size against the panel's
+   * measured ppi — one assertion about the geometry, in the file that owns it. Repeating it as
+   * coordinates here bought nothing and cost this: the layout gained a margin to clear the panel's
+   * rounded corners, and six tests about *what a tap reaches* began failing over *where a cell is*,
+   * which is a different question and not theirs to answer.
    */
-  const CENTRES = [
-    { x: 62, y: 112 },
-    { x: 184, y: 112 },
-    { x: 306, y: 112 },
-    { x: 62, y: 336 },
-    { x: 184, y: 336 },
-    { x: 306, y: 336 },
-  ];
+  const gridAt = (index: number): { x: number; y: number } => {
+    const metrics = gridMetrics(PULSE_SLOT, NAMES.length);
+    const column = index % metrics.columns;
+    const row = Math.floor(index / metrics.columns);
+    return {
+      x: metrics.originX + column * metrics.cellWidth + Math.round(metrics.cellWidth / 2),
+      y: metrics.originY + row * metrics.cellHeight + Math.round(metrics.cellHeight / 2),
+    };
+  };
+  const CENTRES = NAMES.map((_name, index) => gridAt(index));
 
   const painted = (panel: Panel): Panel => {
     panel.build(pulseDevice(), state());
@@ -538,7 +545,10 @@ describe("a tap on a grid cell", () => {
   test("a touch in the gutter between two tiles reaches neither", () => {
     // The sleeve case the old refusal existed for: between two targets is not a target.
     const panel = painted(new Panel(config, TOKENS));
-    assert.equal(panel.handle({ kind: "tap", slot: SCREEN_SLOT, x: 123, y: 112 }), false);
+    // The seam between the first two columns, found from the layout rather than written down.
+    const metrics = gridMetrics(PULSE_SLOT, NAMES.length);
+    const seam = { x: metrics.originX + metrics.cellWidth, y: CENTRES[0]?.y ?? 0 };
+    assert.equal(panel.handle({ kind: "tap", slot: SCREEN_SLOT, ...seam }), false);
     assert.equal(panel.pageName, "desktop", "nothing was dispatched");
   });
 
