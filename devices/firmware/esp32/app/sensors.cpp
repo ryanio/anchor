@@ -66,8 +66,58 @@ int readReg(uint8_t reg)
 
 }  // namespace
 
+/*
+ * Take the touch controller out of reset, which nothing here had ever done.
+ *
+ * This is the answer to why the CST820 answered every read and never saw a finger: its reset line
+ * is not a GPIO. It hangs off the TCA9554 IO expander at 0x20, which `probe/` found on this bus and
+ * which this firmware had otherwise no reason to talk to, so the part had been sitting in whatever
+ * state power-on left it in — interface alive, panel scanning never started. A frozen register dump
+ * holding one stale coordinate with the finger count pinned at zero is exactly what that looks like,
+ * and it is what the dump showed.
+ *
+ * The sequence is waveshareteam's own, from `release_touch_reset()` in
+ * `examples/esp-idf/.../board_variant/board_variant.c` for this board: make the four controlled
+ * lines outputs, drive everything but the SD chip select low so touch reset is asserted, wait 20ms,
+ * then drive them all high to release it, and give the controller 150ms to come up before expecting
+ * anything of it. Bit 0 is the LCD reset and bit 1 a power enable, which is why they are driven
+ * together rather than poked individually: this is the board's documented bring-up, not a bit of it.
+ *
+ * Their delays are kept as they are. They are a vendor's numbers for a part whose datasheet is not
+ * in this tree, and shortening someone else's reset timing to save 170ms once at boot is the kind of
+ * saving that buys an intermittent fault.
+ */
+void releaseTouchReset()
+{
+	constexpr uint8_t EXPANDER_ADDR = 0x20;
+	constexpr uint8_t REG_OUTPUT = 0x01;
+	constexpr uint8_t REG_CONFIG = 0x03;
+	constexpr uint8_t LCD_RST = 1u << 0;
+	constexpr uint8_t DSI_PWR_EN = 1u << 1;
+	constexpr uint8_t TOUCH_RST = 1u << 2;
+	constexpr uint8_t SD_CS = 1u << 7;
+	constexpr uint8_t OUTPUTS = LCD_RST | DSI_PWR_EN | TOUCH_RST | SD_CS;
+
+	const auto write = [](uint8_t reg, uint8_t value) {
+		Wire.beginTransmission(EXPANDER_ADDR);
+		Wire.write(reg);
+		Wire.write(value);
+		return Wire.endTransmission() == 0;
+	};
+
+	/* A zero bit is an output on a TCA9554, so the mask is inverted. */
+	if (!write(REG_CONFIG, (uint8_t)~OUTPUTS)) {
+		return; /* No expander: a board without one has nothing here to release. */
+	}
+	write(REG_OUTPUT, SD_CS);
+	delay(20);
+	write(REG_OUTPUT, OUTPUTS);
+	delay(150);
+}
+
 void begin()
 {
+	releaseTouchReset();
 	/*
 	 * A bounded timeout, so a slave that stops clocking cannot take the protocol loop down with it.
 	 * The default blocks, and a blocking bus on this device does not look like a broken sensor — it

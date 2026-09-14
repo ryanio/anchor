@@ -102,6 +102,24 @@ void setup() {
   /* Bounded, so a chip that stops clocking cannot take the sketch down with it. */
   Wire.setTimeOut(20);
 
+  /*
+   * Take the touch controller out of reset first, which is the thing nobody had done.
+   *
+   * Its reset is not a GPIO: it hangs off the TCA9554 at 0x20, bit 2, and the sequence below is
+   * waveshareteam's own `release_touch_reset()` for this board. Every dump before this one was of a
+   * part that had never been released, which is what a live I2C interface over a panel that is not
+   * being scanned looks like.
+   */
+  {
+    const uint8_t OUTPUTS = (1u << 0) | (1u << 1) | (1u << 2) | (1u << 7); /* lcd rst, pwr, touch rst, sd cs */
+    writeReg(0x20, 0x03, (uint8_t)~OUTPUTS); /* zero bits are outputs */
+    writeReg(0x20, 0x01, (uint8_t)(1u << 7)); /* touch reset asserted */
+    delay(20);
+    writeReg(0x20, 0x01, OUTPUTS); /* released */
+    delay(150);
+    Serial.println("sensors: touch reset released via TCA9554 0x20 bit 2");
+  }
+
   const int chip = readReg(TOUCH_ADDR, TOUCH_REG_CHIP_ID, true);
   const int vendor = readReg(TOUCH_ADDR, TOUCH_REG_VENDOR_ID, true);
   Serial.printf("sensors: touch chip 0x%02X vendor 0x%02X\n", chip, vendor);
