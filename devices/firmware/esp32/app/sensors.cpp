@@ -109,7 +109,21 @@ void releaseTouchReset()
 	if (!write(REG_CONFIG, (uint8_t)~OUTPUTS)) {
 		return; /* No expander: a board without one has nothing here to release. */
 	}
-	write(REG_OUTPUT, SD_CS);
+	/*
+	 * Only bit 2 moves, which is where this departs from the vendor's sequence and has to.
+	 *
+	 * Theirs drives every controlled line low at once — touch reset, the LCD's reset and a power
+	 * enable — which is correct where they do it, in board bring-up before anything has touched the
+	 * display. This runs from `sensors::begin()`, after `panel->begin()` has configured the CO5300,
+	 * so driving LCD_RST low here resets the display controller immediately after it was set up and
+	 * leaves a dark panel behind a firmware that believes it is painting. It did exactly that on the
+	 * unit on this desk, which had been showing a frame a minute earlier.
+	 *
+	 * The other three lines are therefore held high throughout. The delays stay as the vendor wrote
+	 * them: they are for a part whose datasheet is not in this tree, and shortening someone else's
+	 * reset timing to save 170ms once per boot is how an intermittent fault gets bought.
+	 */
+	write(REG_OUTPUT, (uint8_t)(OUTPUTS & ~TOUCH_RST));
 	delay(20);
 	write(REG_OUTPUT, OUTPUTS);
 	delay(150);

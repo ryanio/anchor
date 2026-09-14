@@ -1,24 +1,41 @@
 /*
- * Ask the touch controller what it actually says, and show the answer on the glass.
+ * Does a finger reach this board at all?
  *
- * `probe/` established what is on the I2C bus by identity register — a CST820-class touch part at
- * 0x15 (chip 0xB7, vendor 0x41) and a QMI8658 IMU at 0x6B (WHO_AM_I 0x05). That is a different
- * question from "what do these report when a person uses them", and the first version of this
- * sketch answered it for the IMU immediately: control registers reading back as written and a clean
- * 1.05g gravity vector at the ±2g scale factor. The touch part answered its identity and then never
- * produced a coordinate, through two different access patterns and with the driver built on the
- * second one shipped into the panel firmware, where it also produced nothing.
+ * `probe/` found what is on the I2C bus by identity register: a CST820 touch controller at 0x15
+ * (chip 0xB7, vendor 0x41) and a QMI8658 IMU at 0x6B (WHO_AM_I 0x05). `panel/` proved the display
+ * wakes. This sketch answers the remaining question, which is narrower and had resisted several
+ * rounds of reading registers and hoping: when somebody puts a finger on the glass, does *anything*
+ * change.
  *
- * So this stops guessing at a register map. It dumps the low registers continuously and marks the
- * ones that *change*, because the register a finger moves is the register a finger is in, whatever
- * the datasheet for a neighbouring part number says it should be. If nothing changes under a
- * finger, that is a real finding too, and a much stronger one than a failed read.
+ * It watches three independent things, so that a disagreement between them is itself the answer:
  *
- * It also brings the panel up and draws the dump, which the first version did not. That version was
- * flashed over a working panel firmware and left the screen black while asking someone to interact
- * with it — a diagnostic that destroys the thing it is diagnosing and gives the person holding the
- * unit nothing to look at. The panel init here is copied from `panel/panel.ino`, column offset and
- * all.
+ *   1. **TP_INT on GPIO 21**, counted in an interrupt handler. This is the measurement that cannot
+ *      be confused by a wrong register map: a controller that is scanning its panel asserts this
+ *      line when it has something, whatever its registers are called. If this counter moves under a
+ *      finger and the registers do not, the driver is reading the wrong place. If it does not move,
+ *      the controller is not detecting, and no amount of reading will help.
+ *   2. **The low registers**, dumped and marked when they change, because the register a finger
+ *      moves is the register a finger is in.
+ *   3. **The accelerometer**, which is known to work. It is the control: a live reading beside a
+ *      dead touch row proves the I2C bus is healthy and the silence belongs to the touch part.
+ *
+ * Everything is drawn on the panel as well as printed, because the first version of this sketch was
+ * flashed over a working panel firmware, left the screen black, and asked somebody to interact with
+ * a display that was showing nothing. A diagnostic that destroys the thing it is diagnosing is not
+ * one.
+ *
+ * Two findings are already baked in here rather than left to be rediscovered:
+ *
+ * **The touch reset is not a GPIO.** It hangs off the TCA9554 expander at 0x20, bit 2, and no
+ * firmware in this tree had ever released it — which is what a live I2C interface over a panel that
+ * is never scanned looks like. The sequence below is waveshareteam's own `release_touch_reset()`
+ * from the board_variant component of their ESP-IDF examples for this board.
+ *
+ * **Nothing here writes 0xE5.** An earlier pass read their `SLEEP_MODE` + `DEVICE_ON` enum pair as
+ * "turn the device on"; the device being switched is the sleep mode, so that call means sleep on,
+ * and writing it put the part to sleep, after which it answered nothing at all. Their own driver
+ * notes sleep can be entered and not left. It cost a power cycle. This sketch only reads the touch
+ * part.
  *
  *   arduino-cli compile --fqbn "$FQBN" sensors
  *   arduino-cli upload  --fqbn "$FQBN" -p /dev/ttyACM1 sensors
@@ -34,15 +51,32 @@
 #define TOUCH_ADDR 0x15
 #define TOUCH_REG_CHIP_ID 0xA7
 #define TOUCH_REG_VENDOR_ID 0xA8
+/* The vendor's map, from Arduino_CST816x.h in their tree for this board. */
+#define TOUCH_REG_GESTURE 0x01
+#define TOUCH_REG_FINGERS 0x02
+#define TOUCH_REG_XH 0x03
+#define TOUCH_REG_XL 0x04
+#define TOUCH_REG_YH 0x05
+#define TOUCH_REG_YL 0x06
+
+/* The vendor's pin_config.h names exactly three touch related pins, and this is the third. */
+#define TP_INT 21
+
+#define EXPANDER_ADDR 0x20
+#define EXPANDER_REG_OUTPUT 0x01
+#define EXPANDER_REG_CONFIG 0x03
+#define EXPANDER_LCD_RST (1u << 0)
+#define EXPANDER_PWR_EN (1u << 1)
+#define EXPANDER_TOUCH_RST (1u << 2)
+#define EXPANDER_SD_CS (1u << 7)
+#define EXPANDER_OUTPUTS (EXPANDER_LCD_RST | EXPANDER_PWR_EN | EXPANDER_TOUCH_RST | EXPANDER_SD_CS)
 
 #define IMU_ADDR 0x6B
-#define IMU_REG_WHO_AM_I 0x00
 #define IMU_REG_CTRL1 0x02
 #define IMU_REG_CTRL2 0x03
 #define IMU_REG_CTRL7 0x08
 #define IMU_REG_AX_L 0x35
 
-/* From the vendor's pin_config.h for V2 hardware, by way of panel/panel.ino. */
 #define LCD_SDIO0 4
 #define LCD_SDIO1 5
 #define LCD_SDIO2 6
@@ -54,38 +88,60 @@
 
 Arduino_DataBus *bus =
     new Arduino_ESP32QSPI(LCD_CS, LCD_SCLK, LCD_SDIO0, LCD_SDIO1, LCD_SDIO2, LCD_SDIO3);
-/* The 16 is the vendor's column offset; see panel/panel.ino for why getting it wrong shifts everything. */
+/* The 16 is the vendor's column offset; panel/panel.ino says what getting it wrong looks like. */
 Arduino_CO5300 *gfx =
     new Arduino_CO5300(bus, GFX_NOT_DEFINED, 0 /* rotation */, LCD_WIDTH, LCD_HEIGHT, 16, 0, 0, 0);
 
-static const uint8_t DUMP_FIRST = 0x00;
-static const uint8_t DUMP_COUNT = 16; /* 0x00 through 0x0F: where every part in this family keeps its data */
+/* Written from an interrupt, read from the loop. */
+static volatile uint32_t intEdges = 0;
 
-static uint8_t current[DUMP_COUNT];
-static uint8_t baseline[DUMP_COUNT];
-static bool everChanged[DUMP_COUNT];
-static bool haveBaseline = false;
-static uint32_t changes = 0;
+static void IRAM_ATTR onTouchInterrupt() {
+  intEdges++;
+}
 
-static int readReg(uint8_t address, uint8_t reg, bool repeatedStart) {
+static int readReg(uint8_t address, uint8_t reg) {
   Wire.beginTransmission(address);
   Wire.write(reg);
-  if (Wire.endTransmission(!repeatedStart) != 0) return -1;
+  if (Wire.endTransmission(true) != 0) return -1;
   if (Wire.requestFrom((int)address, 1) != 1) return -1;
   return Wire.read();
 }
 
-static int writeReg(uint8_t address, uint8_t reg, uint8_t value) {
+static bool writeReg(uint8_t address, uint8_t reg, uint8_t value) {
   Wire.beginTransmission(address);
   Wire.write(reg);
   Wire.write(value);
-  return Wire.endTransmission();
+  return Wire.endTransmission() == 0;
 }
 
-static void drawHeader(const char *line, int y, uint16_t colour) {
+/* waveshareteam's release_touch_reset(), delays included: theirs are for a part whose datasheet is
+ * not in this tree, and shaving someone else's reset timing buys an intermittent fault. */
+static bool releaseTouchReset() {
+  if (!writeReg(EXPANDER_ADDR, EXPANDER_REG_CONFIG, (uint8_t)~EXPANDER_OUTPUTS)) return false;
+  /*
+   * Only the touch line is pulsed, and that is a deliberate departure from the vendor's sequence.
+   *
+   * Theirs drives every controlled line low together — touch reset, the LCD's reset and a power
+   * enable — because it runs during board bring-up, before anything has initialised the display.
+   * This runs *after* `gfx->begin()`, so copying it wholesale resets the display controller
+   * immediately after it was configured and leaves a black panel behind. It did exactly that: the
+   * screen went dark on a unit that had been painting a minute earlier.
+   *
+   * So the other three lines stay high throughout and only bit 2 moves. The delays are still the
+   * vendor's, because they are for a part whose datasheet is not in this tree.
+   */
+  writeReg(EXPANDER_ADDR, EXPANDER_REG_OUTPUT, (uint8_t)(EXPANDER_OUTPUTS & ~EXPANDER_TOUCH_RST));
+  delay(20);
+  writeReg(EXPANDER_ADDR, EXPANDER_REG_OUTPUT, EXPANDER_OUTPUTS);
+  delay(150);
+  return true;
+}
+
+static void line(const char *s, int y, uint16_t colour, uint8_t size = 2) {
+  gfx->setTextSize(size);
   gfx->setTextColor(colour, RGB565_BLACK);
   gfx->setCursor(8, y);
-  gfx->print(line);
+  gfx->print(s);
 }
 
 void setup() {
@@ -94,168 +150,100 @@ void setup() {
   while (!Serial && millis() - waited < 2000) delay(10);
 
   gfx->begin();
-  gfx->setBrightness(180);
+  gfx->setBrightness(200);
   gfx->fillScreen(RGB565_BLACK);
-  gfx->setTextSize(2);
 
   Wire.begin(BUS_SDA, BUS_SCL, 400000u);
-  /* Bounded, so a chip that stops clocking cannot take the sketch down with it. */
+  /* Bounded: an unbounded transaction that stalls looks like a frozen display, not a quiet sensor. */
   Wire.setTimeOut(20);
 
-  /*
-   * Take the touch controller out of reset first, which is the thing nobody had done.
-   *
-   * Its reset is not a GPIO: it hangs off the TCA9554 at 0x20, bit 2, and the sequence below is
-   * waveshareteam's own `release_touch_reset()` for this board. Every dump before this one was of a
-   * part that had never been released, which is what a live I2C interface over a panel that is not
-   * being scanned looks like.
-   */
-  {
-    const uint8_t OUTPUTS = (1u << 0) | (1u << 1) | (1u << 2) | (1u << 7); /* lcd rst, pwr, touch rst, sd cs */
-    writeReg(0x20, 0x03, (uint8_t)~OUTPUTS); /* zero bits are outputs */
-    writeReg(0x20, 0x01, (uint8_t)(1u << 7)); /* touch reset asserted */
-    delay(20);
-    writeReg(0x20, 0x01, OUTPUTS); /* released */
-    delay(150);
-    Serial.println("sensors: touch reset released via TCA9554 0x20 bit 2");
-  }
-
-  const int chip = readReg(TOUCH_ADDR, TOUCH_REG_CHIP_ID, true);
-  const int vendor = readReg(TOUCH_ADDR, TOUCH_REG_VENDOR_ID, true);
-  Serial.printf("sensors: touch chip 0x%02X vendor 0x%02X\n", chip, vendor);
+  const bool released = releaseTouchReset();
+  const int chip = readReg(TOUCH_ADDR, TOUCH_REG_CHIP_ID);
+  const int vendor = readReg(TOUCH_ADDR, TOUCH_REG_VENDOR_ID);
+  Serial.printf("sensors: expander %s, touch chip 0x%02X vendor 0x%02X\n",
+                released ? "released touch reset" : "NOT FOUND at 0x20", chip, vendor);
 
   /*
-   * Wake the touch controller, and stop it going back to sleep.
-   *
-   * The first dump off this sketch answered every read and never moved: sixteen registers frozen at
-   * `00 00 00 40 CA 01 62 00 00 FF...` with the finger count stuck at zero, through a minute of
-   * being touched. A part that is held in reset does not answer at all, and a part that is broken
-   * does not answer consistently — so alive on the bus and blind to a finger is a third thing, and
-   * on CST816 family controllers it is the documented one: they drop into a standby that keeps the
-   * I2C interface up and stops scanning the panel. Everything above was reading a sleeping chip's
-   * last frame.
-   *
-   * The register numbers are the vendor's, from `Arduino_CST816x.h` in waveshareteam's own example
-   * tree for this exact board — not a datasheet for a neighbouring part and not a guess. An earlier
-   * pass here wrote 0xA5 and 0xFE, which are what a CST816S write-up suggests and are simply not
-   * these registers; that attempt changed nothing and could not have. 0xE5 is sleep mode, where the
-   * vendor writes 0b11 for on, and 0xFA is interrupt mode, where 0b00100000 reports on change.
-   *
-   * Their driver carries a warning worth repeating: the comment beside the sleep write says the
-   * sleep function can currently only be entered, not left. If this part is genuinely asleep then
-   * no write here will wake it and it needs its reset line pulled — which on this board is not a
-   * GPIO at all (the vendor's pin_config.h names only IIC_SDA 15, IIC_SCL 14 and TP_INT 21), so it
-   * would have to come from the TCA9554 expander at 0x20. That is the next thing to try if this
-   * changes nothing.
+   * The interrupt line idles high and is pulled low by a controller that has something to report.
+   * Counted on the falling edge in a handler rather than polled, so a contact shorter than one pass
+   * of the loop still registers.
    */
-  /*
-   * **Nothing is written to 0xE5 here, and the reason is a mistake worth leaving on the record.**
-   *
-   * The paragraph above read the vendor's `TOUCH_DEVICE_SLEEP_MODE` + `TOUCH_DEVICE_ON` pair as
-   * "turn the device on". It is not: the device being switched *is the sleep mode*, so ON means
-   * sleep on, and 0b11 to 0xE5 is the command that puts the part to sleep. Writing it did exactly
-   * that — a chip that had been answering every read with a frozen frame stopped answering at all,
-   * all sixteen registers reading zero — and since the vendor's own comment says sleep can be
-   * entered and not left, it took a power cycle to undo. An enum is not a sentence, and reading it
-   * as one cost this board a trip to the mains.
-   *
-   * So this sketch now only ever *reads* the touch part, plus the interrupt line below. If it turns
-   * out a wake really is needed, it will be a reset through the TCA9554 at 0x20, not a register
-   * write — the vendor's pin_config.h names no touch reset GPIO, which is what points at the
-   * expander in the first place.
-   */
-  Serial.printf("sensors: touch irq mode 0xFA reads 0x%02X (not written)\n",
-                readReg(TOUCH_ADDR, 0xFA, true));
+  pinMode(TP_INT, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(TP_INT), onTouchInterrupt, FALLING);
 
-  /*
-   * TP_INT is GPIO 21 on this board. Held as an input with a pull-up, which is what the line idles
-   * at: a controller that is scanning pulls it low when it has something, so watching it is a way
-   * to see a touch land that does not depend on reading the right register.
-   */
-  pinMode(21, INPUT_PULLUP);
-
-  /*
-   * Wake the IMU, as before. It is not what is being investigated — it already works — but a live
-   * accelerometer on screen is the proof that the I2C bus itself is healthy while the touch rows
-   * sit still, which is the distinction the whole sketch turns on.
-   */
+  /* The control. Known good, and its liveness is what makes a dead touch row meaningful. */
   writeReg(IMU_ADDR, IMU_REG_CTRL1, 0x40);
   writeReg(IMU_ADDR, IMU_REG_CTRL2, 0x04);
   writeReg(IMU_ADDR, IMU_REG_CTRL7, 0x01);
 
-  drawHeader("touch register dump", 10, RGB565_WHITE);
-  char line[48];
-  snprintf(line, sizeof(line), "chip %02X vendor %02X", chip, vendor);
-  drawHeader(line, 34, RGB565_CYAN);
-  drawHeader("TOUCH THE SCREEN", 58, RGB565_YELLOW);
+  char head[40];
+  snprintf(head, sizeof(head), "chip %02X ven %02X %s", chip, vendor, released ? "rst ok" : "NO EXP");
+  line("TOUCH TEST", 12, RGB565_WHITE, 3);
+  line(head, 48, RGB565_CYAN, 2);
+  line("put a finger on the glass", 74, RGB565_YELLOW, 1);
 }
 
 void loop() {
-  /* Read the low registers one at a time with a stop: the pattern this part has actually answered. */
-  bool ok = true;
-  for (uint8_t i = 0; i < DUMP_COUNT; i++) {
-    const int value = readReg(TOUCH_ADDR, (uint8_t)(DUMP_FIRST + i), false);
-    if (value < 0) {
-      ok = false;
-      current[i] = 0;
-    } else {
-      current[i] = (uint8_t)value;
-    }
-  }
-  if (!haveBaseline && ok) {
-    memcpy(baseline, current, sizeof(baseline));
-    haveBaseline = true;
-  }
-  for (uint8_t i = 0; i < DUMP_COUNT; i++) {
-    if (haveBaseline && current[i] != baseline[i]) {
-      if (!everChanged[i]) changes++;
-      everChanged[i] = true;
-    }
-  }
-
-  /* Four rows of four registers, index above value, anything that has ever moved drawn in green. */
-  int y = 96;
-  for (uint8_t row = 0; row < 4; row++) {
-    int x = 8;
-    for (uint8_t col = 0; col < 4; col++) {
-      const uint8_t i = (uint8_t)(row * 4 + col);
-      char cell[16];
-      snprintf(cell, sizeof(cell), "%02X:%02X", (unsigned)(DUMP_FIRST + i), current[i]);
-      gfx->setTextColor(everChanged[i] ? RGB565_GREEN : RGB565_DARKGREY, RGB565_BLACK);
-      gfx->setCursor(x, y);
-      gfx->print(cell);
-      x += 92;
-    }
-    y += 26;
-  }
-
-  char status[48];
-  snprintf(status, sizeof(status), ok ? "read ok, moved: %u  " : "READ FAILED      ", (unsigned)changes);
-  gfx->setTextColor(ok ? RGB565_WHITE : RGB565_RED, RGB565_BLACK);
-  gfx->setCursor(8, 212);
-  gfx->print(status);
-
-  /* The bus is fine if this moves, which is the control for the rows above. */
-  uint8_t a[6];
-  Wire.beginTransmission(IMU_ADDR);
-  Wire.write(IMU_REG_AX_L);
-  if (Wire.endTransmission(false) == 0 && Wire.requestFrom((int)IMU_ADDR, 6) == 6) {
-    for (uint8_t i = 0; i < 6; i++) a[i] = Wire.read();
-    const int16_t ax = (int16_t)((a[1] << 8) | a[0]);
-    const int16_t az = (int16_t)((a[5] << 8) | a[4]);
-    char imu[40];
-    snprintf(imu, sizeof(imu), "imu x%6d z%6d", ax, az);
-    gfx->setTextColor(RGB565_MAGENTA, RGB565_BLACK);
-    gfx->setCursor(8, 240);
-    gfx->print(imu);
-  }
-
+  static uint32_t lastDraw = 0;
   static uint32_t lastPrint = 0;
+  static uint32_t regChanges = 0;
+  static int lastFingers = -1;
+  static int lastX = -1;
+  static int lastY = -1;
+
+  const int fingers = readReg(TOUCH_ADDR, TOUCH_REG_FINGERS);
+  const int xh = readReg(TOUCH_ADDR, TOUCH_REG_XH);
+  const int xl = readReg(TOUCH_ADDR, TOUCH_REG_XL);
+  const int yh = readReg(TOUCH_ADDR, TOUCH_REG_YH);
+  const int yl = readReg(TOUCH_ADDR, TOUCH_REG_YL);
+  const bool ok = fingers >= 0 && xh >= 0 && xl >= 0 && yh >= 0 && yl >= 0;
+  const int x = ok ? (((xh & 0x0F) << 8) | xl) : -1;
+  const int y = ok ? (((yh & 0x0F) << 8) | yl) : -1;
+  if (ok && (fingers != lastFingers || x != lastX || y != lastY)) {
+    if (lastFingers >= 0) regChanges++;
+    lastFingers = fingers;
+    lastX = x;
+    lastY = y;
+  }
+
+  const uint32_t edges = intEdges;
+  const int level = digitalRead(TP_INT);
+
+  if (millis() - lastDraw > 120) {
+    lastDraw = millis();
+    char buf[48];
+
+    /* The headline number: a finger that reaches this board moves this and nothing else has to. */
+    snprintf(buf, sizeof(buf), "INT edges %6u", (unsigned)edges);
+    line(buf, 130, edges > 0 ? RGB565_GREEN : RGB565_DARKGREY, 3);
+
+    snprintf(buf, sizeof(buf), "INT line now %s", level ? "high (idle)" : "LOW ");
+    line(buf, 180, level ? RGB565_DARKGREY : RGB565_GREEN, 2);
+
+    snprintf(buf, sizeof(buf), "regs %s  moved %3u", ok ? "ok  " : "FAIL", (unsigned)regChanges);
+    line(buf, 220, regChanges > 0 ? RGB565_GREEN : RGB565_DARKGREY, 2);
+
+    snprintf(buf, sizeof(buf), "fingers %d  x %4d  y %4d", fingers, x, y);
+    line(buf, 252, fingers > 0 ? RGB565_GREEN : RGB565_DARKGREY, 2);
+
+    uint8_t a[6];
+    Wire.beginTransmission(IMU_ADDR);
+    Wire.write(IMU_REG_AX_L);
+    if (Wire.endTransmission(false) == 0 && Wire.requestFrom((int)IMU_ADDR, 6) == 6) {
+      for (uint8_t i = 0; i < 6; i++) a[i] = Wire.read();
+      const int16_t ax = (int16_t)((a[1] << 8) | a[0]);
+      const int16_t az = (int16_t)((a[5] << 8) | a[4]);
+      snprintf(buf, sizeof(buf), "imu x%6d z%6d", ax, az);
+      line(buf, 300, RGB565_MAGENTA, 2);
+    }
+    line("green anywhere = it reached us", 340, RGB565_WHITE, 1);
+  }
+
   if (millis() - lastPrint > 1000) {
     lastPrint = millis();
-    Serial.printf("touch %s:", ok ? "ok" : "FAIL");
-    for (uint8_t i = 0; i < DUMP_COUNT; i++) Serial.printf(" %02X", current[i]);
-    Serial.printf("  moved=%u  int=%d\n", (unsigned)changes, digitalRead(21));
+    Serial.printf("touch: int_edges=%u int_level=%d regs=%s fingers=%d x=%d y=%d moved=%u\n",
+                  (unsigned)edges, level, ok ? "ok" : "FAIL", fingers, x, y, (unsigned)regChanges);
   }
-  delay(40);
+
+  delay(15);
 }
