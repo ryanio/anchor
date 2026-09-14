@@ -29,7 +29,10 @@ Ask the ROM.
 
 The first version of this firmware scanned I2C on SDA=8/SCL=9 — the Arduino defaults for an S3 —
 found nothing, and reported that no display was attached. That reached `docs/devices.md` and survived
-a merge. The board has a glass screen and buttons down one side.
+a merge. The board has a glass screen, and a button on its edge — the BOOT button the flashing
+instructions below use, which is the bootloader's and not an input. (The stronger reading of that
+sentence, "side buttons" the firmware could poll, is a separate mistake and is unpicked under Known
+gaps.)
 
 **Zero devices on the wrong pins is not a negative result.** It is an instrument reporting that it
 was aimed at nothing. AGENTS.md asks for attention to the thing you look *through*, and a default
@@ -65,7 +68,7 @@ from the real host adapter through `tools/measure.ts`:
 | PSRAM | 8,388,608 bytes total, 7,943,664 free at boot |
 | Internal heap | 333,448 free, largest block 270,324 |
 | Framebuffer | 368×448 RGB565 = **329,728 bytes, allocated in PSRAM** |
-| Firmware size | 389,200 bytes of flash (12%), 32,848 bytes of static RAM |
+| Firmware size | 389,200 bytes of flash (12%), 32,848 bytes of static RAM — 390,004 since `app/sensors.cpp` linked |
 | Full frame on the wire | 60 messages, **23,219 bytes** — about 5% of the raw framebuffer |
 | Ping round trip | median **0.9 ms** |
 | Full frame, end to end | 74 ms to render and send, then **139 ms** to the pong |
@@ -95,12 +98,29 @@ the decoder began reporting which rows changed (105 ms → 70 ms).
 - The dirty-row band is asserted from synthetic tiles at known rows, so it holds on a machine with
   different fonts.
 
+**Measured on real silicon by `sensors/`**, the bringup sketch that asks the two I2C input devices
+what they say when a person uses them rather than only what they are called:
+
+- **The IMU is proven.** WHO_AM_I `0x05`, revision `0x7C`, its control registers reading back exactly
+  as written, and a clean **1.05 g** gravity vector at the ±2 g scale factor. The registers reading
+  back what was written is the control: a bus answering with noise or with zeroes could not produce
+  that, and a scale factor applied to the wrong part would not land on gravity.
+- **Touch is built and unproven.** The CST820 identifies itself — chip `0xB7`, vendor `0x41` — and
+  has **never produced a coordinate**. It also refused a six-byte burst read from register `0x01`
+  while answering single-register reads of the same registers, which is why `app/sensors.cpp` reads
+  one register at a time with a stop rather than a repeated start. Whether that was the problem is
+  not known. **Nothing here claims touch works**; it needs a finger on the lit glass.
+
 **Not measured:**
 
 - Wi-Fi, TLS-PSK, and free heap with a radio and a TLS session up.
-- Touch, the IMU, and the side buttons. All present, none wired to `DeviceInput` yet.
-- Colour fidelity. The framebuffer is handed to the driver as native-endian RGB565 with no swap pass;
-  that it is *correct* on the glass is a thing a person has to look at.
+- A touch coordinate, and therefore any gesture. The driver is in `app/sensors.cpp` and HELLO claims
+  tap and swipe, but the claim is about what the firmware is prepared to *send*, not about what the
+  glass has been seen to do.
+- Colour fidelity, beyond an eye. The framebuffer is handed to the driver as native-endian RGB565
+  with no swap pass. The board is flashed, running, and **painting correctly on the glass as of
+  2026-09-14** — Ryan looked, which is what this file used to say the open question needed — so a
+  swapped channel order is ruled out at the level a person can see. No instrument has been on it.
 
 ## What the hardware taught us
 
@@ -138,11 +158,29 @@ AGENTS.md means by measuring the instrument rather than the reading.
    original 58 Hz had come from the firmware that shipped on the board. One command (`0x35`) restored
    it. The panel had been refreshing the whole time; the *instrument* was off. That is the same error
    as the I2C scan at the top of this file, pointing the other way.
+8. **`fault-3` was a race on the host, and the "fix" for it made it certain.** The panel kept
+   latching `ANCHOR_FAULT_LENGTH` and going dark — a fault resets `presented` and drops the
+   backlight, so a healthy-looking session paints onto black glass. Item 3 above says a shifted
+   stream does not name its cause, and this is what the cause turned out to be: `send` in
+   `../../src/adapters/esp32-serial.ts` was async and nothing serialised it, so the 2 s keepalive
+   PING landed *inside* a frame and the decoder read a PING header out of the middle of a TILE
+   payload. The first diagnosis made it worse. The Cardputer's dropped-write bug had been fixed by
+   writing 64 bytes at a time with an 8 ms pause, and that pacing was carried across here by
+   analogy — 8 KB/s against a 368×448 panel, turning a 213 ms frame into tens of seconds and
+   guaranteeing the keepalive fired mid-frame every time. `send` now queues on a promise chain, so
+   two callers cannot have bytes on the wire at once, and writes 8 KB pieces with real backpressure
+   on `drain` rather than a guessed sleep. A guessed delay was never a limit; the drain signal is.
+9. **"Not painting" and "painting perfectly onto a panel that never came up" are the same dark
+   screen** from the far end of a cable. The banner reports a failed `panel->begin()`, but only to a
+   host that connects inside `setup()`'s wait window — a service starting a second later never sees
+   it. An evening went into that ambiguity, and the answer is the HELLO id below, which repeats.
 
 The fault code rides in the device id of the next HELLO — `anchor-pulse-s3-fault-3` — because by the
 time the decoder rejects something the host has usually already hung up, and the protocol
 deliberately has no message for a complaint. That channel is how several of these were found rather
-than guessed at.
+than guessed at. It carries one non-fault name for the same reason:
+`anchor-pulse-s3-nopanel`, announced when `panel->begin()` fails, in the one message the device
+repeats.
 
 ## Layout
 
@@ -150,8 +188,11 @@ than guessed at.
 src/anchor_pulse.{c,h}   the protocol. C99, no allocation, no platform. This is the firmware.
 host/conformance.c       the same decoder as a desktop binary, driven by the Node test
 app/app.ino              the application: transport, framebuffer, the LED, and nothing else
+app/sensors.{h,cpp}      the CST820 touch driver, bounded and throttled, and why the IMU is not one
 probe/probe.ino          what is actually wired to this board — measured, not assumed
 panelsweep/panelsweep.ino  hunt for the display's bus using the panel's own tearing line
+panel/panel.ino          wake the panel from the known pin map, and prove it woke
+sensors/sensors.ino      what the touch controller and the IMU say when a person uses them
 tools/bringup.ts         host side — paint one frame down the cable and hold it there
 tools/measure.ts         host side — what a frame actually costs, end to end
 library.properties       so the Arduino IDE can find src/ as a library
@@ -161,6 +202,14 @@ platformio.ini           an alternative build; see the note under Building
 The split is the point. Everything with judgement in it is in `src/`, which is portable and is
 tested on every `npm test`; everything platform-specific is a thin shim that can be replaced without
 touching a decoder.
+
+`probe/`, `panelsweep/`, `panel/` and `sensors/` are standalone sketches rather than debug flags in
+`app/` for one reason: on this device `Serial` **is** the protocol, so a `printf` arriving mid-frame
+is a fault the host correctly reports as a broken device. An instrument gets its own sketch, and
+`app/` only ever receives code that has already been checked against silicon in one of them.
+`sensors/` is the newest of the four and is why `app/sensors.cpp` is trustworthy at all — including
+the two findings that shaped it, the burst read from `0x01` the part refuses and the bounded
+`Wire.setTimeOut` without which a quiet sensor looks like a frozen display.
 
 ## Transport: the cable first, the radio later
 
@@ -211,6 +260,13 @@ indistinguishable from the descriptor alone. Ask the ROM:
 ```bash
 esptool --port /dev/ttyACM0 flash-id
 ```
+
+And `/dev/ttyACM0` is not a name, it is an enumeration order. With a Cardputer on the same machine
+both boards arrive through the same Espressif descriptor and the number can swap on a replug — the
+long-running host took `listPorts()[0]` for exactly that reason and crash-looped 6,601 times against
+the wrong board before anyone read the journal. `devices/src/cli.ts` probes candidates now and the
+systemd unit pins the port by its `/dev/serial/by-id` path; prefer that path here too, and read
+`/dev/ttyACM0` in the commands below as "whichever device the step above identified".
 
 ### 2. Install the core
 
@@ -277,15 +333,30 @@ theme, and repaints on a timer. **The repaint sends no bytes** — the dirty-rec
 so a link that stays up while the byte counter stays still is the idle-costs-nothing property
 working. `measure` produces the table above.
 
-The boot banner appears on the same port, and the device waits for a host before printing it:
+The boot banner appears on the same port, and the device waits for a host before printing it. Its
+shape, from the `printf`s in `app/app.ino` — **illustrative, not a transcript**, so read the numbers
+off your own board rather than out of this block:
 
 ```
+anchor-pulse: firmware up, protocol v1
 anchor-pulse: chip ESP32-S3 rev 2, 2 core(s), 240 MHz
+anchor-pulse: flash 16777216 bytes
 anchor-pulse: psram total 8388608 free 7943664
-anchor-pulse: panel 466x466, framebuffer 434312 bytes in psram
+anchor-pulse: internal heap free 333448 largest 270324
+anchor-pulse: panel 368x448, framebuffer 329728 bytes in psram
+anchor-pulse: panel CO5300 368x448, tearing activity <count>/150ms
 anchor-pulse: serial rx buffer 65536 bytes
-anchor-pulse: i2c devices found: 0 (SDA=8 SCL=9)
+anchor-pulse: i2c device at 0x15
+...
+anchor-pulse: i2c devices found: 6 (SDA=15 SCL=14, measured by probe/)
+anchor-pulse: waveshare esp32-s3-touch-amoled-1.8 v2
 ```
+
+This block used to show a **466x466** panel with a 434,312-byte framebuffer and `i2c devices found:
+0 (SDA=8 SCL=9)`. Both were the two wrong answers this file already documents, preserved in a
+transcript after the code that produced them was fixed: the panel is 368x448 (329,728 bytes), and
+the bus is the one `probe/` measured, SDA=15 and SCL=14, with six devices on it. A pasted banner is
+exactly the kind of thing nobody rereads, which is why this one is now labelled as a shape.
 
 ## Verifying the decoder without hardware
 
@@ -327,22 +398,44 @@ rather than an omission.
 
 ## Known gaps
 
-- **Colour fidelity is unverified.** The framebuffer is handed to the driver as native-endian RGB565
-  with no swap pass, which is why `ANCHOR_PIXEL_RGB565_LE` is what HELLO declares. That it looks
-  right on the glass needs a person to look at the glass.
+- **Colour fidelity has been looked at, not measured.** The framebuffer is handed to the driver as
+  native-endian RGB565 with no swap pass, which is why `ANCHOR_PIXEL_RGB565_LE` is what HELLO
+  declares. This entry used to say that whether it looks right needs a person to look at the glass;
+  a person has, and as of 2026-09-14 the board is flashed, running and painting correctly. What is
+  still unmeasured is anything finer than an eye.
 - **The whole dirty band is pushed, not the dirty rectangle.** The decoder reports the rows that
   changed, because a band of whole rows is contiguous in the framebuffer and needs no per-row loop.
   A narrow change in the middle of a wide panel still pushes full-width rows. Measure before making
   it cleverer.
-- **Touch, the IMU and the side buttons are all unused.** The HELLO input mask is zero. A CST820 and
-  a QMI8658 are real inputs, and GPIO 1, 2 and 21 carry external pull-ups, which is what a button
-  looks like. Each is a bit in that mask and a call to `anchor_pulse_input` — and none of them could
-  say anything but a slot id and two numbers.
-- **No flow control.** The 64 KB receive buffer is a fix for this board's frame size, not a general
-  one. A host that pinged every N tiles and waited could not outrun any device, using only the
-  vocabulary the protocol already has. It is the right next change and it is a reviewed one.
-- **A page shaped for this screen.** 368×448 in portrait is not a strip, and the panel currently
-  renders a page designed for other geometry. That is a design question, and `scripts/review.ts` is
-  where it gets answered.
+- **Touch is wired and has never been seen to work.** This entry used to read "Touch, the IMU and
+  the side buttons are all unused. The HELLO input mask is zero." Not one of those three devices is
+  described correctly by it, and each is wrong in a different way:
+  - The mask is no longer zero. `say_hello()` claims `(1<<ANCHOR_INPUT_TAP)|(1<<ANCHOR_INPUT_SWIPE)`
+    and `app/sensors.cpp` sends them, recognised from coordinates rather than from the controller's
+    gesture register, because parts in this family differ over whether that register is populated at
+    all. The open question is the one above: the CST820 has still never produced a coordinate.
+  - The IMU is unwired **by decision, not by omission** — and it is the one of the two that is
+    proven. `app/sensors.h` carries the argument: this display sits still on a desk and is glanced
+    at, and a page that turns because somebody set a mug down next to it is a worse device. Tilt
+    went to the Cardputer, which is the unit already in a hand.
+  - There are no side buttons to be unused. `probe/` did measure external pull-ups on GPIO 1, 2 and
+    21 alongside the bus pins; reading them as "what a side button looks like" was an inference laid
+    over a measurement, and nothing has ever confirmed a button behind them. The firmware states it
+    plainly — "there is no knob and no button here" — which is why `rotate` and `press` stay
+    unclaimed in the mask. The BOOT button under the flashing instructions is the bootloader's, not
+    an input.
+- **No flow control in the protocol.** The 64 KB receive buffer is a fix for this board's frame
+  size, not a general one. A host that pinged every N tiles and waited could not outrun any device,
+  using only the vocabulary the protocol already has. What landed instead is host-side and narrower:
+  `send` is serialised and paces on `drain` (see 8 above), which removes the interleaving that
+  actually bit. A slow device and a fast host is still unsolved, and it is still a reviewed change.
+- **A page shaped for this screen — shipped, and no longer a gap.** It was listed here as one:
+  "368×448 in portrait is not a strip, and the panel currently renders a page designed for other
+  geometry." `Panel.pulseDetail()` in [`../../src/panel.ts`](../../src/panel.ts) now returns a
+  `detail` surface for the four rotating pages — portfolio, gallery, tokens and nfts, the set in
+  `ROTATING_PAGES` — and `null` for every other page, which falls back to rows on purpose: a chains
+  or desktop page is a set of things to choose between, while these are a number worth glancing at
+  from across a desk and a piece of art worth having up. `scripts/review.ts` is still where it gets
+  looked at.
 - **No Wi-Fi, no TLS-PSK.** Deliberate. The cable keeps invariant 6 vacuous rather than merely
   satisfied.

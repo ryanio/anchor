@@ -198,6 +198,25 @@ static void sink_ready(void *ctx, const anchor_ready_t *ready) {
   have_ready = true;
   configured_brightness = ready->brightness;
   stale_after_ms = ready->stale_after_ms;
+
+  /*
+   * Look awake as soon as there is a session, rather than at the first COMMIT.
+   *
+   * The rule below `sink_present` — backlight down until there is something true to show — is right
+   * about never displaying a half painted frame, and it is kept. What it did not account for is the
+   * gap before the *first* frame: a device that has handshaked, holds a live session and is waiting
+   * for pixels sat at brightness zero, which on an AMOLED is indistinguishable from a device that is
+   * off, faulted, or never flashed. An evening went into that ambiguity — the panel was refreshing
+   * the whole time and the tearing line said so, while the glass showed nothing to look at.
+   *
+   * A flat ground fill is not a reading and cannot be mistaken for one, which is the same argument
+   * the Cardputer's "host connected, no frame yet" standby screen already makes. This board has no
+   * font to write that sentence with, so the honest version of it is a lit, empty panel.
+   */
+  if (panel_ready && !presented) {
+    panel->fillScreen(0x2124); /* a dark slate: clearly not black, clearly not content */
+    set_backlight(configured_brightness);
+  }
 }
 
 static void sink_brightness(void *ctx, uint8_t percent) {

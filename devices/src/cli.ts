@@ -471,9 +471,28 @@ async function main(): Promise<void> {
    * after a reset would take input from nobody. Keys going dead after a recovery is a worse bug
    * than the disconnect it recovered from, because it looks like the software is simply broken.
    */
+  /*
+   * Every input the device sends, when asked for.
+   *
+   * Off by default and not a log level: a daemon that narrates a person's keypresses into the
+   * journal by default is the wrong shape. But the question "is this device sending anything at
+   * all" is the first one to ask of any input that appears not to work, and without this the only
+   * way to ask it is to stop the service and attach a bespoke script — which takes the panel down
+   * and so cannot observe the device in the state anybody is complaining about. Set
+   * ANCHOR_DEVICES_DEBUG=input and tap the thing.
+   *
+   * It prints inputs the panel *rejected* too, since "arrived and was ignored" and "never arrived"
+   * are the two answers and they need telling apart.
+   */
+  const debugInput = (process.env.ANCHOR_DEVICES_DEBUG ?? "").split(",").includes("input");
+
   const listen = (): void => {
     device.onInput((input) => {
-      if (!panel.handle(input)) return;
+      if (debugInput) process.stderr.write(`input: ${JSON.stringify(input)}\n`);
+      if (!panel.handle(input)) {
+        if (debugInput) process.stderr.write(`input: ${input.kind} on ${input.slot} — panel ignored it\n`);
+        return;
+      }
       if (panel.deckBrightness !== deckBrightness) {
         deckBrightness = panel.deckBrightness;
         void device.setBrightness(deckBrightness);
