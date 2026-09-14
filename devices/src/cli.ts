@@ -211,12 +211,22 @@ function parseArgs(argv: readonly string[]): Options {
  * holding state, and so a repaint triggered by something else does not advance the gallery.
  */
 const ROTATE_MS = 6000;
-function rotationIndex(): number {
-  return Math.floor(Date.now() / ROTATE_MS);
-}
-/** How far into the current rotation window the clock is right now, for `pulseDetail`'s sync bar. */
-function rotationProgress(): number {
-  return (Date.now() % ROTATE_MS) / ROTATE_MS;
+/**
+ * The clock, as the panel is given it: which window, how far through it, and the reading itself.
+ *
+ * One `Date.now()` for all three, on purpose. Read separately they can straddle a window boundary
+ * and hand the panel an index from one window with a progress from the next — a full sync bar over
+ * an item that already changed, which is precisely the claim that bar exists to make honestly. The
+ * raw reading goes too, because `Panel`'s tap hold is a deadline in milliseconds and it must be
+ * measured against the same clock the rotation came from, not a second sample of it.
+ */
+function rotationNow(): { rotation: number; rotationProgress: number; nowMs: number } {
+  const nowMs = Date.now();
+  return {
+    rotation: Math.floor(nowMs / ROTATE_MS),
+    rotationProgress: (nowMs % ROTATE_MS) / ROTATE_MS,
+    nowMs,
+  };
 }
 
 async function main(): Promise<void> {
@@ -410,8 +420,7 @@ async function main(): Promise<void> {
           themeName: tokens.themeName,
           portfolio,
           timeframe: panel.timeframe,
-          rotation: rotationIndex(),
-          rotationProgress: rotationProgress(),
+          ...rotationNow(),
           discoveryTokens,
           discoveryCollections,
         }),
@@ -442,8 +451,7 @@ async function main(): Promise<void> {
         themeName: tokens.themeName,
         portfolio,
         timeframe: panel.timeframe,
-        rotation: rotationIndex(),
-        rotationProgress: rotationProgress(),
+        ...rotationNow(),
         discoveryTokens,
         discoveryCollections,
       });

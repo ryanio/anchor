@@ -32,6 +32,16 @@ export interface PanelState {
    * its own to stay in step with it.
    */
   readonly rotationProgress?: number;
+  /**
+   * The wall clock in milliseconds, from the same reading `rotation` was derived from.
+   *
+   * Only the tap hold uses it (see `TAP_HOLD_MS`), and it is here rather than a `Date.now()` inside
+   * this file for the same reason `rotation` is: a panel that reads a clock cannot be driven to a
+   * known frame by a test or by `review.ts`, and every assertion in `panel.test.ts` rests on
+   * `build` being a function of what it was handed. A runner that leaves it out still gets the
+   * tap's advance — it just gets no hold, rather than a page frozen on one item for ever.
+   */
+  readonly nowMs?: number;
   /** What's moving, not what's owned — the `tokens`/`nfts` pages' data. See `state/discovery.ts`. */
   readonly discoveryTokens?: readonly TrendingToken[];
   readonly discoveryCollections?: readonly TrendingCollection[];
@@ -312,6 +322,31 @@ export const SEGMENT_MIN_CHARS: Readonly<Record<string, number>> = {
   "anchor.age": 9,
 };
 
+/**
+ * The pages that rotate through a list of items on the wall clock, and so are the pages a tap can
+ * steer. `pulseDetail` returns a surface for exactly these and null for everything else; the guard
+ * at the top of it reads this set so the two cannot disagree about which pages rotate. Add a page
+ * there and it renders nothing until it is named here, which is a loud failure rather than a page
+ * whose tap silently does nothing.
+ */
+export const ROTATING_PAGES: ReadonlySet<string> = new Set(["portfolio", "gallery", "tokens", "nfts"]);
+
+/**
+ * How long a tapped item stays put before the wall clock takes the page back.
+ *
+ * Reasoned, not measured — there is no hardware emitting taps yet, so this is a judgement about
+ * reading time and it should be re-decided against a real panel and a real thumb. What it is sized
+ * against: `ROTATE_MS` in `cli.ts` is six seconds, chosen for a glance from across a desk, and a
+ * tap is the opposite of a glance — someone is now looking *at* the thing and reading a collection
+ * name, a price and a 24h change off it. Ten seconds is longer than one rotation window, which is
+ * the failure this exists to prevent: a tap landing 200ms before the clock flips would otherwise
+ * summon a piece and have it yanked away before the eye arrived, and that reads as the tap having
+ * done something random rather than what was asked. It is under two windows so a panel someone
+ * tapped and walked away from is ambient again, and back in step with the units beside it, inside a
+ * quarter of a minute — a hold that outlives the interest in it is just a broken rotation.
+ */
+export const TAP_HOLD_MS = 10_000;
+
 export class Panel {
   readonly #config: PanelConfig;
   #pageName: string;
@@ -336,6 +371,24 @@ export class Panel {
    * several ticks before the network answers gets one request rather than one every second.
    */
   readonly #artWarming = new Set<string>();
+  /**
+   * Taps taken but not yet turned into a pin, because `handle` is given an input and nothing else.
+   *
+   * A tap has to be answered against the clock reading it happened under, and the clock arrives
+   * through `PanelState` on the next `build` — which the runner performs immediately, because
+   * `handle` returns true. Counting rather than flagging is what makes a fast double tap scrub two
+   * items forward instead of one: the second tap must not be swallowed by the first.
+   */
+  #tapAdvances = 0;
+  /**
+   * The item a tap steered this panel to, and the moment the wall clock gets the page back.
+   *
+   * `index` is a rotation index, not a list position, so everything downstream — `pulseDetail`, the
+   * `nft:N` key source, the strip — keeps taking `state.rotation % list.length` and none of them
+   * has to learn that taps exist. Null means this panel is showing exactly what the clock says,
+   * which is the state every untouched unit at a desk is in and the reason they agree.
+   */
+  #tapPin: { readonly index: number; readonly until: number } | null = null;
 
   constructor(config: PanelConfig, tokens: Tokens) {
     const first = config.pages[0];
@@ -437,6 +490,58 @@ export class Panel {
   }
 
   /**
+   * The rotation the frame is actually painted at: the wall clock, unless a tap has steered it.
+   *
+   * The clock stays the source. A tap adds an *offset* on top of it and a deadline under it, and
+   * the moment the clock catches up with where the tap pushed the page to, the pin is dropped and
+   * this panel is once again showing precisely what `Date.now()` says — which is the property the
+   * whole rotation design exists for. Several pulse panels on one desk rotate together with no link
+   * between them because each one derives the item from a clock they already share; a panel that
+   * answered a tap by starting a private counter would never rejoin, and the desk would look
+   * broken in a way no single unit could reveal. So the untouched unit's behaviour is unchanged to
+   * the millisecond, a touched one is out of step only for as long as someone is looking at it, and
+   * the divergence has an expiry rather than a lifetime.
+   *
+   * Three states, in the order they happen:
+   *
+   * 1. Held — the clock is overridden outright, so the summoned item cannot be taken away mid-look.
+   * 2. Expired but ahead of the clock (only reachable by tapping several times): the pin still wins,
+   *    because falling back to the clock here would step *backwards* through the list, which looks
+   *    like a fault rather than a rotation.
+   * 3. Caught up — the pin is dropped and this panel is an untouched one again.
+   *
+   * Returns the progress bar's value along with it, because during a hold the bar's claim changes:
+   * it means "what you are looking at changes when this fills", and what it is counting toward is
+   * the end of the hold rather than the next shared flip.
+   */
+  #steerRotation(state: PanelState): { rotation: number; progress: number | undefined } {
+    const clock = state.rotation ?? 0;
+    const now = state.nowMs;
+    if (this.#tapAdvances > 0) {
+      // From wherever the page is *showing*, not from wherever the clock is: a tap during a hold
+      // advances from the held item, which is the only item the person tapping can see.
+      const from = this.#tapPin === null ? clock : Math.max(clock, this.#tapPin.index);
+      this.#tapPin = { index: from + this.#tapAdvances, until: (now ?? 0) + TAP_HOLD_MS };
+      this.#tapAdvances = 0;
+    }
+    const pin = this.#tapPin;
+    if (pin === null) return { rotation: clock, progress: state.rotationProgress };
+    // No injected clock means no hold — see `PanelState.nowMs`. The advance still lands, and the
+    // clock reclaims the page one window later, which is the sane half of the feature rather than a
+    // panel pinned to one piece until it is restarted.
+    const remaining = now === undefined ? 0 : pin.until - now;
+    if (remaining > 0) return { rotation: pin.index, progress: 1 - remaining / TAP_HOLD_MS };
+    if (clock < pin.index) {
+      // Parked ahead of the clock with the hold spent. The bar would be counting toward a flip that
+      // is more than one window away, and a bar that fills without anything changing is worse than
+      // no bar: it is the sync claim in `types.ts` made falsely.
+      return { rotation: pin.index, progress: undefined };
+    }
+    this.#tapPin = null;
+    return { rotation: clock, progress: state.rotationProgress };
+  }
+
+  /**
    * The portfolio and gallery pages, as a screen device's ambient display rather than a menu.
    *
    * Returns `null` for every other page, which tells `build` to fall back to `rows` — a desktop or
@@ -445,6 +550,12 @@ export class Panel {
    * and `renderDetail`'s `artwork` field exists for exactly this.
    */
   pulseDetail(state: PanelState): Surface | null {
+    // Every branch below is a page that rotates, and `handle` needs that list to decide whether a
+    // tap means anything. Reading the set here rather than keeping a second copy of the four names
+    // is what stops the two drifting: a page added below but not to the set renders nothing at all,
+    // which is noticed on the first look, unlike a tap that quietly does nothing.
+    if (!ROTATING_PAGES.has(this.#pageName)) return null;
+
     const age =
       state.portfolio === undefined || state.portfolio.detail !== ""
         ? (state.portfolio?.detail ?? "loading…")
@@ -555,18 +666,34 @@ export class Panel {
   setPage(name: string): boolean {
     if (!this.#config.pages.some((p) => p.name === name)) return false;
     this.#pageName = name;
+    // A pin is an answer to "hold *this* item", and the item belonged to the page being left. Kept
+    // across a page change it would hand the new page an offset nobody asked for and a hold that
+    // freezes a page the person has only just arrived at — a swipe that appears not to have worked.
+    this.#tapPin = null;
+    this.#tapAdvances = 0;
     return true;
   }
 
   /** Build the frame for a device, filling only the slots that device actually has. */
   build(device: AnchorDevice, rawState: PanelState): Frame {
+    // Two adjustments, both applied once here so that every consumer downstream — `pulseDetail`,
+    // the `nft:N` keys, the strip's filmstrip — reads one already-settled state and stays a
+    // function of what it is handed.
+    //
     // The gallery dial scrubs how many pieces are in rotation, not how many show at once — eight
-    // keys show eight keys regardless. Sliced once here so every consumer (the gallery keys, the
-    // strip's own artwork) agrees on the same pool, the same way a filter narrows what `rows` sees.
-    const state: PanelState =
-      rawState.portfolio === undefined
-        ? rawState
-        : { ...rawState, portfolio: { ...rawState.portfolio, nfts: rawState.portfolio.nfts.slice(0, this.#nftLimit) } };
+    // keys show eight keys regardless. Sliced once here so every consumer agrees on the same pool,
+    // the same way a filter narrows what `rows` sees. And a tap steers the rotation index itself
+    // (`#steerRotation`), which is why nothing below this line knows that taps exist.
+    const steered = this.#steerRotation(rawState);
+    const state: PanelState = {
+      ...rawState,
+      rotation: steered.rotation,
+      rotationProgress: steered.progress,
+      portfolio:
+        rawState.portfolio === undefined
+          ? undefined
+          : { ...rawState.portfolio, nfts: rawState.portfolio.nfts.slice(0, this.#nftLimit) },
+    };
     const frame = new Map<string, Surface>();
     const page = this.page;
     const slots = new Set(device.capabilities.slots.filter((slot) => slot.paintable).map((slot) => slot.id));
@@ -755,8 +882,29 @@ export class Panel {
         this.#filter = input.value;
         this.#selected = 0;
         return true;
-      case "tap":
-        return false;
+      case "tap": {
+        // A tap on a rotating ambient page skips to the next item and holds it there — the one
+        // thing a screen with no buttons can offer someone who wants to see the next piece now
+        // rather than in five seconds. `#steerRotation` does the work on the next `build`, because
+        // that is where the clock this has to be measured against arrives.
+        //
+        // Only on a screen's own surface. The Stream Deck's touch strip emits taps too
+        // (`adapters/streamdeck.ts`), and letting one advance the rotation would jump the eight
+        // gallery *keys* beside it — a device where brushing the strip reshuffles the whole face is
+        // a worse device, and that behaviour has never been looked at on a review page.
+        if (!input.slot.startsWith("screen:")) return false;
+        // Nothing sensible on a page that does not rotate, and deliberately nothing rather than
+        // something approximate. A list page's obvious gesture is "open the row I touched", and the
+        // panel cannot know which row that is: a tap carries pixels, and `types.ts` rule 1 keeps
+        // pixel geometry inside the renderer, so the panel has no idea how tall a row came out or
+        // where the list starts. The only thing it could act on is `#selected` — which would make
+        // any touch anywhere launch whatever happens to be highlighted, from a sleeve brushing the
+        // panel. Row hit-testing needs the renderer to report back the boxes it drew; until it
+        // does, a tap here repaints nothing.
+        if (!ROTATING_PAGES.has(this.#pageName)) return false;
+        this.#tapAdvances++;
+        return true;
+      }
       default:
         return false;
     }

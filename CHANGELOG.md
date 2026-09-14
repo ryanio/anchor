@@ -34,6 +34,16 @@ workspace keeps its own dependency, so a machine with no device attached install
   bytes on the wire and ~213ms end to end, a changed reading is 70ms, and an unchanged frame costs
   zero bytes. The decoder now reports which rows a frame touched, so the device pushes only the band
   that changed — that alone took a changed reading from 105ms to 70ms.
+- **A tap skips the pulse display to the next item, and holds it there.** On a screen device, a
+  `tap` on a rotating ambient page (`portfolio`, `gallery`, `tokens`, `nfts`) advances one item
+  immediately and keeps it up for ten seconds before the wall clock takes the page back — long
+  enough to read a name and a price off a tap that landed a moment before the page would have
+  flipped anyway. Several panels at one desk still agree with each other: the tap is an offset and
+  a deadline laid over the shared clock index rather than a private counter, so an untouched unit
+  is unchanged to the millisecond and a tapped one rejoins the others as soon as the clock catches
+  up. The host half only; firmware that reports the CST820's touches is not written yet. A tap on
+  the Stream Deck's strip, and on a page that is a list rather than a rotation, still does nothing
+  — deliberately, with the reason in the code.
 - The firmware previously reported that no display was attached, and `docs/devices.md` shipped that
   claim. It had scanned I2C on the Arduino default pins; the real bus is SDA=15/SCL=14. Zero devices
   on the wrong pins is not a negative result. `devices/firmware/esp32/probe/` now finds a board's bus
@@ -126,6 +136,13 @@ workspace keeps its own dependency, so a machine with no device attached install
   on the keyboard opens a filter that narrows rows the host already has, and no keystroke while it is
   open reaches the panel at all. Verified in flint's simulator, which renders the real view code at
   the real 240x135; **no Cardputer has run it yet.**
+- **Tilting the Cardputer pages the panel.** Tip the right hand edge down for the next page and the
+  left edge down for the previous one — the same page change Tab and shift-Tab make, sent as the
+  same `tab` keystroke, so the host keeps one mapping rather than gaining a gesture message. It
+  reads flint's `motion::` rather than the IMU, takes a 25 degree lean to fire and a return to
+  within 10 degrees to re-arm, so a held tilt pages once and desk noise pages not at all, and it is
+  inert while the filter box is open. Compiled for both the unit and the simulator; **the angles
+  are reasoned from flint's filters, not yet felt in a hand.**
 - **An Anchor unit is one app, as a build fact rather than a setting.** The app used to live in
   flint's tree, where a build profile arranged for the menu to show one card out of eleven. It now
   lives here and flint is the platform: `devices/firmware/cardputer/platformio.ini` leaves

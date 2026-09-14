@@ -1,10 +1,12 @@
 #include <ArduinoJson.h>
 
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 
 #include "art.h"
 #include "cable.h"
+#include "motion.h"
 #include "standalone.h"
 #include "ui.h"
 #include "view.h"
@@ -58,6 +60,29 @@ constexpr uint32_t POWER_MS = 5000;
 constexpr uint32_t STANDALONE_GRACE_MS = 10000;
 // How long the identity screen holds before the first trending tiles show.
 constexpr uint32_t STANDALONE_INTRO_MS = 3000;
+
+// Tilt to page. Tipping the right hand edge down moves to the next panel page and tipping the left
+// edge down moves back, which is the gesture a swipe already is on a deck. It sends exactly what
+// Tab and shift-Tab send below, because the host turns those into `{kind:"swipe"}` on the strip
+// slot and `Panel.handle` pages on it: a second wire message meaning the same thing would be a
+// second thing to keep in step for no new capability. See docs/devices-cardputer.md.
+//
+// These four numbers are reasoned, not measured — no unit has run this build yet. What they are
+// reasoned from: `motion::roll()` arrives low passed twice (gravity at 0.15, tilt at 0.30, sampled
+// at 50Hz in flint's own loop), so it wanders about a degree at rest and takes roughly 100ms to
+// catch up with a hand that has actually moved. FIRE_DEG sits well past flint's 3 degree dead zone
+// and past half of its FULL_TILT, so it is a lean somebody means rather than the angle a unit sits
+// at propped against a keyboard. REARM_DEG is the hysteresis that makes one tilt one page: after a
+// page turn the unit has to come back near flat before another counts, so holding it tilted streams
+// nothing. HOLDOFF_MS is the brace to that belt, for the case the filters cannot smooth away — a
+// wrist flicked out and back fast enough to cross both levels inside one gesture.
+constexpr float TILT_FIRE_DEG = 25.0f;
+constexpr float TILT_REARM_DEG = 10.0f;
+constexpr uint32_t TILT_HOLDOFF_MS = 600;
+// Past this the unit is being turned over rather than tipped, and `atan2` reads a flip as ±180
+// degrees of roll, which would page on the way round. Face down is flint's screen-off gesture (see
+// its rest.h), not a page turn.
+constexpr float TILT_FACE_UP_G = 0.35f;
 
 // One strip and nine tiles, which is what the host's Cardputer geometry sends.
 // Held as a fixed table rather than a map so a frame allocates nothing.
@@ -151,6 +176,12 @@ bool standaloneIntroShown = false;
 
 bool queryActive = false;
 char queryText[72];
+
+// True while a tilt that has already paged is still being held. Set on entry too, so a unit picked
+// up and turned on its side on the way out of the menu has to come back near flat before the first
+// page turn, rather than paging because of how somebody was holding it when the view opened.
+bool tiltLatched = true;
+uint32_t lastTiltPage = 0;
 
 uint8_t savedBrightness = 0;
 
@@ -568,6 +599,52 @@ void reportPower()
 	send(doc);
 }
 
+// The other way to page, once a tick. flint's loop owns `motion::update()` — `src/main.cpp` calls
+// it, and the simulator's `sim/src/app.cpp` calls it in the same place, which is also why this view
+// needs no hardware-only swap the way cable.cpp does — and it samples on its own 50Hz schedule. So
+// this reads two floats that are already sitting there: no I2C, no allocation, and nothing that
+// grows with how long the view has been open.
+void tiltPage()
+{
+	// The original Cardputer has no IMU and M5Unified's probe can miss one, so this asks rather
+	// than assumes. A unit without one still has Tab.
+	if (!motion::available()) {
+		return;
+	}
+	// Gated for the reason the arrow keys are gated: while the filter box is open the host is
+	// collecting characters, and a page changing underneath would leave a filter somebody typed
+	// narrowing a page they did not choose.
+	if (queryActive) {
+		return;
+	}
+
+	const float roll = motion::roll();
+	const bool faceUp = motion::gravityZ() > TILT_FACE_UP_G;
+	if (tiltLatched) {
+		if (faceUp && fabsf(roll) < TILT_REARM_DEG) {
+			tiltLatched = false;
+		}
+		return;
+	}
+	if (!faceUp || fabsf(roll) < TILT_FIRE_DEG) {
+		return;
+	}
+
+	// Latched on the crossing whether or not the page turn survives the holdoff, so one lean is one
+	// page under every outcome. A crossing this soon after the last one is dropped rather than held
+	// and delivered late: a page that arrives half a second after the wrist it came from has gone
+	// back to flat reads as the panel moving on its own.
+	tiltLatched = true;
+	const uint32_t now = millis();
+	if (now - lastTiltPage < TILT_HOLDOFF_MS) {
+		return;
+	}
+	lastTiltPage = now;
+	// Positive roll is the right hand edge down (flint's motion.h), and forward is the direction
+	// Tab alone pages, so the left lean is the one carrying shift.
+	sendKey("tab", roll < 0.0f);
+}
+
 // ---------------------------------------------------------------- receiving
 
 void applyTheme(JsonObjectConst message)
@@ -745,6 +822,8 @@ void enter()
 	standaloneIntroUntil = 0;
 	standaloneIntroShown = false;
 	sentLevel = -1;
+	tiltLatched = true;
+	lastTiltPage = millis();
 	savedBrightness = ui::gfx().getBrightness();
 	// The host clears its own per slot cache when a device says hello and
 	// repaints every slot, which is what turns opening this view into a full
@@ -787,6 +866,7 @@ void tick()
 		lastPower = now;
 		reportPower();
 	}
+	tiltPage();
 	// standalone::tick() rate-limits its own network attempts, so calling it every tick costs
 	// nothing on the calls that do not fetch. A repaint fires only when the token list actually
 	// changed — not on the ticks in between, which is the same discipline draw()'s dirty-slot

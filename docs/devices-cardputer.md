@@ -216,6 +216,7 @@ Worth stating, because the temptation with a keyboard is to add an input kind pe
 | Enter | `press` then `release` | Identical to a key on any other device. |
 | Number keys | `press` / `release` on `key:n` | A number key *is* a key slot. |
 | Tab / shift-Tab | `swipe` on the strip slot | `Panel.handle` already pages on a swipe, in both directions. |
+| Tilting the unit left or right | `swipe` on the strip slot | The firmware sends the same `tab` / shift-`tab` the key does, so the one gesture the hardware has costs no contract change at all. Right hand edge down pages forward. |
 | Cursor movement with no activation | *nothing* | Focus is device-local. The Stream Deck does not report a finger hovering either. |
 | Typing characters | **nothing fits** | The one real gap. |
 

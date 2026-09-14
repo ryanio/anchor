@@ -439,6 +439,132 @@ describe("screen devices", () => {
   });
 });
 
+describe("a tap steers the rotation", () => {
+  // Two pages: one that rotates through items and one that is a list of things to choose between.
+  // A tap means something on the first and deliberately nothing on the second.
+  const config = parseConfig({
+    pages: [
+      { name: "gallery" },
+      { name: "desktop", keys: [{ index: 0, label: "One", action: "hypr workspace 1" }] },
+    ],
+  });
+
+  // No `imageUrl`: `pulseDetail` asks `#pulseArt` for the art of whatever piece it settles on, and
+  // a URL here would start a real fetch from a test. These assertions are about *which* piece the
+  // page settles on, which the title carries.
+  const PIECES = ["Alpha", "Beta", "Gamma", "Delta"].map((name) => ({
+    name,
+    collection: "onchainchain",
+    imageUrl: "",
+    openseaUrl: "",
+  }));
+
+  /** The clock, as the runner injects it: a window index, a position in it, and the raw reading. */
+  const clock = (rotation: number, nowMs: number): PanelState => ({
+    ...state(),
+    portfolio: { ...PORTFOLIO, nfts: PIECES },
+    rotation,
+    rotationProgress: 0,
+    nowMs,
+  });
+
+  /** The piece a panel is showing, read off the frame it would paint. */
+  const showing = (panel: Panel, at: PanelState): string => {
+    const surface = panel.build(screenDevice(), at).get(SCREEN_SLOT);
+    assert.equal(surface?.kind, "detail");
+    return surface?.kind === "detail" ? surface.title : "";
+  };
+
+  test("a tap advances to the next piece at once, and again on a second tap", () => {
+    const panel = new Panel(config, TOKENS);
+    assert.equal(showing(panel, clock(10, 0)), "Gamma", "10 % 4 pieces");
+    assert.equal(panel.handle({ kind: "tap", slot: SCREEN_SLOT, x: 100, y: 200 }), true, "repaints");
+    assert.equal(showing(panel, clock(10, 10)), "Delta", "the clock has not moved; the tap did");
+    panel.handle({ kind: "tap", slot: SCREEN_SLOT, x: 100, y: 200 });
+    assert.equal(showing(panel, clock(10, 20)), "Alpha", "a second tap advances from the held piece");
+  });
+
+  test("the hold keeps the summoned piece past the flip, then gives the page back", () => {
+    // The whole point of the hold: a tap that lands just before the clock flips must not have its
+    // answer taken away before anyone has read it.
+    const panel = new Panel(config, TOKENS);
+    panel.handle({ kind: "tap", slot: SCREEN_SLOT, x: 1, y: 1 });
+    assert.equal(showing(panel, clock(10, 0)), "Delta");
+    assert.equal(showing(panel, clock(12, 9_000)), "Delta", "two windows on, still held");
+    assert.equal(showing(panel, clock(12, 10_001)), "Alpha", "hold spent: the clock has the page");
+  });
+
+  test("the hold expires with no further input, on the clock alone", () => {
+    // Nothing calls a "release the hold" method; the deadline is read off the injected clock, so a
+    // panel nobody touches again cannot stay pinned.
+    const panel = new Panel(config, TOKENS);
+    panel.handle({ kind: "tap", slot: SCREEN_SLOT, x: 1, y: 1 });
+    assert.equal(showing(panel, clock(20, 0)), "Beta", "21 % 4");
+    assert.equal(showing(panel, clock(23, 60_000)), "Delta", "23 % 4, straight off the clock");
+  });
+
+  test("two untouched panels agree, and a tapped one rejoins them", () => {
+    // The multi-unit property: several pulse panels on a desk derive the item from a wall clock
+    // they already share, so they agree with no link between them. A tap steers one unit and must
+    // not cost the rest that agreement — nor cost the tapped unit its place once the hold is spent.
+    const left = new Panel(config, TOKENS);
+    const right = new Panel(config, TOKENS);
+    for (const rotation of [7, 8, 9]) {
+      const at = clock(rotation, rotation * 6_000);
+      assert.equal(showing(left, at), showing(right, at), `untouched units agree at ${rotation}`);
+    }
+
+    left.handle({ kind: "tap", slot: SCREEN_SLOT, x: 1, y: 1 });
+    const tapped = clock(9, 54_000);
+    assert.notEqual(showing(left, tapped), showing(right, tapped), "the tapped unit steps ahead");
+
+    const later = clock(12, 72_000);
+    assert.equal(showing(left, later), showing(right, later), "and is back in step once it expires");
+    assert.equal(showing(left, later), "Alpha", "in step with the clock, not merely with each other");
+  });
+
+  test("the sync bar counts down the hold while one is running", () => {
+    // The bar's claim is "what you are looking at changes when this fills". During a hold that is
+    // the hold's own deadline, not the next shared flip, or the bar would fill and nothing happen.
+    const panel = new Panel(config, TOKENS);
+    panel.handle({ kind: "tap", slot: SCREEN_SLOT, x: 1, y: 1 });
+    // The hold is stamped on the first frame after the tap, which is the frame the summoned piece
+    // first appears on — the clock it is measured from is the one that paints it, not an earlier one.
+    assert.equal(showing(panel, clock(10, 0)), "Delta");
+    const held = panel.build(screenDevice(), clock(10, 5_000)).get(SCREEN_SLOT);
+    assert.equal(held?.kind, "detail");
+    assert.equal(held?.kind === "detail" ? held.syncProgress : undefined, 0.5);
+
+    const expired = { ...clock(14, 20_000), rotationProgress: 0.25 };
+    const free = panel.build(screenDevice(), expired).get(SCREEN_SLOT);
+    assert.equal(free?.kind === "detail" ? free.syncProgress : undefined, 0.25, "back to the shared window");
+  });
+
+  test("a tap on a page that does not rotate does nothing, and says so by repainting nothing", () => {
+    const panel = new Panel(config, TOKENS);
+    panel.setPage("desktop");
+    assert.equal(panel.handle({ kind: "tap", slot: SCREEN_SLOT, x: 1, y: 1 }), false);
+    const list = panel.build(screenDevice(), clock(10, 0)).get(SCREEN_SLOT);
+    assert.equal(list?.kind, "list", "a list page stays a list");
+  });
+
+  test("a tap on the touch strip leaves the rotation alone", () => {
+    // The Stream Deck's strip emits taps as well. Advancing the gallery keys from a brush against
+    // the strip is a different feature, and not this one.
+    const panel = new Panel(config, TOKENS);
+    assert.equal(panel.handle({ kind: "tap", slot: STRIP_SLOT, x: 1, y: 1 }), false);
+    assert.equal(showing(panel, clock(10, 0)), "Gamma", "unmoved");
+  });
+
+  test("changing page drops the hold rather than carrying it over", () => {
+    const panel = new Panel(config, TOKENS);
+    panel.handle({ kind: "tap", slot: SCREEN_SLOT, x: 1, y: 1 });
+    panel.setPage("desktop");
+    panel.setPage("gallery");
+    assert.equal(showing(panel, clock(10, 0)), "Gamma", "the page arrived at is the one the clock says");
+  });
+});
+
 describe("text input", () => {
   const config = parseConfig({
     pages: [
