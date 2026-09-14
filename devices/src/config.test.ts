@@ -132,6 +132,31 @@ describe("the packaged default config", () => {
     }
   });
 
+  test("every key that is not showing a reading is showing an icon", () => {
+    /*
+     * A key either reports something or does something. One that reports has a `source` and fills
+     * its face with the reading; one that does has an `action` and an icon, because a label alone on
+     * a 72px key is a word floating in a box.
+     *
+     * This exists because four keys shipped with `"icon": ""`. The icon test above them skips a key
+     * whose icon is falsy — it was written to catch a *wrong* glyph, and an absent one walked past
+     * it — so the second row of the deck rendered as four blank squares and stayed that way until
+     * somebody looked at the hardware and said so. A config that cannot draw a key is a config
+     * error, and it should fail here rather than on the desk.
+     */
+    const { config } = loadConfig();
+    for (const page of config.pages) {
+      for (const key of page.keys) {
+        if (key.source !== "") continue;
+        assert.notEqual(
+          key.icon,
+          "",
+          `${page.name}/${key.index} (${key.label}): an action key needs an icon`,
+        );
+      }
+    }
+  });
+
   test("every page action names a verb the dispatcher knows", () => {
     const known = new Set([
       "omarchy",

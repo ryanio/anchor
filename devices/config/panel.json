@@ -38,25 +38,25 @@
         {
           "index": 4,
           "label": "Chains",
-          "icon": "",
+          "icon": "\uf0c1",
           "action": "page chains"
         },
         {
           "index": 5,
           "label": "Gallery",
-          "icon": "",
+          "icon": "\uf03e",
           "action": "page gallery"
         },
         {
           "index": 6,
           "label": "Lock",
-          "icon": "",
+          "icon": "\uf023",
           "action": "omarchy system lock"
         },
         {
           "index": 7,
           "label": "Terminal",
-          "icon": "",
+          "icon": "\uf120",
           "action": "omarchy launch terminal"
         }
       ],
