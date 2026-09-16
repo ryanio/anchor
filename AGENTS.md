@@ -169,25 +169,32 @@ the driver that relies on it links there** — not only in the comment of whiche
 The test is simple: if somebody wrote a second driver for this part tomorrow without reading the
 first one, which of your findings would they lose?
 
-## Say which side of the cable a new feature lives on
+## The Cardputer and the pulse display are wholly independent devices
 
-These units are carried around and handed to people, so "works when nobody is at a desk" is a
-product requirement rather than a nicety. That makes *where a feature runs* a decision worth stating
-out loud, because it is easy to drift without noticing: in one day the ESP32 was moved to LVGL
-specifically so it needs no host, and the Cardputer's newest feature — browse mode, Overview,
-Holders and Activity — was built entirely host-side and therefore only works on a cable. Both were
-defensible on their own and the pair is incoherent.
+The cable is for flashing them. That is its whole job.
 
-A device here can be in one of three states, and a new feature should name which ones it serves:
+Both fetch what they show, render it themselves, and are never driven by a desktop — no host
+process, no wire protocol carrying pixels or surfaces, no service that has to be running for a unit
+to be useful. A device somebody is handed works the same on a table at a venue as it does on the
+desk it was built at, because there is no second machine in the picture at all.
 
-1. **Tethered**, with a desktop rendering or feeding it. Live Omarchy theme, the user's own
-   portfolio, anything that needs a credential the device must not hold.
-2. **Untethered with a network** — it fetches public discovery data itself and draws it natively.
-3. **Untethered with nothing** — it says what it is waiting for. An empty screen that means six
-   different things is the failure this project has already shipped once.
+This is a correction, and a fair amount of machinery predates it: a binary protocol that ships
+pixels to the ESP32, an NDJSON surface link to the Cardputer, two systemd units, and a browse mode
+built host-side the very day the ESP32 was made independent. Anything still on the wrong side of
+this line is legacy to be removed rather than a design to extend.
 
-If a feature only works in state 1, say so where it is declared, so the gap is a known one rather
-than something discovered at a venue.
+**The Stream Deck is the one exception, and for a reason that does not generalise.** It has no
+processor to render with — it is a display and a key matrix on USB — so a host is not a choice there,
+it is the only place the pixels can come from.
+
+**What independence costs, stated plainly: these devices can show public data and nothing else.**
+Trending tokens and collections come from a read-only API key, which is the deliberate exception
+`docs/devices-esp32.md` and `standalone.h` both argue for. A *portfolio* needs the PAT, and
+`service/src/keyring.ts` is explicit that a PAT "carries whatever scopes it was created with, which
+can include write scopes". That does not go on a unit handed to a stranger — invariant 5, and
+flint's own "no secrets on the device". So a wallet-scoped reading is something these devices do not
+do, rather than something not built yet, and a feature asking for one is asking to break an
+invariant.
 
 ## When a human is standing at the hardware, ask for an observation, not a theory
 
