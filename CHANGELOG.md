@@ -14,6 +14,50 @@ becomes `## [0.1.0] - YYYY-MM-DD` at the moment the tag is pushed, and not befor
 
 ### Added
 
+**The Cardputer browses what is trending, not just what Ryan owns, with three facets per item.** Two
+new pages — `browse-tokens` and `browse-nfts` — carry `layout: "screen"`, a new optional
+`PageConfig` field that tells `Panel.build` to fill a device's screen slot and blank its keys rather
+than filling both. `capabilitiesFor` in `adapters/cardputer.ts` declares that slot over the same
+240×105 body the nine tiles cover, derived from the tile size so the two cannot disagree. Arrow keys
+move the list selection, Enter opens the selected token or collection, Tab steps Overview → Holders
+→ Activity and wraps, and Esc backs out — all of it on the `press`/`swipe` inputs and the
+`list`/`detail` surfaces that already existed, so `types.ts` is untouched and no keystroke can reach
+a verb it could not reach before. The rows come from `state/discovery.ts` through `PanelState`, the
+one path the ESP32's ambient `tokens`/`nfts` pages already use, and a facet refuses to draw holders
+or activity whose id is not the open item's: a holder list under the wrong token's name is the
+failure this project rates above every other.
+
+**The Cardputer draws `list` and `detail` itself, in flint's own primitives.** The firmware
+(`devices/firmware/cardputer/app/src/anchor.cpp`) accepted `tile` and `bar` and left everything else
+blank; it now accepts the slot id `screen:0` as well as `strip:0` and `key:0..8`, and paints rows
+with a label, an optional reading and an optional icon, the selected row marked in the accent, and
+the `empty` string when there are none. More rows than the 240×105 body holds are windowed around
+`selected`, the way `views/setup.cpp` windows a network list, so the row the arrow keys are moving
+is always on the glass; the strip under the rows counts against the total the host sent rather than
+the twelve the device keeps, because "4 of 12" on a list of 23 is exactly the plausible-but-wrong
+number this project rates worst. A `detail` gets its title, its labelled lines, a badge drawn as the
+same warning pill the Stream Deck draws, and a footer wrapped over as many rows as the sentence
+needs rather than truncated — that is the line that says approving happens somewhere else. Every
+string is trimmed to its box and every surface is clipped to the rect the host gave it, and the body
+is painted as nine tiles or as one screen and never both: whichever half a frame paints, the other
+is dropped rather than left underneath. Still no pixel transport on that cable.
+
+**WiFi is typed on the unit, not baked in before it leaves the desk, on both portable devices.** The
+Cardputer already had this built into flint (`views/setup.cpp`: scan, pick, type a passphrase on the
+keyboard, save to NVS) but the Anchor profile never registered the view; it now ships alongside
+Anchor, Maze and Calm. The ESP32 pulse display had no keyboard to do the same with, so
+`devices/firmware/esp32/app/wifi_setup.{h,cpp}` adds one: a touch-drawn network list and an on-screen
+keyboard, entered automatically when nothing is saved and no host is on the cable, or by tapping the
+top-left corner five times within three seconds. This is a deliberate, reasoned exception to
+`docs/devices-esp32.md`'s "the host renders, the device blits" rule — see that doc for the trade-off
+and why it stops at WiFi rather than becoming a general renderer.
+
+**A tap gets a flash, not just a moved selection ring.** `PRESS_FLASH_MS` (400ms) in `panel.ts` marks
+the tapped grid cell as `pressed` for a short window after a touch lands, and `svg.ts`'s
+`pressedFlash` washes the whole cell in the accent colour for exactly that long — the one feedback a
+device with no key travel has for "you hit this," which the steady selection ring alone read as too
+subtle to notice.
+
 **A page of keys is a grid of tappable tiles on a screen device, not a list of thin rows.** The
 `grid` surface carries the page's keys as cells — a label, a reading, an icon, a tone and whether
 the thing it controls is currently on — and `svg.ts` divides the panel into whole columns of at
@@ -474,6 +518,16 @@ assuming it, so a machine without one shows the command exactly as before.
   gap, and what to delete when each is fixed.
 
 ### Changed
+- **The ESP32 pulse display's systemd service opens on `portfolio` instead of `desktop`.** `desktop`
+  is a page of desktop controls a touch-only ambient display can't do much with; `panel.json` itself
+  is unchanged, so the Stream Deck and Cardputer still default to `desktop`. `--page portfolio` on
+  the service unit's `ExecStart`, per `docs/devices-esp32.md`'s own list of things worth doing next.
+- **`~/Arduino/libraries/AnchorPulse` pointed at a stale worktree, not this checkout.** Every ESP32
+  compile was silently building `anchor_pulse.h`/`.c` — the file `app.ino` calls "everything with
+  judgement in it" — from a merged-and-abandoned agent worktree rather than the real source tree.
+  The two happened to agree at the time this was found, which is the only reason it never produced a
+  visibly wrong build; it is exactly the class of problem AGENTS.md's "check the instrument, not just
+  the reading" warns about. Repointed at `devices/firmware/esp32`, and the merged worktrees removed.
 - **Every size a device surface draws now follows the slot it is drawn in.** The radius, insets,
   gaps, meter, sparkline and font sizes in `devices/src/svg.ts` were tuned on a 120×120 Stream Deck
   key and inherited unchanged by an 80×35 Cardputer tile and an 18px status bar. What that produced,
