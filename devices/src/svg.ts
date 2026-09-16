@@ -179,6 +179,19 @@ function donut(
 const MIN_LEGIBLE_PX = 7;
 
 /**
+ * How far a `detail` readout may grow to fill a panel taller than its content, and how far its rows
+ * may drift apart once it has.
+ *
+ * Both are ceilings on the same instinct — use the glass — and both exist because that instinct is
+ * wrong past a point. Type that doubles stops being a list of readings and becomes a headline with
+ * an accident beneath it; rows that drift far enough apart stop reading as one block and become
+ * unrelated lines that happen to share a screen. 1.6x and half a line of extra leading keep a
+ * portfolio on a 368x448 panel filling its height while still reading as one readout.
+ */
+const DETAIL_MAX_GROWTH = 1.6;
+const DETAIL_MAX_SLACK = 0.5;
+
+/**
  * A tile's corner radius, from its own short side.
  *
  * Fixed at 14 this was right for a 120px key and turned an 80x35 Cardputer tile into a lozenge — a
@@ -833,7 +846,8 @@ function renderGrid(surface: Extract<Surface, { kind: "grid" }>, tokens: Tokens,
       cellSlot,
     );
     const ring = index === surface.selected ? selectionRing(tokens, cell, metrics) : "";
-    parts.push(`<g transform="translate(${x},${y})">${tile}${ring}</g>`);
+    const flash = index === surface.pressed ? pressedFlash(tokens, metrics) : "";
+    parts.push(`<g transform="translate(${x},${y})">${tile}${ring}${flash}</g>`);
   });
 
   return parts.join("");
@@ -862,6 +876,21 @@ function selectionRing(
     `height="${metrics.cellHeight - inset * 2 - width}" ` +
     `rx="${tileRadius(metrics.cellWidth, metrics.cellHeight)}" fill="none" stroke="${color}" ` +
     `stroke-width="${width}"/>`
+  );
+}
+
+/**
+ * The one thing a tap gets that a lingering selection does not: a wash across the whole cell,
+ * gone again within `PRESS_FLASH_MS`. `selectionRing` deliberately never fills, because a fill is
+ * already spent on `emphasis`; this can, because it is never on screen long enough to be confused
+ * with either — a flash reads as "that just happened", not as a persistent state of the tile.
+ */
+function pressedFlash(tokens: Tokens, metrics: GridMetrics): string {
+  const inset = tileInset(metrics.cellWidth, metrics.cellHeight);
+  return (
+    `<rect x="${inset}" y="${inset}" width="${metrics.cellWidth - inset * 2}" ` +
+    `height="${metrics.cellHeight - inset * 2}" rx="${tileRadius(metrics.cellWidth, metrics.cellHeight)}" ` +
+    `fill="${tokens.accent}" fill-opacity="0.32"/>`
   );
 }
 
@@ -909,7 +938,7 @@ function renderDetail(surface: Extract<Surface, { kind: "detail" }>, tokens: Tok
   const short = Math.min(w, h);
   const pad = Math.round(short * 0.06);
   const titleSize = Math.max(MIN_LEGIBLE_PX, Math.round(short * 0.09));
-  const lineSize = Math.max(MIN_LEGIBLE_PX, Math.round(short * 0.062));
+  let lineSize = Math.max(MIN_LEGIBLE_PX, Math.round(short * 0.062));
   const footerSize = Math.max(MIN_LEGIBLE_PX, Math.round(short * 0.05));
   const inner = w - pad * 2;
   const parts: string[] = [];
@@ -919,12 +948,46 @@ function renderDetail(surface: Extract<Surface, { kind: "detail" }>, tokens: Tok
       `<image href="${surface.artwork}" x="0" y="0" width="${w}" height="${h}" ` +
         `preserveAspectRatio="xMidYMid slice"/>`,
     );
-    // A flat scrim, not measured per-theme the way `contrast.test.ts` holds every other mark to —
-    // there is no fixed contrast ratio against a photo whose content is not known until it arrives.
-    // This is the honest limit of that guarantee, not a gap in applying it: strong enough that ink
-    // tuned for `ground` reads on top of most art, on a panel whose whole point is showing the art
-    // underneath it.
-    parts.push(`<rect width="${w}" height="${h}" fill="${tokens.ground}" opacity="0.62"/>`);
+    /*
+     * A scrim where the words are, rather than over the whole piece.
+     *
+     * This was one flat rectangle at 62% ground across the entire panel, for a defensible reason:
+     * there is no fixed contrast ratio against a photograph whose content is not known until it
+     * arrives, so `contrast.test.ts`'s per-theme guarantee cannot reach here and a heavy wash was
+     * the safe answer. What that costs is the page. Seen on the glass with a real wallet behind it,
+     * a piece came out as a flat mauve field with a faint shape in it — the gallery page rendering
+     * everything except the thing it exists to show.
+     *
+     * So the scrim follows the text instead of covering the art: a band under the title, which fades
+     * out well before the middle, and the footer's own `sunken` bar, which was always drawn and is
+     * unchanged. Between them every glyph on this surface still sits on a known ground, while the
+     * centre of the piece — the part with no text over it at all — is left alone.
+     *
+     * The band is deliberately taller than the title and ends in full transparency, because a hard
+     * edge across a photograph reads as a rendering fault. The light wash that remains over the
+     * whole panel is what keeps a white-on-white piece from swallowing a mark that strays outside
+     * the band; at 0.18 it darkens the art without flattening it.
+     */
+    /*
+     * The band holds its ground until the text has finished, and only then fades.
+     *
+     * The first version fell to 55% by the middle of its own height, which put the `Collection`
+     * label — `inkDim`, the quietest ink there is — over a mostly-transparent scrim on a pale piece,
+     * dark on light and effectively gone. A scrim that fades *through* the text it exists for is no
+     * scrim at all. So it stays near-opaque past the last row a `detail` can place up here, and
+     * spends its whole fade below that, where there is nothing to read.
+     */
+    const bandH = Math.round(h * 0.42);
+    parts.push(
+      `<defs><linearGradient id="${escapeXml(slot.id)}scrim" x1="0" y1="0" x2="0" y2="1">` +
+        `<stop offset="0" stop-color="${tokens.ground}" stop-opacity="0.94"/>` +
+        `<stop offset="0.5" stop-color="${tokens.ground}" stop-opacity="0.88"/>` +
+        `<stop offset="0.72" stop-color="${tokens.ground}" stop-opacity="0.5"/>` +
+        `<stop offset="1" stop-color="${tokens.ground}" stop-opacity="0"/>` +
+        `</linearGradient></defs>`,
+    );
+    parts.push(`<rect width="${w}" height="${h}" fill="${tokens.ground}" opacity="0.18"/>`);
+    parts.push(`<rect width="${w}" height="${bandH}" fill="url(#${escapeXml(slot.id)}scrim)"/>`);
   } else {
     parts.push(`<rect width="${w}" height="${h}" fill="${tokens.ground}"/>`);
   }
@@ -988,17 +1051,63 @@ function renderDetail(surface: Extract<Surface, { kind: "detail" }>, tokens: Tok
       `${escapeXml(fit(surface.title, titleSize, titleRoom))}</text>`,
   );
 
+  /*
+   * The readings fill the panel they are given, rather than clustering under the title.
+   *
+   * Every size here comes from the panel's *short* side, which is right for the marks themselves and
+   * says nothing about how much room there is below them. On a tall portrait panel that left a
+   * readout stranded at the top: on the 368x448 pulse display the four portfolio lines ended around
+   * y=188 with the footer at 420, so more than half the glass was empty and a device working
+   * perfectly was reported as showing "a little sliver of info at top and bottom". It was not a
+   * fault; it was this arithmetic, seen on hardware for the first time.
+   *
+   * So the block is grown to fit the band between the title and the footer, bounded by two things
+   * that matter more than filling the space:
+   *
+   *   - **No reading may truncate to do it.** A value is the thing this device exists to show, and
+   *     "$26,444,366" cut to "$26,444…" to win vertical space is a worse panel, not a fuller one.
+   *     The growth stops at whatever the widest label-plus-value pair can take.
+   *   - **A cap**, because type that grows without limit stops reading as a list of readings and
+   *     starts reading as a headline with an accident under it.
+   *
+   * A panel with no surplus — the Cardputer's 240x105 screen slot, a round 240x240 — computes a
+   * scale of 1 and is untouched, which is why this is a growth rule rather than a new layout.
+   */
+  const gap = Math.round(pad * 0.8);
+  const naturalStep = lineSize * 1.6;
+  const firstY = pad + titleSize * 1.7;
+  const band = footerTop - lineSize * 0.5 - firstY;
+  const count = surface.lines.length;
+  const naturalBlock = count === 0 ? 0 : (count - 1) * naturalStep + lineSize;
+  let scale = 1;
+  if (count > 0 && naturalBlock > 0 && band > naturalBlock) {
+    const widest = Math.max(
+      ...surface.lines.map((line) => advance(line.label, lineSize) + gap + advance(line.value, lineSize)),
+      1,
+    );
+    scale = Math.min(band / naturalBlock, inner / widest, DETAIL_MAX_GROWTH);
+    if (scale < 1) scale = 1;
+  }
+  lineSize = Math.max(MIN_LEGIBLE_PX, Math.round(lineSize * scale));
+
   // The label column takes what it needs up to 45%, the value column the rest. They used to be
   // given 45% and 50% of the *whole* panel independently, which is 95% plus two paddings — so both
   // sides truncated at once and neither had a reason to.
-  const gap = Math.round(pad * 0.8);
   const labelRoom = Math.min(
     Math.round(inner * 0.45),
     Math.max(...surface.lines.map((line) => advance(line.label, lineSize)), 0),
   );
   const valueRoom = inner - labelRoom - gap;
 
-  let y = pad + titleSize * 1.7;
+  /*
+   * Whatever the cap left over is spread between the rows rather than added after the last one, so
+   * the block is distributed down the band instead of sitting at the top of it with a gap beneath.
+   */
+  const grownBlock = count === 0 ? 0 : (count - 1) * lineSize * 1.6 + lineSize;
+  const slack = count > 1 && band > grownBlock ? (band - grownBlock) / (count - 1) : 0;
+  const step = lineSize * 1.6 + Math.min(slack, lineSize * DETAIL_MAX_SLACK);
+
+  let y = firstY;
   for (const line of surface.lines) {
     if (y + lineSize > footerTop - lineSize * 0.5) break;
     parts.push(
@@ -1010,7 +1119,7 @@ function renderDetail(surface: Extract<Surface, { kind: "detail" }>, tokens: Tok
         `fill="${line.tone === undefined ? tokens.ink : tokens[line.tone]}" text-anchor="end" ` +
         `dominant-baseline="central">${escapeXml(fit(line.value, lineSize, valueRoom))}</text>`,
     );
-    y += lineSize * 1.6;
+    y += step;
   }
   return parts.join("");
 }

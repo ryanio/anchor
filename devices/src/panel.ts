@@ -12,16 +12,24 @@ import type { KeyConfig, PageConfig, PanelConfig } from "./config.ts";
 import { cachedThumbnail, thumbnail } from "./images.ts";
 import type { ServiceStatus } from "./state/anchor.ts";
 import { describeAge, type PortfolioSnapshot, TIMEFRAMES, type Timeframe } from "./state/anchor.ts";
-import type { TrendingCollection, TrendingToken } from "./state/discovery.ts";
 import type { DesktopSnapshot } from "./state/desktop.ts";
-import type { Tokens } from "./tokens.ts";
+import type {
+  CollectionHolder,
+  TokenActivityEvent,
+  TokenHolders,
+  TrendingCollection,
+  TrendingToken,
+} from "./state/discovery.ts";
 import { gridCellAt } from "./svg.ts";
+import type { Tokens } from "./tokens.ts";
 import type {
   AnchorDevice,
   BarSegment,
+  DetailLine,
   DeviceInput,
   Frame,
   GridCell,
+  ListRow,
   SlotSpec,
   Surface,
   TokenName,
@@ -55,6 +63,26 @@ export interface PanelState {
   /** What's moving, not what's owned — the `tokens`/`nfts` pages' data. See `state/discovery.ts`. */
   readonly discoveryTokens?: readonly TrendingToken[];
   readonly discoveryCollections?: readonly TrendingCollection[];
+  /**
+   * The depth behind one browsed item: its holders, and for a token its buy/sell feed.
+   *
+   * Carries the `id` it was fetched for — the token address or the collection slug — and the panel
+   * paints nothing at all unless that id matches the item currently open. A list of holders under
+   * the wrong token's name is the failure AGENTS.md calls this project's worst: a plausible answer
+   * to a question nobody asked. The runner fetches one item at a time (the one the person opened),
+   * so the id is a single field rather than a map; a second in flight simply replaces it, and the
+   * facet shows "loading…" until the one on screen is the one that came back.
+   *
+   * Arrives the same way `discoveryTokens` does — `state/discovery.ts`, through the runner — rather
+   * than being fetched in here, for the reason at the top of `nowMs`: `build` is a function of what
+   * it is handed and nothing else.
+   */
+  readonly discoveryDetail?: {
+    readonly id: string;
+    readonly tokenHolders?: TokenHolders;
+    readonly tokenActivity?: readonly TokenActivityEvent[];
+    readonly collectionHolders?: readonly CollectionHolder[];
+  };
 }
 
 /** What a data-backed key shows: a reading, an optional caption, and a tone. */
@@ -342,6 +370,73 @@ export const SEGMENT_MIN_CHARS: Readonly<Record<string, number>> = {
 export const ROTATING_PAGES: ReadonlySet<string> = new Set(["portfolio", "gallery", "tokens", "nfts"]);
 
 /**
+ * The pages that are a browse mode rather than a page of keys, and what they browse.
+ *
+ * Read exactly the way `ROTATING_PAGES` is, and for the same reason: `build` and `handle` both have
+ * to agree about which pages have a list behind them, and two copies of a page name is how they
+ * stop agreeing. A page carrying `layout: "screen"` that is not named here falls back to the grid,
+ * which is visible on the first look rather than silently inert.
+ *
+ * These are separate pages from `tokens`/`nfts` on purpose. Those two are the ESP32's ambient
+ * rotation — one item at a time, on the wall clock, no input at all — and the same page cannot be
+ * both that and a list someone scrolls: the rotation would move the item out from under the
+ * selection.
+ */
+export const BROWSE_PAGES: ReadonlyMap<string, "token" | "nft"> = new Map([
+  ["browse-tokens", "token"],
+  ["browse-nfts", "nft"],
+]);
+
+/**
+ * The three views of one browsed item, in the order Tab steps through them.
+ *
+ * Facets rather than new `Surface` kinds: Overview is a `detail` and the other two are `list`s,
+ * which is the whole reason this needed no change to `types.ts`. The order is the order of
+ * decreasing certainty — what the thing is, then who holds it, then what just happened to it.
+ */
+export const BROWSE_FACETS = ["Overview", "Holders", "Activity"] as const;
+
+/** `0xabcd…1234`: a 42-character address on a 240px screen is a smear, and its ends are what differ. */
+function shortAddress(address: string): string {
+  return address.length <= 13 ? address : `${address.slice(0, 6)}…${address.slice(-4)}`;
+}
+
+/** A count, grouped, or an em dash. Never a zero standing in for "not loaded" — see `SEGMENT_SOURCES`. */
+function count(value: number | null): string {
+  return value === null ? "—" : value.toLocaleString("en-US");
+}
+
+/** Signed percentage from a number the discovery API already parsed, e.g. "+4.10%". */
+function changePercent(value: number | null): string {
+  return value === null ? "—" : `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
+}
+
+function changeTone(value: number | null): TokenName | undefined {
+  if (value === null || value === 0) return undefined;
+  return value > 0 ? "positive" : "negative";
+}
+
+/**
+ * What a trending token is, as labelled lines.
+ *
+ * One function because two surfaces show it: the ESP32's ambient rotation (`pulseDetail`) and the
+ * Cardputer's Overview facet. They are the same four readings about the same object, and a second
+ * copy is how one of them quietly starts reporting a different volume from the other.
+ */
+function tokenOverviewLines(item: TrendingToken): DetailLine[] {
+  return [
+    { label: "Price", value: item.usdPrice === null ? "—" : usd(String(item.usdPrice)) },
+    {
+      label: "24h",
+      value: changePercent(item.priceChange24h),
+      tone: changeTone(item.priceChange24h),
+    },
+    { label: "Volume", value: item.volume24h === null ? "—" : usd(String(item.volume24h)) },
+    { label: "Chain", value: item.chain },
+  ];
+}
+
+/**
  * How long a tapped item stays put before the wall clock takes the page back.
  *
  * Reasoned, not measured — there is no hardware emitting taps yet, so this is a judgement about
@@ -356,6 +451,13 @@ export const ROTATING_PAGES: ReadonlySet<string> = new Set(["portfolio", "galler
  * quarter of a minute — a hold that outlives the interest in it is just a broken rotation.
  */
 export const TAP_HOLD_MS = 10_000;
+
+/**
+ * How long a tapped grid cell reads as "just pressed" before settling back to an ordinary
+ * selection ring. Short and deliberate: this is a flash, not a highlight, on a device whose only
+ * other feedback for a touch is the repaint that follows it — see `svg.ts`'s `pressedFlash`.
+ */
+export const PRESS_FLASH_MS = 400;
 
 export class Panel {
   readonly #config: PanelConfig;
@@ -411,6 +513,38 @@ export class Panel {
    * which is the state every untouched unit at a desk is in and the reason they agree.
    */
   #tapPin: { readonly index: number; readonly until: number } | null = null;
+  /**
+   * A grid tap taken but not yet turned into a flash window, for the same reason `#tapAdvances`
+   * exists: `handle` has no clock, only the next `build` does.
+   */
+  #pendingPress: number | null = null;
+  /** The grid cell a tap just landed on, and until when it still reads as pressed rather than
+   * merely selected. See `PRESS_FLASH_MS`. */
+  #pressedCell: { readonly index: number; readonly until: number } | null = null;
+  /**
+   * The browsed item that is open, and which of `BROWSE_FACETS` it is showing. Null is the list.
+   *
+   * The id — a token address or a collection slug — rather than a list position, for the same
+   * reason `#tapPin` holds a rotation index: the list underneath is refetched on the service poll
+   * and can come back in a different order, and a position would then have the page quietly showing
+   * a different token than the one that was opened. An id cannot drift.
+   */
+  #browseDetail: { readonly kind: "token" | "nft"; readonly id: string; readonly facet: number } | null =
+    null;
+  /**
+   * The ids behind the browse list's rows, as of the last frame.
+   *
+   * Recorded during `build` for exactly the reason `#grid` is: an input arrives later with nothing
+   * attached to it, and `handle` has no `PanelState` to look a row up in. The page name travels
+   * with it so an Enter landing between a page change and the repaint that follows opens nothing,
+   * rather than opening the row the last page had under that index — and the ids are the *filtered*
+   * ids for the same reason `#grid` holds the filtered keys.
+   */
+  #browseRows: {
+    readonly page: string;
+    readonly kind: "token" | "nft";
+    readonly ids: readonly string[];
+  } | null = null;
 
   constructor(config: PanelConfig, tokens: Tokens) {
     const first = config.pages[0];
@@ -462,6 +596,18 @@ export class Panel {
 
   get selected(): number {
     return this.#selected;
+  }
+
+  /**
+   * The item the browse mode has open, or null for the list.
+   *
+   * Exposed because the runner has to know what to fetch: the holders and the buy/sell feed behind
+   * an item are one request each and they are only worth making for the item someone is actually
+   * looking at. Read-only — the state machine is `handle`'s, and a caller that could set this could
+   * open a detail nobody asked for.
+   */
+  get browseDetail(): { readonly kind: "token" | "nft"; readonly id: string; readonly facet: number } | null {
+    return this.#browseDetail;
   }
 
   /**
@@ -608,8 +754,15 @@ export class Panel {
         title: "Portfolio",
         lines: [
           { label: "Total", value: usd(stats?.totalUsd ?? null) },
-          { label: "P&L", value: percent(stats?.pnlPercentage ?? null), tone: signTone(stats?.pnlPercentage ?? null) },
-          { label: "NFTs", value: state.portfolio?.nftCount === null ? "—" : `${state.portfolio?.nftCount ?? "—"}` },
+          {
+            label: "P&L",
+            value: percent(stats?.pnlPercentage ?? null),
+            tone: signTone(stats?.pnlPercentage ?? null),
+          },
+          {
+            label: "NFTs",
+            value: state.portfolio?.nftCount === null ? "—" : `${state.portfolio?.nftCount ?? "—"}`,
+          },
           { label: "Window", value: (state.timeframe ?? "DAY").toLowerCase() },
         ],
         footer: age,
@@ -649,21 +802,10 @@ export class Panel {
       if (item === undefined) {
         return { kind: "detail", title: "Trending Tokens", lines: [], footer: "loading…" };
       }
-      const change = item.priceChange24h;
-      const changeStr = change === null ? "—" : `${change >= 0 ? "+" : ""}${change.toFixed(2)}%`;
       return {
         kind: "detail",
         title: `${item.name || item.symbol} (${item.symbol})`,
-        lines: [
-          { label: "Price", value: item.usdPrice === null ? "—" : usd(String(item.usdPrice)) },
-          {
-            label: "24h",
-            value: changeStr,
-            tone: change === null || change === 0 ? undefined : change > 0 ? "positive" : "negative",
-          },
-          { label: "Volume", value: item.volume24h === null ? "—" : usd(String(item.volume24h)) },
-          { label: "Chain", value: item.chain },
-        ],
+        lines: tokenOverviewLines(item),
         footer: `${list.length} trending`,
         artwork: this.#pulseArt(item.imageUrl),
         syncProgress: list.length > 1 ? state.rotationProgress : undefined,
@@ -689,6 +831,176 @@ export class Panel {
     return null;
   }
 
+  /**
+   * The browse pages, as the one surface a `layout: "screen"` page gets.
+   *
+   * Returns `null` for a page `BROWSE_PAGES` does not name, which tells `build` to fall back to the
+   * grid — the same contract `pulseDetail` has with it, so a screen-layout page that was never
+   * wired up renders as its keys rather than as nothing.
+   *
+   * Two things this deliberately does not do. It does not fetch: the trending list and the depth
+   * behind one item both arrive through `PanelState`, from `state/discovery.ts`, exactly as the
+   * ESP32's `tokens`/`nfts` pages already get theirs — one data path, not two. And it sets no
+   * `artwork`: the Cardputer's surfaces travel as JSON down a 64-byte-chunked serial link (see
+   * `openSerial`), where a 1.4KB frame was already the measured limit of what lands reliably, and a
+   * base64 thumbnail is two orders of magnitude past that. The ESP32 can afford one; this device
+   * cannot, and a frame that never arrives is a blank screen rather than a prettier one.
+   */
+  #browseSurface(state: PanelState): Surface | null {
+    const kind = BROWSE_PAGES.get(this.#pageName);
+    if (kind === undefined) {
+      this.#browseRows = null;
+      return null;
+    }
+
+    const needle = this.#filter.trim().toLowerCase();
+    const matches = (...fields: string[]): boolean =>
+      needle === "" || fields.some((field) => field.toLowerCase().includes(needle));
+    const tokens = (state.discoveryTokens ?? []).filter((item) => matches(item.name, item.symbol));
+    const collections = (state.discoveryCollections ?? []).filter((item) => matches(item.name, item.slug));
+
+    const rows: ListRow[] =
+      kind === "token"
+        ? tokens.map((item) => ({
+            label: item.symbol || item.name,
+            value: item.usdPrice === null ? "—" : usd(String(item.usdPrice)),
+            tone: changeTone(item.priceChange24h),
+          }))
+        : collections.map((item) => ({ label: item.name || item.slug }));
+    const ids = kind === "token" ? tokens.map((item) => item.address) : collections.map((item) => item.slug);
+
+    this.#browseRows = { page: this.#pageName, kind, ids };
+    this.#selected = rows.length === 0 ? 0 : Math.min(this.#selected, rows.length - 1);
+
+    const open = this.#browseDetail;
+    if (open === null) {
+      return {
+        kind: "list",
+        rows,
+        selected: rows.length === 0 ? undefined : this.#selected,
+        // A trending list is never empty because nobody owns anything — it is empty because the
+        // fetch has not landed, or because a filter narrowed it to nothing. Saying which is the
+        // difference between a device that is working and a device that looks broken.
+        empty: this.#filter === "" ? "loading…" : `nothing matches "${this.#filter}"`,
+      };
+    }
+    return open.kind === "token" ? this.#tokenFacet(open, state) : this.#collectionFacet(open, state);
+  }
+
+  /**
+   * The depth fetched for the open item, or undefined.
+   *
+   * The id check is the whole point: `discoveryDetail` is one item's worth of holders and activity,
+   * and between opening a second item and its fetch landing it still holds the *first* item's. Rows
+   * shown under the wrong name would be indistinguishable from rows that are simply wrong, which is
+   * the failure mode AGENTS.md puts above every other one here.
+   */
+  #browseDepth(open: { readonly id: string }, state: PanelState): PanelState["discoveryDetail"] {
+    return state.discoveryDetail?.id === open.id ? state.discoveryDetail : undefined;
+  }
+
+  /** A facet's first row: which facet this is, and how much of it there is. */
+  #facetHeader(facet: number, subject: string, value: string): ListRow {
+    return { label: `${BROWSE_FACETS[facet] ?? ""} · ${subject}`, value, tone: "accent" };
+  }
+
+  #tokenFacet(open: { readonly id: string; readonly facet: number }, state: PanelState): Surface {
+    const item = (state.discoveryTokens ?? []).find((entry) => entry.address === open.id);
+    const subject = item?.symbol || shortAddress(open.id);
+    const depth = this.#browseDepth(open, state);
+
+    if (open.facet === 1) {
+      const holders = depth?.tokenHolders;
+      const rows: ListRow[] = [this.#facetHeader(open.facet, subject, count(holders?.totalCount ?? null))];
+      if (holders !== undefined && holders.healthLabel !== null) {
+        rows.push({ label: "Distribution", value: holders.healthLabel, tone: "inkDim" });
+      }
+      for (const [index, holder] of (holders?.holders ?? []).entries()) {
+        rows.push({
+          label: `${index + 1}. ${holder.ownerDisplayName ?? shortAddress(holder.ownerAddress)}`,
+          value: holder.percentageHeld === null ? "—" : `${holder.percentageHeld.toFixed(2)}%`,
+        });
+      }
+      if ((holders?.holders.length ?? 0) === 0) rows.push({ label: "loading…", tone: "inkDim" });
+      return { kind: "list", rows };
+    }
+
+    if (open.facet === 2) {
+      const events = depth?.tokenActivity ?? [];
+      const rows: ListRow[] = [this.#facetHeader(open.facet, subject, String(events.length))];
+      for (const event of events) {
+        rows.push({
+          // Which way the swap went, in the API's own words: neither side carries a symbol in every
+          // response (`readTokenActivity` says so), so an address is the honest fallback.
+          label: `${shortAddress(event.fromSymbolOrAddress)} → ${shortAddress(event.toSymbolOrAddress)}`,
+          value: event.amountUsd === null ? "—" : usd(String(event.amountUsd)),
+        });
+      }
+      if (events.length === 0) rows.push({ label: "loading…", tone: "inkDim" });
+      return { kind: "list", rows };
+    }
+
+    if (item === undefined) {
+      return {
+        kind: "detail",
+        title: shortAddress(open.id),
+        lines: [],
+        badge: BROWSE_FACETS[0],
+        footer: "loading…",
+      };
+    }
+    return {
+      kind: "detail",
+      title: `${item.name || item.symbol} (${item.symbol})`,
+      lines: tokenOverviewLines(item),
+      badge: BROWSE_FACETS[0],
+      // The keys this device actually has, on the surface they act on. A Cardputer handed to
+      // someone at a desk comes with no manual, and "tab" is not a gesture anyone guesses.
+      footer: "tab: Holders · esc: back",
+    };
+  }
+
+  #collectionFacet(open: { readonly id: string; readonly facet: number }, state: PanelState): Surface {
+    const item = (state.discoveryCollections ?? []).find((entry) => entry.slug === open.id);
+    const subject = item?.name || open.id;
+    const depth = this.#browseDepth(open, state);
+
+    if (open.facet === 1) {
+      const holders = depth?.collectionHolders ?? [];
+      const rows: ListRow[] = [this.#facetHeader(open.facet, subject, String(holders.length))];
+      for (const [index, holder] of holders.entries()) {
+        rows.push({
+          label: `${index + 1}. ${shortAddress(holder.address)}`,
+          value: holder.quantity === null ? "—" : count(holder.quantity),
+        });
+      }
+      if (holders.length === 0) rows.push({ label: "loading…", tone: "inkDim" });
+      return { kind: "list", rows };
+    }
+
+    if (open.facet === 2) {
+      // Symmetry with the token side stops one step short of being a lie: `state/discovery.ts`
+      // parses a collection's holders and deliberately not its listings or offers, on the grounds
+      // that a shape is parsed when a consumer needs specific fields from it. So this facet says
+      // what it has rather than showing an empty list that looks like a failed fetch.
+      return {
+        kind: "list",
+        rows: [
+          this.#facetHeader(open.facet, subject, "—"),
+          { label: "no activity feed for a collection yet", tone: "inkDim" },
+        ],
+      };
+    }
+
+    return {
+      kind: "detail",
+      title: subject,
+      lines: item === undefined ? [] : [{ label: "Collection", value: item.slug }],
+      badge: BROWSE_FACETS[0],
+      footer: item === undefined ? "loading…" : "tab: Holders · esc: back",
+    };
+  }
+
   get page(): PageConfig {
     const found = this.#config.pages.find((p) => p.name === this.#pageName) ?? this.#config.pages[0];
     if (found === undefined) throw new Error("a panel needs at least one page");
@@ -707,7 +1019,24 @@ export class Panel {
     // freezes a page the person has only just arrived at — a swipe that appears not to have worked.
     this.#tapPin = null;
     this.#tapAdvances = 0;
+    // An open browse detail belongs to the page it was opened on, for the same reason a pin does.
+    // Carried across it would have the next browse page arrived at already showing a token nobody
+    // chose there — and, worse, one whose holders were fetched for the other page's list.
+    this.#browseDetail = null;
+    this.#browseRows = null;
     return true;
+  }
+
+  /**
+   * Move the list selection one step.
+   *
+   * The upper bound is `build`'s: only it knows how many rows survived a filter, and it already
+   * clamps `#selected` against them. Shared by the encoder path (`rotate`) and the keyboard one
+   * (an up/down `swipe` on the screen), so the two cannot end up with different ideas of what a
+   * step is.
+   */
+  #moveSelection(delta: number): void {
+    this.#selected = Math.max(0, this.#selected + (delta > 0 ? 1 : -1));
   }
 
   /** Build the frame for a device, filling only the slots that device actually has. */
@@ -720,6 +1049,10 @@ export class Panel {
     // keys show eight keys regardless. Sliced once here so every consumer agrees on the same pool,
     // the same way a filter narrows what `rows` sees. And a tap steers the rotation index itself
     // (`#steerRotation`), which is why nothing below this line knows that taps exist.
+    if (this.#pendingPress !== null) {
+      this.#pressedCell = { index: this.#pendingPress, until: (rawState.nowMs ?? 0) + PRESS_FLASH_MS };
+      this.#pendingPress = null;
+    }
     const steered = this.#steerRotation(rawState);
     const state: PanelState = {
       ...rawState,
@@ -733,6 +1066,13 @@ export class Panel {
     const frame = new Map<string, Surface>();
     const page = this.page;
     const slots = new Set(device.capabilities.slots.filter((slot) => slot.paintable).map((slot) => slot.id));
+    // Which half of the device this page is for. Until the Cardputer grew a screen slot no device
+    // had both, and the question answered itself; now one does, so the page answers it. A
+    // screen-layout page still *blanks* the keys below (the loop right after this): skipping them
+    // entirely would leave the adapter's paint cache believing the old tiles are still on the glass
+    // under the surface that covered them, and the page after this one would repaint nothing.
+    const screenLayout = page.layout === "screen";
+    const hasKeys = device.capabilities.slots.some((slot) => slot.kind === "key" && slot.paintable);
 
     // Blank every paintable key first, so a page with fewer keys than the device clears the rest
     // rather than leaving the previous page's faces behind.
@@ -741,6 +1081,7 @@ export class Panel {
     }
 
     for (const key of page.keys) {
+      if (screenLayout) break;
       const id = keySlot(key.index);
       if (!slots.has(id)) continue;
       const active = actions.resolveActive(key.state, state.desktop, this.#pageName);
@@ -765,6 +1106,7 @@ export class Panel {
     // A dial's readout occupies the key above it where the device pairs them; on the Stream Deck +
     // the encoders have no display of their own, so the strip carries their labels instead.
     for (const dial of page.dials) {
+      if (screenLayout) break;
       const id = dialSlot(dial.index);
       if (!slots.has(id)) continue;
       frame.set(id, {
@@ -789,6 +1131,23 @@ export class Panel {
     // thumb actually is. `svg.ts` owns that arithmetic, per rule 1 in `types.ts`.
     for (const slot of device.capabilities.slots) {
       if (!slot.paintable || slot.kind !== "screen") continue;
+      if (screenLayout) {
+        const browse = this.#browseSurface(state);
+        if (browse !== null) {
+          // No grid on the glass, so no tap has a cell to land on — the same reason the rotating
+          // pages forget theirs below.
+          this.#grid = null;
+          frame.set(slot.id, browse);
+          continue;
+        }
+      } else if (hasKeys) {
+        // A device with keys of its own shows an ordinary page on them. Without this the Cardputer
+        // would paint every page twice — nine tiles, and then a surface covering them — which is
+        // the "never both" half of what `layout` is for.
+        this.#browseRows = null;
+        continue;
+      }
+      this.#browseRows = null;
       const pulse = this.pulseDetail(state);
       if (pulse !== null) {
         // No grid on the glass, so no tap has a cell to land on. Forgetting it here is what keeps a
@@ -800,10 +1159,15 @@ export class Panel {
       const cells = this.#keyCells(state);
       this.#selected = cells.length === 0 ? 0 : Math.min(this.#selected, cells.length - 1);
       this.#grid = { slot, page: this.#pageName, keys: cells.map(({ key }) => key) };
+      const pressed =
+        this.#pressedCell !== null && state.nowMs !== undefined && state.nowMs < this.#pressedCell.until
+          ? this.#pressedCell.index
+          : undefined;
       frame.set(slot.id, {
         kind: "grid",
         cells: cells.map(({ cell }) => cell),
         selected: cells.length === 0 ? undefined : this.#selected,
+        pressed,
         empty: this.#filter === "" ? "nothing on this page" : `nothing matches "${this.#filter}"`,
       });
     }
@@ -875,8 +1239,29 @@ export class Panel {
       case "press": {
         this.#pressed.add(input.slot);
         if (input.slot.startsWith("screen:")) {
+          const browse = this.#browseRows;
+          if (browse !== null && browse.page === this.#pageName) {
+            // Enter on a browse page: open the selected row, or back out of the one that is open.
+            // One key for both because the device has one confirm key, and a list that opens on
+            // Enter and closes on anything else is a device you have to be told how to use.
+            if (this.#browseDetail !== null) {
+              this.#browseDetail = null;
+              return true;
+            }
+            const id = browse.ids[this.#selected];
+            if (id === undefined) return false;
+            this.#browseDetail = { kind: browse.kind, id, facet: 0 };
+            return true;
+          }
           // On a screen device the chosen cell is the action, and the panel knows which cell that is.
           this.#chooseCell(this.#selected, context);
+          return true;
+        }
+        // The one press that belongs to no key and no cell. The Cardputer's Esc arrives as this
+        // (see `#handleScreenKey`), and backing out of a detail is the only thing it means — a
+        // device whose Back key also dispatched something would be a device you cannot retreat from.
+        if (input.slot === STRIP_SLOT && this.#browseDetail !== null) {
+          this.#browseDetail = null;
           return true;
         }
         const key = page.keys.find((k) => keySlot(k.index) === input.slot);
@@ -893,7 +1278,7 @@ export class Panel {
         return true;
       case "rotate": {
         if (input.slot.startsWith("screen:")) {
-          this.#selected = Math.max(0, this.#selected + (input.delta > 0 ? 1 : -1));
+          this.#moveSelection(input.delta);
           return true;
         }
         const dial = page.dials.find((d) => dialSlot(d.index) === input.slot);
@@ -931,6 +1316,24 @@ export class Panel {
         return true;
       }
       case "swipe": {
+        // A swipe on the screen itself moves the list selection rather than paging. The Cardputer
+        // has no encoder, so its up/down arrows arrive as this — the contract already had a word
+        // for "the thing on screen moved one step", and inventing an input kind for a device that
+        // has no new *input* would have been a contract change for a keyboard.
+        if (input.slot.startsWith("screen:") && this.#browseRows !== null) {
+          this.#moveSelection(input.to - input.from);
+          return true;
+        }
+        // With a detail open, the panel's existing paging gesture pages the *facets* instead of the
+        // pages: Overview, Holders, Activity, wrapping in both directions. Additive on purpose —
+        // close the detail and the same gesture pages the panel exactly as it always has.
+        const open = this.#browseDetail;
+        if (open !== null) {
+          const step = input.to > input.from ? 1 : -1;
+          const facet = (open.facet + step + BROWSE_FACETS.length) % BROWSE_FACETS.length;
+          this.#browseDetail = { ...open, facet };
+          return true;
+        }
         // Swiping the strip pages the panel, which is the gesture the hardware invites.
         const names = this.#config.pages.map((p) => p.name);
         const index = names.indexOf(this.#pageName);
@@ -980,6 +1383,7 @@ export class Panel {
         const hit = gridCellAt(grid.slot, grid.keys.length, this.#selected, input.x, input.y);
         if (hit === null) return false;
         this.#selected = hit;
+        this.#pendingPress = hit;
         this.#chooseCell(hit, context);
         return true;
       }

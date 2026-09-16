@@ -226,6 +226,12 @@ export type Surface =
       readonly kind: "grid";
       readonly cells: readonly GridCell[];
       readonly selected?: number;
+      /**
+       * The cell a tap landed on, for a brief window after it did — separate from `selected`,
+       * which persists. A device with no key travel has no other way to show "you hit this"; see
+       * `svg.ts`'s `pressedFlash` for the mark and `panel.ts`'s `PRESS_FLASH_MS` for the window.
+       */
+      readonly pressed?: number;
       /** Shown when there are no cells. An empty grid must say why it is empty. */
       readonly empty?: string;
     }

@@ -15,7 +15,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import { parseConfig } from "../config.ts";
-import { keySlot, Panel, STRIP_SLOT } from "../panel.ts";
+import { keySlot, Panel, SCREEN_SLOT, STRIP_SLOT } from "../panel.ts";
 import { EMPTY_SNAPSHOT } from "../state/desktop.ts";
 import { toTokens } from "../tokens.ts";
 import type { DeviceInput, Frame, Surface } from "../types.ts";
@@ -76,8 +76,19 @@ function ops(link: MemoryLink): { id: string; sel?: true }[] {
 }
 
 describe("geometry", () => {
+  /**
+   * The slots a *key* page uses, which is what "tile exactly" is a claim about.
+   *
+   * The screen slot is deliberately on top of the nine tiles — a page fills one or the other, never
+   * both — so it is the one rect that must not be summed with them. Counting it would have made the
+   * area assertion below pass for a device whose grid had a hole in it, which is the opposite of
+   * what it is for.
+   */
+  const gridRects = (geometry: typeof CARDPUTER_V11): { x: number; y: number; w: number; h: number }[] =>
+    [...slotRects(geometry).entries()].filter(([id]) => id !== SCREEN_SLOT).map(([, rect]) => rect);
+
   test("the slots tile the screen exactly, with no overlap and nothing left over", () => {
-    const rects = [...slotRects(CARDPUTER_V11).values()];
+    const rects = gridRects(CARDPUTER_V11);
     const area = rects.reduce((sum, rect) => sum + rect.w * rect.h, 0);
     const { width, height } = tileSize(CARDPUTER_V11);
     assert.equal(width, 80, "240 across three columns");
@@ -93,12 +104,36 @@ describe("geometry", () => {
   test("the flint geometry stops where the firmware's own status bar starts", () => {
     // flint owns the bottom 12 rows of the panel and draws a status bar there. A host layout that
     // assumed the whole 240x135 would paint over it, and the device would be right to refuse the op.
-    const rects = [...slotRects(CARDPUTER_FLINT).values()];
+    const rects = gridRects(CARDPUTER_FLINT);
     const area = rects.reduce((sum, rect) => sum + rect.w * rect.h, 0);
     assert.equal(area, CARDPUTER_FLINT.width * CARDPUTER_FLINT.height, "the slots tile the body");
-    for (const rect of rects) {
+    for (const rect of [...rects, slotRects(CARDPUTER_FLINT).get(SCREEN_SLOT)]) {
+      assert.ok(rect !== undefined, "every slot has a rectangle, the screen included");
       assert.ok(rect.y + rect.h <= 123, "nothing reaches into the firmware's status bar");
       assert.ok(rect.x + rect.w <= 240);
+    }
+  });
+
+  test("the screen slot covers the tiles it replaces, and nothing else", () => {
+    // A browse page paints this one surface where the nine tiles would have been. A pixel short and
+    // the old page shows through at the edge; a pixel long and it is over flint's own status bar,
+    // which the firmware is right to refuse. Derived from the tiles rather than from the panel, so
+    // the two cannot disagree.
+    for (const geometry of [CARDPUTER_V11, CARDPUTER_FLINT]) {
+      const screen = slotRects(geometry).get(SCREEN_SLOT);
+      const tile = tileSize(geometry);
+      assert.ok(screen !== undefined);
+      assert.deepEqual(screen, {
+        x: 0,
+        y: geometry.status,
+        w: tile.width * geometry.columns,
+        h: tile.height * geometry.rows,
+      });
+      const spec = capabilitiesFor(geometry).slots.find((slot) => slot.id === SCREEN_SLOT);
+      assert.equal(spec?.kind, "screen");
+      assert.equal(spec?.paintable, true);
+      assert.equal(spec?.width, screen.w, "the slot's own dimensions are the rectangle's");
+      assert.equal(spec?.height, screen.h);
     }
   });
 
@@ -322,6 +357,89 @@ describe("the keyboard in navigate mode", () => {
       inputs.map((input) => input.kind),
       ["press", "release"],
     );
+  });
+});
+
+describe("the keyboard on a page that is one screen", () => {
+  /**
+   * A frame that fills the screen slot, which is what a `layout: "screen"` page produces.
+   *
+   * The device learns which layout it is in from the frame rather than from config, because the
+   * frame is the only thing it is told — and that has to be re-learnt every paint: a browse page
+   * followed by a page of keys must get its tile cursor back.
+   */
+  const screenFrame = (): Frame =>
+    new Map<string, Surface>([[SCREEN_SLOT, { kind: "list", rows: [{ label: "ALP", value: "$1.50" }] }]]);
+  const keyFrame = (): Frame =>
+    new Map<string, Surface>([[keySlot(0), { kind: "tile", label: "One", emphasis: "ground" }]]);
+
+  test("arrows steer the panel's list instead of a cursor that is no longer drawn", async () => {
+    const { device, inputs } = build();
+    await device.paint(screenFrame());
+    device.handleKey("down", true);
+    device.handleKey("up", true);
+    assert.deepEqual(inputs, [
+      { kind: "swipe", slot: SCREEN_SLOT, from: 0, to: 1 },
+      { kind: "swipe", slot: SCREEN_SLOT, from: 0, to: -1 },
+    ]);
+    assert.equal(device.selectedSlot, keySlot(0), "and the tile cursor has not moved");
+  });
+
+  test("left, right and Tab all page, and Esc backs out", async () => {
+    const { device, inputs } = build();
+    await device.paint(screenFrame());
+    device.handleKey("right", true);
+    device.handleKey("left", true);
+    device.handleKey("tab", true, true);
+    device.handleKey("esc", true);
+    device.handleKey("esc", false);
+    assert.deepEqual(inputs, [
+      { kind: "swipe", slot: STRIP_SLOT, from: 0, to: 1 },
+      { kind: "swipe", slot: STRIP_SLOT, from: 0, to: -1 },
+      { kind: "swipe", slot: STRIP_SLOT, from: 0, to: -1 },
+      { kind: "press", slot: STRIP_SLOT },
+      { kind: "release", slot: STRIP_SLOT },
+    ]);
+  });
+
+  test("Enter presses the screen, which is where the selected row is", async () => {
+    const { device, inputs } = build();
+    await device.paint(screenFrame());
+    device.handleKey("enter", true);
+    device.handleKey("enter", false);
+    assert.deepEqual(inputs, [
+      { kind: "press", slot: SCREEN_SLOT },
+      { kind: "release", slot: SCREEN_SLOT },
+    ]);
+  });
+
+  test("a page of keys takes the cursor back", async () => {
+    // A flag that only ever turned on would leave the arrows steering a list nobody is looking at.
+    const { device, inputs } = build();
+    await device.paint(screenFrame());
+    await device.paint(keyFrame());
+    device.handleKey("right", true);
+    assert.equal(device.selectedSlot, keySlot(1));
+    assert.deepEqual(inputs, []);
+  });
+
+  test("no keystroke, on a screen page either, produces anything but press, release or swipe", async () => {
+    // The boundary suite's claim, restated against the layout that did not exist when it was
+    // written: a second mapping is a second chance to give a keyboard a verb it should not have.
+    const { device, inputs } = build();
+    await device.paint(screenFrame());
+    const keys = ["up", "down", "left", "right", "enter", "esc", "tab", "backspace", ...[..."0123456789/"]];
+    for (const key of keys) {
+      device.handleKey(key, true, true);
+      device.handleKey(key, false, true);
+    }
+    const allowed = new Set(["press", "release", "swipe"]);
+    const slots = new Set(device.capabilities.slots.map((slot) => slot.id));
+    for (const input of inputs) {
+      assert.ok(allowed.has(input.kind), `unexpected input kind ${input.kind}`);
+      assert.ok(slots.has(input.slot), `input for an undeclared slot: ${input.slot}`);
+    }
+    assert.ok(inputs.length > 0, "the mapping should do something, or this test proves nothing");
   });
 });
 

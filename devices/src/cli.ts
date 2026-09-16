@@ -115,13 +115,13 @@ async function openVirtual(model: string) {
 import { loadConfig } from "./config.ts";
 import { loadGlyphMetrics } from "./glyphs.ts";
 import { prefetch } from "./images.ts";
-import { Panel, STRIP_SLOT } from "./panel.ts";
+import { BROWSE_PAGES, Panel, type PanelState, STRIP_SLOT } from "./panel.ts";
 import { clearRasterCache } from "./raster.ts";
 import * as anchor from "./state/anchor.ts";
 import { EMPTY_PORTFOLIO, type PortfolioSnapshot, type Timeframe } from "./state/anchor.ts";
-import * as discovery from "./state/discovery.ts";
-import type { TrendingCollection, TrendingToken } from "./state/discovery.ts";
 import { DesktopState, sessionLocked } from "./state/desktop.ts";
+import type { TrendingCollection, TrendingToken } from "./state/discovery.ts";
+import * as discovery from "./state/discovery.ts";
 import * as hypr from "./state/hypr.ts";
 import { loadTokens, type Tokens } from "./tokens.ts";
 
@@ -295,6 +295,7 @@ async function main(): Promise<void> {
   let discoveryCollections: readonly TrendingCollection[] = [];
   let discoveryTokensFetched = false;
   let discoveryCollectionsFetched = false;
+  let discoveryDetail: PanelState["discoveryDetail"];
   let painting = false;
   let repaintQueued = false;
   let reconnecting = false;
@@ -381,8 +382,63 @@ async function main(): Promise<void> {
    * this never needs a wallet configured. Fetched once per page, then kept warm by the same
    * `servicePoll` beat portfolio data already rides.
    */
+  /**
+   * The holders and buy/sell feed behind the one item the browse mode has open.
+   *
+   * Two requests, made only for the item somebody actually pressed Enter on — the trending list is
+   * twenty rows and fetching all of their depth up front would be forty requests for the
+   * nineteen nobody looked at. `onPartial` repaints as each half lands, exactly as
+   * `refreshPortfolio` does, so the Holders facet fills in while the activity feed is still in
+   * flight instead of both waiting on the slower one.
+   *
+   * The id is carried alongside the data and `Panel` refuses to paint rows whose id is not the open
+   * item's, so a second item opened mid-flight shows "loading…" rather than the first one's holders
+   * under its name.
+   */
+  const refreshBrowseDetail = async (): Promise<void> => {
+    const open = panel.browseDetail;
+    if (open === null || discoveryDetail?.id === open.id) return;
+    discoveryDetail = { id: open.id };
+    if (open.kind === "token") {
+      const token = discoveryTokens.find((entry) => entry.address === open.id);
+      if (token === undefined) return;
+      await discovery.tokenDetail(token, (partial) => {
+        discoveryDetail = { ...discoveryDetail, id: open.id };
+        if (partial.holders !== undefined) {
+          discoveryDetail = { ...discoveryDetail, id: open.id, tokenHolders: partial.holders };
+        }
+        if (partial.activity !== undefined) {
+          discoveryDetail = { ...discoveryDetail, id: open.id, tokenActivity: partial.activity };
+        }
+        void repaint();
+      });
+      return;
+    }
+    await discovery.collectionDetail(open.id, (partial) => {
+      if (partial.holders === undefined) return;
+      discoveryDetail = { ...discoveryDetail, id: open.id, collectionHolders: partial.holders };
+      void repaint();
+    });
+  };
+
   const refreshDiscovery = async (force = false): Promise<void> => {
     const pageName = panel.pageName;
+    const browses = BROWSE_PAGES.get(pageName);
+    if (browses !== undefined) {
+      // A browse page needs the same trending list the ambient pages rotate through, plus the depth
+      // behind whichever item is open. Same fetches, same module — the browse mode is a second view
+      // of this data, not a second source for it.
+      if (browses === "token" && (force || !discoveryTokensFetched)) {
+        discoveryTokensFetched = true;
+        discoveryTokens = await discovery.trendingTokens();
+      }
+      if (browses === "nft" && (force || !discoveryCollectionsFetched)) {
+        discoveryCollectionsFetched = true;
+        discoveryCollections = await discovery.trendingCollections();
+      }
+      await refreshBrowseDetail();
+      return;
+    }
     if (pageName !== "tokens" && pageName !== "nfts") return;
     if (pageName === "tokens") {
       if (!force && discoveryTokensFetched) return;
@@ -423,6 +479,7 @@ async function main(): Promise<void> {
           ...rotationNow(),
           discoveryTokens,
           discoveryCollections,
+          discoveryDetail,
         }),
       );
     } catch (error) {
@@ -454,6 +511,7 @@ async function main(): Promise<void> {
         ...rotationNow(),
         discoveryTokens,
         discoveryCollections,
+        discoveryDetail,
       });
       await writePreview(composeSvg(frame, tokens, device.capabilities.slots), options.preview);
       process.stderr.write(`preview written to ${options.preview}\n`);

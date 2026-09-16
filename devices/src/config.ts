@@ -51,6 +51,22 @@ export interface PageConfig {
   readonly keys: readonly KeyConfig[];
   readonly dials: readonly DialConfig[];
   readonly segments: readonly StripSegmentConfig[];
+  /**
+   * What this page asks a device with a screen to give it.
+   *
+   * Absent — the default, and every page that shipped before this existed — means today's
+   * behaviour: the page is a set of keys, and a device with a screen instead of keys draws them as
+   * a grid. `"screen"` means the page wants the whole body as one surface, and `Panel.build` then
+   * fills the screen slot and blanks the keys rather than filling both. A device that has keys and
+   * a screen — the Cardputer, since the browse mode — is the reason this had to become a choice the
+   * config makes rather than one the device's shape makes: it has both, and the page is the only
+   * thing that knows which of them it is actually for.
+   *
+   * A string union rather than a boolean because the next answer is already visible: a page might
+   * want a split of strip and screen, and `layout: "split"` says that where `screen: false` could
+   * not.
+   */
+  readonly layout?: "screen";
 }
 
 export interface PanelConfig {
@@ -180,7 +196,15 @@ export function parseConfig(raw: unknown): PanelConfig {
       },
     );
 
-    return { name, keys, dials, segments };
+    // Named values only, and the error says which ones: a page that asked for `layout: "screeen"`
+    // would otherwise render as an ordinary key page, which looks exactly like the browse mode
+    // being broken rather than like the config being wrong.
+    const layout = asString(page.layout, `pages[${pageIndex}].layout`);
+    if (layout !== "" && layout !== "screen") {
+      throw new ConfigError(`pages[${pageIndex}].layout is not a layout: ${layout}. Valid: screen`);
+    }
+
+    return layout === "screen" ? { name, keys, dials, segments, layout } : { name, keys, dials, segments };
   });
 
   const excludeRaw = root.excludeCollections;

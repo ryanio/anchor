@@ -35,7 +35,7 @@
 import { execFileSync } from "node:child_process";
 import { createReadStream, createWriteStream, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { keySlot, STRIP_SLOT } from "../panel.ts";
+import { keySlot, SCREEN_SLOT, STRIP_SLOT } from "../panel.ts";
 import type { Tokens } from "../tokens.ts";
 import type {
   AnchorDevice,
@@ -123,6 +123,27 @@ export function tileSize(geometry: CardputerGeometry): { width: number; height: 
 }
 
 /**
+ * The area the tile grid covers, as one rectangle: the whole body under the status strip.
+ *
+ * Derived from `tileSize` rather than from `height - status` so it is the *tiles'* area by
+ * construction and not merely equal to it today. The two agree at both geometries this file
+ * declares — 3x80x35 is exactly 240x105 under an 18px strip — but they agree because
+ * `height - status` happens to divide by `rows`, and a geometry where it does not would leave the
+ * screen slot a row of pixels taller than the grid it replaces. A slot that runs one pixel long is
+ * a slot that paints over somebody else's bar, which is the failure the comment on `CARDPUTER_FLINT`
+ * already names.
+ */
+function bodyRect(geometry: CardputerGeometry): Rect {
+  const { width, height } = tileSize(geometry);
+  return {
+    x: 0,
+    y: geometry.status,
+    w: width * geometry.columns,
+    h: height * geometry.rows,
+  };
+}
+
+/**
  * Where each slot lives on the panel.
  *
  * The device owns this, not the panel: rule 1 in `types.ts` is that nothing knows a pixel size at a
@@ -134,6 +155,7 @@ export function slotRects(geometry: CardputerGeometry): ReadonlyMap<string, Rect
   const { width, height } = tileSize(geometry);
   const rects = new Map<string, Rect>();
   rects.set(STRIP_SLOT, { x: 0, y: 0, w: geometry.width, h: geometry.status });
+  rects.set(SCREEN_SLOT, bodyRect(geometry));
   for (let index = 0; index < geometry.columns * geometry.rows; index++) {
     rects.set(keySlot(index), {
       x: (index % geometry.columns) * width,
@@ -155,12 +177,23 @@ export function slotRects(geometry: CardputerGeometry): ReadonlyMap<string, Rect
  */
 export function capabilitiesFor(geometry: CardputerGeometry): DeviceCapabilities {
   const { width, height } = tileSize(geometry);
+  const body = bodyRect(geometry);
   const slots: SlotSpec[] = [
     { id: STRIP_SLOT, kind: "strip", paintable: true, width: geometry.width, height: geometry.status },
   ];
   for (let index = 0; index < geometry.columns * geometry.rows; index++) {
     slots.push({ id: keySlot(index), kind: "key", paintable: true, width, height });
   }
+  // One screen over the same body the nine tiles cover, and the first slot on this device that
+  // overlaps another. That is deliberate and it is why it is declared *last*: a page fills either
+  // the keys or the screen (`PageConfig.layout`, and the `screenLayout` branch in `Panel.build`),
+  // never both, and `paint` walks the slots in this order — so on a screen page the blanked tiles
+  // go out before the surface that covers them rather than after it.
+  //
+  // What it buys is the thing a 3x3 grid of 80x35 tiles cannot do: a list of twenty trending
+  // tokens, or a token's holders, on a device you hold in one hand. `docs/devices-cardputer.md`
+  // proposed this as a future addition; the browse mode is what finally asked for it.
+  slots.push({ id: SCREEN_SLOT, kind: "screen", paintable: true, width: body.w, height: body.h });
   return { slots, inputs: ["press", "release", "swipe"] };
 }
 
@@ -508,6 +541,16 @@ export class CardputerDevice implements AnchorDevice {
   #mode: KeyboardMode = "navigate";
   #query = "";
   #power: PowerState | null = null;
+  /**
+   * Whether the last frame filled the screen slot instead of the tiles.
+   *
+   * Read off the frame rather than configured, because the host is the only thing that knows which
+   * layout the current page asked for and it tells us in the only language this contract has:
+   * which slots it painted. Recomputed per frame — a panel that came back from a browse page to a
+   * page of keys must get its tile cursor back, and a flag that only ever turned on would leave the
+   * arrow keys steering a list nobody is looking at.
+   */
+  #screenMode = false;
   #firmware = "";
   #brightness = 0;
   #pressed: string | null = null;
@@ -632,6 +675,7 @@ export class CardputerDevice implements AnchorDevice {
   // -- AnchorDevice ----------------------------------------------------------------------------
 
   async paint(frame: Frame): Promise<void> {
+    this.#screenMode = frame.get(SCREEN_SLOT) !== undefined;
     const touched: string[] = [];
     for (const slot of this.capabilities.slots) {
       if (!slot.paintable) continue;
@@ -726,6 +770,10 @@ export class CardputerDevice implements AnchorDevice {
       this.#handleFilterKey(key, down);
       return;
     }
+    if (this.#screenMode) {
+      this.#handleScreenKey(key, down, shift);
+      return;
+    }
     if (key === "enter") {
       this.#pressSlot(this.selectedSlot, down);
       return;
@@ -764,6 +812,49 @@ export class CardputerDevice implements AnchorDevice {
         this.#pressSlot(this.selectedSlot, true);
       }
     }
+  }
+
+  /**
+   * One keystroke, while the host is painting the screen slot rather than the tiles.
+   *
+   * The whole of the difference is where a keystroke goes, not what it can cause: the mapping still
+   * produces nothing but `press`, `release` and `swipe`, on slots this device already declares, and
+   * the boundary suite exhausts the key space against both layouts to say so.
+   *
+   * There is no tile cursor to move on a browse page — the nine tiles are blanked and the surface
+   * covers them — so the arrows have to reach the *panel's* selection instead, and the contract
+   * already has a word for "the thing on screen moved one step": a swipe. Up and down swipe the
+   * screen itself, which is what `Panel.handle` reads as the list selection; left and right swipe
+   * the strip, exactly as Tab already does, which pages the panel or — while a browse detail is
+   * open — steps through its facets. Esc presses the strip, the one press that belongs to no key
+   * and no cell, which the panel reads as backing out.
+   *
+   * Deliberately *not* mapped: the number keys. They select a tile by position, and a list of
+   * twenty trending tokens has no ninth tile for `9` to mean.
+   */
+  #handleScreenKey(key: string, down: boolean, shift: boolean): void {
+    if (key === "enter") {
+      this.#pressSlot(SCREEN_SLOT, down);
+      return;
+    }
+    if (key === "esc") {
+      this.#pressSlot(STRIP_SLOT, down);
+      return;
+    }
+    if (!down) {
+      if (this.#pressed !== null) this.#pressSlot(this.#pressed, false);
+      return;
+    }
+    if (key === "up" || key === "down") {
+      this.#emit({ kind: "swipe", slot: SCREEN_SLOT, from: 0, to: key === "down" ? 1 : -1 });
+      return;
+    }
+    if (key === "left" || key === "right" || key === "tab") {
+      const forward = key === "tab" ? !shift : key === "right";
+      this.#emit({ kind: "swipe", slot: STRIP_SLOT, from: 0, to: forward ? 1 : -1 });
+      return;
+    }
+    if (key === "/") this.#setMode("filter");
   }
 
   #handleFilterKey(key: string, down: boolean): void {

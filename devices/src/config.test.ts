@@ -65,6 +65,19 @@ describe("parseConfig", () => {
     );
   });
 
+  test("takes a page's layout, and refuses one it does not have", () => {
+    // Absent is the default and means today's behaviour: a page of keys. A typo must not quietly
+    // become that too, because a browse page rendered as an empty key grid looks like the feature
+    // is broken rather than like the config is.
+    assert.equal(parseConfig(minimal).pages[0]?.layout, undefined);
+    const screen = parseConfig({ pages: [{ name: "a", layout: "screen" }] });
+    assert.equal(screen.pages[0]?.layout, "screen");
+    assert.throws(
+      () => parseConfig({ pages: [{ name: "a", layout: "screeen" }] }),
+      (error: Error) => error instanceof ConfigError && error.message.includes("pages[0].layout"),
+    );
+  });
+
   test("requires a segment to name a source", () => {
     assert.throws(
       () => parseConfig({ pages: [{ name: "a", segments: [{ icon: "x" }] }] }),
@@ -78,7 +91,7 @@ describe("the packaged default config", () => {
     const { config } = loadConfig();
     assert.deepEqual(
       config.pages.map((page) => page.name),
-      ["desktop", "portfolio", "chains", "gallery", "tokens", "nfts"],
+      ["desktop", "portfolio", "chains", "gallery", "tokens", "nfts", "browse-tokens", "browse-nfts"],
     );
   });
 

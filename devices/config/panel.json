@@ -1,8 +1,6 @@
 {
   "brightness": 70,
-  "excludeCollections": [
-    "arttoken"
-  ],
+  "excludeCollections": ["arttoken"],
   "orderGalleryByValue": true,
   "pages": [
     {
@@ -346,6 +344,40 @@
       "keys": [],
       "dials": [],
       "segments": []
+    },
+    {
+      "name": "browse-tokens",
+      "layout": "screen",
+      "keys": [],
+      "dials": [],
+      "segments": [
+        {
+          "source": "page",
+          "icon": ""
+        },
+        {
+          "source": "anchor.service",
+          "icon": "",
+          "tone": "inkDim"
+        }
+      ]
+    },
+    {
+      "name": "browse-nfts",
+      "layout": "screen",
+      "keys": [],
+      "dials": [],
+      "segments": [
+        {
+          "source": "page",
+          "icon": ""
+        },
+        {
+          "source": "anchor.service",
+          "icon": "",
+          "tone": "inkDim"
+        }
+      ]
     }
   ]
 }

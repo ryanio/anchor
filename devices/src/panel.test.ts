@@ -16,6 +16,7 @@ import {
   dialSlot,
   keySlot,
   Panel,
+  PRESS_FLASH_MS,
   readKeySource,
   SCREEN_SLOT,
   SEGMENT_SOURCES,
@@ -578,6 +579,41 @@ describe("a tap on a grid cell", () => {
     const first = CENTRES[0] ?? { x: 0, y: 0 };
     assert.equal(panel.handle({ kind: "tap", slot: SCREEN_SLOT, ...first }), false);
   });
+
+  describe("the press flash", () => {
+    const at = (nowMs: number): PanelState => ({ ...state(), nowMs });
+
+    test("marks the tapped cell as pressed right after the tap", () => {
+      const panel = painted(new Panel(config, TOKENS));
+      const third = CENTRES[2] ?? { x: 0, y: 0 };
+      panel.handle({ kind: "tap", slot: SCREEN_SLOT, ...third });
+      panel.setPage("desktop");
+      const grid = panel.build(pulseDevice(), at(1_000)).get(SCREEN_SLOT);
+      assert.equal(grid?.kind === "grid" && grid.pressed, 2);
+    });
+
+    test("clears once PRESS_FLASH_MS has passed, leaving the selection behind", () => {
+      const panel = painted(new Panel(config, TOKENS));
+      const third = CENTRES[2] ?? { x: 0, y: 0 };
+      panel.handle({ kind: "tap", slot: SCREEN_SLOT, ...third });
+      panel.setPage("desktop");
+      panel.build(pulseDevice(), at(1_000)); // settles the flash window against this clock reading
+      const grid = panel.build(pulseDevice(), at(1_000 + PRESS_FLASH_MS)).get(SCREEN_SLOT);
+      assert.equal(grid?.kind === "grid" && grid.pressed, undefined, "the flash is gone");
+      assert.equal(grid?.kind === "grid" && grid.selected, 2, "the selection is not");
+    });
+
+    test("never flashes when nothing supplies a clock", () => {
+      // The same fallback `TAP_HOLD_MS` takes: no injected `nowMs` means no time-windowed effect,
+      // rather than one that reads as permanently on.
+      const panel = painted(new Panel(config, TOKENS));
+      const third = CENTRES[2] ?? { x: 0, y: 0 };
+      panel.handle({ kind: "tap", slot: SCREEN_SLOT, ...third });
+      panel.setPage("desktop");
+      const grid = panel.build(pulseDevice(), state()).get(SCREEN_SLOT);
+      assert.equal(grid?.kind === "grid" && grid.pressed, undefined);
+    });
+  });
 });
 
 describe("a tap steers the rotation", () => {
@@ -711,6 +747,350 @@ describe("a tap steers the rotation", () => {
     panel.setPage("desktop");
     panel.setPage("gallery");
     assert.equal(showing(panel, clock(10, 0)), "Gamma", "the page arrived at is the one the clock says");
+  });
+});
+
+/**
+ * Browsing what is trending, on a device that has both keys and a screen.
+ *
+ * Three claims, and they are separable. That a `layout: "screen"` page fills one half of the device
+ * and blanks the other — the Cardputer is the first device with both, so "never both" is a rule that
+ * had nothing to break before now. That the state machine on top of it opens, pages its facets and
+ * closes on the inputs the contract already had, without a new `Surface` kind or a new `DeviceInput`
+ * between them. And that a facet never shows rows fetched for a different item.
+ */
+describe("browsing trending tokens and collections", () => {
+  const config = parseConfig({
+    pages: [
+      { name: "desktop", keys: [{ index: 0, label: "One", action: "noop" }] },
+      { name: "browse-tokens", layout: "screen" },
+      { name: "browse-nfts", layout: "screen" },
+    ],
+  });
+
+  /** The Cardputer's shape, in the abstract: nine tiles, a strip, and a screen over the tiles. */
+  const cardputerish = (): AnchorDevice =>
+    fakeDevice([
+      ...Array.from(
+        { length: 9 },
+        (_v, i): SlotSpec => ({ id: keySlot(i), kind: "key", paintable: true, width: 80, height: 35 }),
+      ),
+      { id: STRIP_SLOT, kind: "strip", paintable: true, width: 240, height: 18 },
+      { id: SCREEN_SLOT, kind: "screen", paintable: true, width: 240, height: 105 },
+    ]);
+
+  const TRENDING: PanelState["discoveryTokens"] = [
+    {
+      address: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      chain: "ethereum",
+      name: "Alpha",
+      symbol: "ALP",
+      imageUrl: "",
+      usdPrice: 1.5,
+      marketCapUsd: 1_000_000,
+      volume24h: 4200,
+      priceChange24h: 4.2,
+      openseaUrl: "",
+    },
+    {
+      address: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      chain: "solana",
+      name: "Bravo",
+      symbol: "BRV",
+      imageUrl: "",
+      usdPrice: 0.25,
+      marketCapUsd: null,
+      volume24h: null,
+      priceChange24h: -1.5,
+      openseaUrl: "",
+    },
+  ];
+
+  const COLLECTIONS: PanelState["discoveryCollections"] = [
+    { slug: "onchainchain", name: "Onchain Chain", imageUrl: "", openseaUrl: "" },
+    { slug: "pudgies", name: "Pudgies", imageUrl: "", openseaUrl: "" },
+  ];
+
+  const BRAVO_DEPTH: PanelState["discoveryDetail"] = {
+    id: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    tokenHolders: {
+      holders: [
+        {
+          ownerAddress: "0x1111111111111111111111111111111111111111",
+          ownerDisplayName: "whale.eth",
+          percentageHeld: 12.5,
+          usdValue: 900,
+        },
+        {
+          ownerAddress: "0x2222222222222222222222222222222222222222",
+          ownerDisplayName: null,
+          percentageHeld: 3,
+          usdValue: 100,
+        },
+      ],
+      totalCount: 1240,
+      healthScore: 61,
+      healthLabel: "Healthy",
+    },
+    tokenActivity: [
+      {
+        timestamp: 1_757_000_000,
+        senderAddress: "0x3333333333333333333333333333333333333333",
+        fromSymbolOrAddress: "WETH",
+        toSymbolOrAddress: "BRV",
+        amountUsd: 512,
+      },
+    ],
+  };
+
+  const browsing = (overrides: Partial<PanelState> = {}): PanelState => ({
+    ...state(),
+    discoveryTokens: TRENDING,
+    discoveryCollections: COLLECTIONS,
+    ...overrides,
+  });
+
+  /** A panel that has painted at least once, which is what records the rows an Enter resolves in. */
+  const painted = (page: string, overrides: Partial<PanelState> = {}): Panel => {
+    const panel = new Panel(config, TOKENS);
+    panel.setPage(page);
+    panel.build(cardputerish(), browsing(overrides));
+    return panel;
+  };
+
+  const surfaceOn = (panel: Panel, overrides: Partial<PanelState> = {}) =>
+    panel.build(cardputerish(), browsing(overrides)).get(SCREEN_SLOT);
+
+  /** Tab, as the Cardputer sends it: the panel's existing paging gesture. */
+  const TAB = { kind: "swipe", slot: STRIP_SLOT, from: 0, to: 1 } as const;
+  const SHIFT_TAB = { kind: "swipe", slot: STRIP_SLOT, from: 0, to: -1 } as const;
+  /** Esc: the one press that belongs to no key and no cell. */
+  const ESC = { kind: "press", slot: STRIP_SLOT } as const;
+  const ENTER = { kind: "press", slot: SCREEN_SLOT } as const;
+
+  test("a screen page fills the screen and blanks the keys, never both", () => {
+    const frame = new Panel(config, TOKENS).build(cardputerish(), browsing());
+    // The key page first: the same device, the same build, and the screen is left alone.
+    assert.equal(frame.get(SCREEN_SLOT), undefined, "a page of keys does not claim the screen");
+    assert.equal(frame.get(keySlot(0))?.kind === "tile" && frame.get(keySlot(0))?.kind, "tile");
+
+    const panel = painted("browse-tokens");
+    const browse = panel.build(cardputerish(), browsing());
+    assert.equal(browse.get(SCREEN_SLOT)?.kind, "list");
+    const key = browse.get(keySlot(0));
+    // Blanked rather than absent: the adapter diffs against what it last sent, so a tile left out
+    // of this frame would still be believed to be on the glass under the surface covering it, and
+    // the next key page would repaint nothing at all.
+    assert.equal(key?.kind === "tile" && key.label, undefined, "the keys are blanked, not filled");
+  });
+
+  test("the list is the trending tokens, priced, and signed by their 24h move", () => {
+    const list = surfaceOn(painted("browse-tokens"));
+    assert.equal(list?.kind, "list");
+    if (list?.kind !== "list") return;
+    assert.deepEqual(
+      list.rows.map((row) => row.label),
+      ["ALP", "BRV"],
+    );
+    assert.deepEqual(
+      list.rows.map((row) => row.value),
+      ["$1.50", "$0.25"],
+    );
+    assert.deepEqual(
+      list.rows.map((row) => row.tone),
+      ["positive", "negative"],
+    );
+    assert.equal(list.selected, 0);
+  });
+
+  test("an empty list says it is still loading rather than showing nothing", () => {
+    const panel = new Panel(config, TOKENS);
+    panel.setPage("browse-tokens");
+    const list = panel.build(cardputerish(), { ...state() }).get(SCREEN_SLOT);
+    assert.equal(list?.kind === "list" && list.rows.length, 0);
+    assert.equal(list?.kind === "list" && list.empty, "loading…");
+  });
+
+  test("up and down move the selection, by encoder or by keyboard", () => {
+    const panel = painted("browse-tokens");
+    // The Cardputer has no encoder: its arrows arrive as a swipe on the screen itself.
+    panel.handle({ kind: "swipe", slot: SCREEN_SLOT, from: 0, to: 1 });
+    assert.equal(panel.selected, 1);
+    panel.handle({ kind: "swipe", slot: SCREEN_SLOT, from: 0, to: -1 });
+    assert.equal(panel.selected, 0);
+    // And a device that does have one still moves the same selection.
+    panel.handle({ kind: "rotate", slot: SCREEN_SLOT, delta: 1 });
+    assert.equal(panel.selected, 1);
+  });
+
+  test("enter opens the selected row, not the one that was selected a frame ago", () => {
+    const panel = painted("browse-tokens");
+    panel.handle({ kind: "swipe", slot: SCREEN_SLOT, from: 0, to: 1 });
+    assert.equal(panel.handle(ENTER), true, "repaints");
+    assert.deepEqual(panel.browseDetail, { kind: "token", id: TRENDING?.[1]?.address, facet: 0 });
+    const detail = surfaceOn(panel);
+    assert.equal(detail?.kind, "detail");
+    assert.equal(detail?.kind === "detail" && detail.title, "Bravo (BRV)");
+    assert.equal(detail?.kind === "detail" && detail.badge, "Overview");
+    assert.deepEqual(detail?.kind === "detail" ? detail.lines.map((line) => line.label) : [], [
+      "Price",
+      "24h",
+      "Volume",
+      "Chain",
+    ]);
+  });
+
+  test("the facets cycle Overview → Holders → Activity, and wrap both ways", () => {
+    const panel = painted("browse-tokens");
+    panel.handle(ENTER);
+    assert.equal(surfaceOn(panel)?.kind, "detail", "Overview is a detail surface");
+
+    panel.handle(TAB);
+    assert.equal(panel.browseDetail?.facet, 1);
+    assert.equal(surfaceOn(panel)?.kind, "list", "Holders is a list");
+
+    panel.handle(TAB);
+    assert.equal(panel.browseDetail?.facet, 2);
+    assert.equal(surfaceOn(panel)?.kind, "list", "Activity is a list");
+
+    panel.handle(TAB);
+    assert.equal(panel.browseDetail?.facet, 0, "and round");
+    assert.equal(panel.pageName, "browse-tokens", "a facet step is not a page step");
+
+    panel.handle(SHIFT_TAB);
+    assert.equal(panel.browseDetail?.facet, 2, "backwards wraps too");
+  });
+
+  test("paging still pages the panel once nothing is open", () => {
+    // The whole `handle` change is additive: close the detail and Tab is the page gesture again.
+    const panel = painted("browse-tokens");
+    panel.handle(ENTER);
+    panel.handle(ESC);
+    panel.handle(TAB);
+    assert.equal(panel.pageName, "browse-nfts");
+  });
+
+  test("escape closes the detail and the selection survives it", () => {
+    const panel = painted("browse-tokens");
+    panel.handle({ kind: "swipe", slot: SCREEN_SLOT, from: 0, to: 1 });
+    panel.handle(ENTER);
+    panel.handle(TAB);
+    assert.equal(panel.handle(ESC), true);
+    assert.equal(panel.browseDetail, null);
+    assert.equal(panel.selected, 1, "back at the row it was opened from");
+    const list = surfaceOn(panel);
+    assert.equal(list?.kind === "list" && list.selected, 1, "and the frame says so");
+  });
+
+  test("enter again backs out, because the device has one confirm key", () => {
+    const panel = painted("browse-tokens");
+    panel.handle(ENTER);
+    assert.notEqual(panel.browseDetail, null);
+    panel.handle(ENTER);
+    assert.equal(panel.browseDetail, null);
+  });
+
+  test("the holders facet shows the depth fetched for that token", () => {
+    const panel = painted("browse-tokens");
+    panel.handle({ kind: "swipe", slot: SCREEN_SLOT, from: 0, to: 1 });
+    panel.handle(ENTER);
+    panel.handle(TAB);
+    const holders = surfaceOn(panel, { discoveryDetail: BRAVO_DEPTH });
+    assert.equal(holders?.kind, "list");
+    if (holders?.kind !== "list") return;
+    assert.deepEqual(
+      holders.rows.map((row) => row.label),
+      ["Holders · BRV", "Distribution", "1. whale.eth", "2. 0x2222…2222"],
+    );
+    assert.equal(holders.rows[0]?.value, "1,240", "the header carries how many there are in total");
+    assert.equal(holders.rows[2]?.value, "12.50%");
+  });
+
+  test("a facet never shows rows fetched for a different item", () => {
+    // The failure AGENTS.md puts above every other one here: a plausible answer to a question
+    // nobody asked. Between opening a second token and its fetch landing, the depth in hand is
+    // still the first token's, and showing it under this name would be indistinguishable from data
+    // that is simply wrong.
+    const panel = painted("browse-tokens");
+    panel.handle(ENTER); // Alpha, not Bravo
+    panel.handle(TAB);
+    const holders = surfaceOn(panel, { discoveryDetail: BRAVO_DEPTH });
+    assert.equal(holders?.kind, "list");
+    if (holders?.kind !== "list") return;
+    assert.deepEqual(
+      holders.rows.map((row) => row.label),
+      ["Holders · ALP", "loading…"],
+    );
+  });
+
+  test("the activity facet is the buy/sell feed, in the API's own words", () => {
+    const panel = painted("browse-tokens");
+    panel.handle({ kind: "swipe", slot: SCREEN_SLOT, from: 0, to: 1 });
+    panel.handle(ENTER);
+    panel.handle(TAB);
+    panel.handle(TAB);
+    const activity = surfaceOn(panel, { discoveryDetail: BRAVO_DEPTH });
+    assert.equal(activity?.kind, "list");
+    if (activity?.kind !== "list") return;
+    assert.deepEqual(
+      activity.rows.map((row) => row.label),
+      ["Activity · BRV", "WETH → BRV"],
+    );
+    assert.equal(activity.rows[1]?.value, "$512.00");
+  });
+
+  test("the NFT side browses collections through the same machine", () => {
+    const panel = painted("browse-nfts");
+    const list = surfaceOn(panel);
+    assert.deepEqual(list?.kind === "list" ? list.rows.map((row) => row.label) : [], [
+      "Onchain Chain",
+      "Pudgies",
+    ]);
+    panel.handle(ENTER);
+    assert.deepEqual(panel.browseDetail, { kind: "nft", id: "onchainchain", facet: 0 });
+    assert.equal(surfaceOn(panel)?.kind === "detail" && surfaceOn(panel)?.kind, "detail");
+    panel.handle(TAB);
+    const holders = surfaceOn(panel, {
+      discoveryDetail: {
+        id: "onchainchain",
+        collectionHolders: [
+          { address: "0x4444444444444444444444444444444444444444", quantity: 7, percentage: 0.5 },
+        ],
+      },
+    });
+    assert.deepEqual(holders?.kind === "list" ? holders.rows.map((row) => row.label) : [], [
+      "Holders · Onchain Chain",
+      "1. 0x4444…4444",
+    ]);
+  });
+
+  test("leaving the page drops what was open rather than carrying it over", () => {
+    const panel = painted("browse-tokens");
+    panel.handle(ENTER);
+    panel.setPage("desktop");
+    assert.equal(panel.browseDetail, null);
+    // And an Enter arriving after the page change, before its repaint, opens nothing.
+    assert.doesNotThrow(() => panel.handle(ENTER));
+    assert.equal(panel.browseDetail, null);
+  });
+
+  test("a filter narrows the list, and a row opens the token that is showing", () => {
+    const panel = painted("browse-tokens");
+    panel.handle({ kind: "text", slot: SCREEN_SLOT, value: "brv" });
+    panel.build(cardputerish(), browsing());
+    const list = surfaceOn(panel);
+    assert.deepEqual(list?.kind === "list" ? list.rows.map((row) => row.label) : [], ["BRV"]);
+    panel.handle(ENTER);
+    // Resolving through the unfiltered list would have opened Alpha — a token not on the screen.
+    assert.equal(panel.browseDetail?.id, TRENDING?.[1]?.address);
+  });
+
+  test("a screen page on a device with no screen is not painted twice either", () => {
+    // The Stream Deck has no screen slot, so a browse page has nothing to put its list on. It must
+    // still not paint the page's keys — there are none — and it must not throw.
+    const frame = painted("browse-tokens").build(streamDeckPlus(), browsing());
+    assert.equal(frame.has(SCREEN_SLOT), false);
+    assert.equal(frame.get(keySlot(0))?.kind === "tile" && frame.get(keySlot(0))?.kind, "tile");
   });
 });
 

@@ -128,6 +128,25 @@ device layer exists to make — that a new device is a rendering problem, not a 
 This is genuinely useful. It is the "quick commands" half of the third Cardputer's role, and it works
 on the day the hardware arrives.
 
+### And now: one screen instead of nine tiles, per page
+
+The browse mode built this. `capabilitiesFor` declares a `screen` slot as well as the nine keys,
+covering the same body the tiles do — 240x105 under flint's 18px strip, derived from `tileSize` so
+the two cannot disagree — and a page says which of the two it wants with `layout: "screen"` in
+`panel.json`. `Panel.build` fills one or the other and never both: on a screen page the tiles are
+*blanked* rather than skipped, because the adapter diffs against what it last sent and a tile left
+out of the frame would still be believed to be on glass that the surface has since covered.
+
+`browse-tokens` and `browse-nfts` are the first two. The list is a `list` surface of what is
+trending; Enter opens an item, Tab steps its three facets — Overview as a `detail`, Holders and
+Activity as `list`s — and Esc backs out. No new `Surface` kind, no new `DeviceInput`: the facets are
+views of surfaces that already existed, which is the whole argument for facets over kinds.
+
+One thing the ESP32's version of these pages has and this one deliberately does not: `artwork`. A
+surface travels down this cable as JSON in 64-byte chunks (`openSerial`), where a 1.4KB frame was
+the measured limit of what lands reliably; a base64 thumbnail is two orders of magnitude past that,
+and a frame that never arrives is a blank screen rather than a prettier one.
+
 ### What does not work, and why it needs the contract to grow
 
 All three Cardputer roles in the field notes are **lists**: an activity feed, a floor watchlist, a
@@ -212,7 +231,7 @@ Worth stating, because the temptation with a keyboard is to add an input kind pe
 
 | Keyboard use | Existing input | Why it fits |
 |---|---|---|
-| Arrow keys moving a selection | `rotate` on the list slot, delta ±1 | An encoder detent and an arrow key are the same intent. A Stream Deck dial would drive the same list. |
+| Arrow keys moving a selection | up/down: `swipe` on the screen slot. An encoder still sends `rotate` and moves the same selection. | An encoder detent and an arrow key are the same intent — but emitting `rotate` would mean *declaring* `rotate`, and a device that claims it gets dial config it has no encoder to drive. A swipe is already declared, and `Panel.handle` reads one on the screen as a step through the list. Left/right send the strip swipe Tab does, so they page, or step the facets while a detail is open. |
 | Enter | `press` then `release` | Identical to a key on any other device. |
 | Number keys | `press` / `release` on `key:n` | A number key *is* a key slot. |
 | Tab / shift-Tab | `swipe` on the strip slot | `Panel.handle` already pages on a swipe, in both directions. |
@@ -419,7 +438,14 @@ A thin renderer, and deliberately nothing else. It holds:
 
 - the palette, received from the host;
 - the slot rectangles, received per frame, so layout stays authoritative on the host side;
-- how to draw a `tile` and a `bar` — and, once the contract grows, a `list` and a `detail`;
+- how to draw a `tile`, a `bar`, a `list` and a `detail`, natively, in flint's own primitives —
+  there is no pixel transport on this cable and there is not going to be one;
+- the slot id `screen:0` alongside `strip:0` and `key:0..8`, and the rule that the body is painted
+  as nine tiles or as one screen and never both: whichever half a frame paints, the other is
+  dropped, because they are two ways of using the same 240x105 rectangle;
+- a window over a list's rows, kept around `selected` so the row the arrows are moving is always on
+  the glass, with a strip under the rows counting against the total the host sent rather than
+  against the twelve the device keeps;
 - the keyboard scan, and the mapping to protocol key names;
 - a link-liveness timer and the battery reading.
 

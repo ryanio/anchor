@@ -505,6 +505,12 @@ export interface CaseSpec {
   readonly rotation?: number;
   /** Redraw one key as held down. Never through `Panel.handle` — see `buildFrame`. */
   readonly pressedKey?: number;
+  /**
+   * Redraw one grid cell mid-flash, the touch-panel equivalent of `pressedKey`. Real taps clear
+   * this within `PRESS_FLASH_MS` on the next `build`, which a fixed case can't render twice, so
+   * this bypasses `Panel.handle` the same way `pressedKey` does.
+   */
+  readonly pressedGridCell?: number;
   /** The device is blanked: the lock fired and it must be showing nothing at all. */
   readonly blank?: boolean;
   /** Surfaces to paint directly, for a contract surface the panel has no producer for yet. */
@@ -602,6 +608,20 @@ export const CASES: readonly CaseSpec[] = [
       "actually is — check each tile reads as a target rather than as a label, that the icon and " +
       "caption sit like they do on a Stream Deck key, and that the accent ring says which cell is " +
       "selected without being mistakable for the filled tile of a toggle that is on.",
+  },
+  {
+    id: "pulse-grid-pressed",
+    category: "Every device",
+    device: "pulse-amoled",
+    state: "toggled",
+    page: "desktop",
+    pressedGridCell: 1,
+    title: "ESP32 pulse — a cell mid-flash, right after a tap",
+    looking:
+      "A device with no key travel has only this to say \"you hit this\": a wash across the whole " +
+      "cell, gone again within PRESS_FLASH_MS. Check it reads as a flash rather than a state — " +
+      "distinct enough from the thin selection ring to notice, gone quickly enough on the real " +
+      "device that it reads as this cell having just been hit rather than a permanent look.",
   },
   {
     id: "pulse-round",
@@ -1118,11 +1138,19 @@ export function buildFrame(entry: DeviceCase, config: PanelConfig, tokens: Token
   };
   const frame = panel.build(new StillDevice(device.capabilities), panelState);
 
-  if (spec.pressedKey === undefined) return frame;
+  if (spec.pressedKey === undefined && spec.pressedGridCell === undefined) return frame;
   const held = new Map(frame);
-  const slot = keySlot(spec.pressedKey);
-  const surface = held.get(slot);
-  if (surface !== undefined && surface.kind === "tile") held.set(slot, { ...surface, emphasis: "raised" });
+  if (spec.pressedKey !== undefined) {
+    const slot = keySlot(spec.pressedKey);
+    const surface = held.get(slot);
+    if (surface !== undefined && surface.kind === "tile") held.set(slot, { ...surface, emphasis: "raised" });
+  }
+  if (spec.pressedGridCell !== undefined) {
+    const surface = held.get(SCREEN_SLOT);
+    if (surface !== undefined && surface.kind === "grid") {
+      held.set(SCREEN_SLOT, { ...surface, pressed: spec.pressedGridCell });
+    }
+  }
   return held;
 }
 

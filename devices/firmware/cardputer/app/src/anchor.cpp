@@ -31,6 +31,15 @@
 // it. The palette arrives the same way, from the live Omarchy theme, which is
 // what makes the panel change colour when the desktop does.
 //
+// Four surface kinds reach this screen. A tile and a bar are the deck's shapes,
+// eight keys and a strip, and they were all this panel drew while the host had
+// nothing else to say to a 240x135 screen. A list and a detail are the shapes
+// that screen is actually for: rows somebody scrolls with the arrow keys, and
+// the one row they stopped on opened in full. Nothing about them is pixels. The
+// host sends the same medium neutral surface it sends a Stream Deck and this
+// file draws it in flint's own primitives, which is what keeps a collection
+// name off the wire as an image and on the glass as text.
+//
 // What this view can never do is the part worth reading twice. The three
 // messages it sends are hello, key and power. There is no message for approve,
 // sign, buy or send, so no sequence of keystrokes here can ask for one, and
@@ -84,12 +93,32 @@ constexpr uint32_t TILT_HOLDOFF_MS = 600;
 // its rest.h), not a page turn.
 constexpr float TILT_FACE_UP_G = 0.35f;
 
-// One strip and nine tiles, which is what the host's Cardputer geometry sends.
+// One strip, nine tiles and one screen, which is what the host's Cardputer geometry sends.
 // Held as a fixed table rather than a map so a frame allocates nothing.
-constexpr int SLOTS = 10;
+//
+// The screen is the odd one and it is last on purpose. It is the body the nine tiles cover, painted
+// as one surface instead of nine, which is the only way a list of twenty trending tokens fits on a
+// device whose keys are 80x35. So it is the one slot here that overlaps another, and this table is
+// drawn in index order. Last means a frame that paints both puts the screen on top rather than
+// under. See `slotRects` in devices/src/adapters/cardputer.ts, which declares it last for the same
+// reason on the other end of the cable.
+constexpr int SLOTS = 11;
+constexpr int SLOT_STRIP = 0;
+constexpr int SLOT_KEY_0 = 1;
+constexpr int SLOT_SCREEN = 10;
 constexpr int SEGS_MAX = 6;
 
-enum Kind : uint8_t { KIND_NONE, KIND_TILE, KIND_BAR };
+// A list surface's rows and a detail surface's lines, held the same way and for the same reason.
+//
+// Twelve is not how many rows the host may send: it is how many this table holds at once, and the
+// parser keeps a window of that size around the selected row rather than the first twelve, so the
+// row somebody is looking at is always one of them however long the real list is. The strip under
+// the rows counts against the true total the host sent, not against what survived the window, which
+// is the difference between a panel that says "4 of 23" and one that quietly says "4 of 12".
+constexpr int ROWS_MAX = 12;
+constexpr int LINES_MAX = 8;
+
+enum Kind : uint8_t { KIND_NONE, KIND_TILE, KIND_BAR, KIND_LIST, KIND_DETAIL };
 enum Emphasis : uint8_t { EM_GROUND, EM_RAISED, EM_ACTIVE };
 
 enum Token : uint8_t {
@@ -122,6 +151,34 @@ struct Seg {
 	uint16_t color;
 };
 
+// One row of a list surface: `{ label, value?, icon?, tone? }` off the wire.
+struct Row {
+	char label[24];
+	char value[14];
+	// The icon is a character the host's key config chose, and that config writes Font Awesome
+	// private use codepoints (config/panel.json is full of them, written as "\uf1fc" and the like).
+	// This panel has no such
+	// font, so `takeText` folds those to nothing and this holds the empty string, which is the
+	// honest outcome and the reason the gutter is reserved per list rather than per row: rows whose
+	// icons all vanished keep their labels on the same left edge as rows that never had one.
+	char icon[4];
+	// Whether the row carried a tone at all, kept rather than folded into a resolved colour because
+	// the two ends have to agree on what an absent tone means and it is not one colour: the host's
+	// own renderer draws an untoned icon in the accent and an untoned reading in the row's ink, and
+	// that ink is the strong one when the row is the selected one. See renderList in
+	// devices/src/svg.ts, which is the same surface drawn for a Stream Deck.
+	bool hasTone;
+	uint16_t tone;
+};
+
+// One labelled line of a detail surface: `{ label, value, tone? }`.
+struct Line {
+	char label[20];
+	char value[20];
+	bool hasTone;
+	uint16_t tone;
+};
+
 struct Slot {
 	bool used;
 	// Set whenever a frame touches this slot, cleared once `draw()` has repainted it. Segment
@@ -133,16 +190,48 @@ struct Slot {
 	bool sel;
 	int16_t x, y, w, h;
 
+	// A tile's label, and a detail's title. One field rather than two because a slot is one surface
+	// at a time and the second name would be a second thing to keep in step for no new capability.
 	char label[24];
 	char value[16];
-	char badge[8];
+	// Eight held a tile's badge, which is a reading like "+4%". A detail's badge is a word, and
+	// "TRENDING" is exactly nine bytes with its terminator, so eight drew "TRENDIN." on the first
+	// surface that used one.
+	char badge[12];
 	uint16_t tone;
 	uint8_t emphasis;
 	bool hasMeter;
 	float meter;
 
-	Seg segs[SEGS_MAX];
+	// A sentence under the rows: a list's `empty` and a detail's `footer`. The same field for the
+	// same reason `label` carries a title: both are prose the rows above cannot say for themselves,
+	// and no surface has both.
+	char caption[64];
+
+	// List: which row the host says is current, as an index into `rows` below rather than into what
+	// the host sent, and -1 for none. `first` is where the kept window starts and `total` is how
+	// many rows actually arrived, which together are what let the strip count honestly.
+	int16_t selected;
+	int16_t first;
+	int16_t total;
+	// The first visible row. Carried across frames rather than derived, so a cursor moving one row
+	// scrolls the window by one the way flint's own list does (src/views/setup.cpp, drawPicking)
+	// instead of jumping the selection back to the middle on every repaint.
+	int16_t top;
+	bool iconGutter;
+
+	// The three kinds are mutually exclusive, and a fixed table of eleven slots pays for the
+	// largest member eleven times over. A union is what keeps a list surface from costing every
+	// tile in the table 528 bytes of rows it will never hold. The counts live outside it, so that
+	// `Slot next = {}` zeroes them whatever the union's first member happens to be.
+	union {
+		Seg segs[SEGS_MAX];
+		Row rows[ROWS_MAX];
+		Line lines[LINES_MAX];
+	};
 	uint8_t segCount;
+	uint8_t rowCount;
+	uint8_t lineCount;
 };
 
 Slot slots[SLOTS];
@@ -195,10 +284,16 @@ int slotIndex(const char *id)
 		return -1;
 	}
 	if (strcmp(id, "strip:0") == 0) {
-		return 0;
+		return SLOT_STRIP;
 	}
 	if (strncmp(id, "key:", 4) == 0 && id[4] >= '0' && id[4] <= '8' && id[5] == '\0') {
-		return 1 + (id[4] - '0');
+		return SLOT_KEY_0 + (id[4] - '0');
+	}
+	// The body as one surface. Spelled the same on both ends because it is one name in one file:
+	// `SCREEN_SLOT` in devices/src/panel.ts, which an ESP32 panel was already painting before this
+	// device had anything to put on it.
+	if (strcmp(id, "screen:0") == 0) {
+		return SLOT_SCREEN;
 	}
 	return -1;
 }
@@ -357,6 +452,263 @@ void drawBar(const Slot &s)
 		         textdatum_t::middle_left);
 		x += (int)g.textWidth(s.segs[i].text) + 4;
 	}
+}
+
+// A reading sitting at the right hand end of a row, and how much of the row it leaves for the
+// label. Measured in whatever font the caller has set, which is Font2 at both call sites below:
+// Font2 is proportional, so measuring is the only way to know, and a label trimmed to a character
+// count would run underneath "0.0412 ETH" and stop short of "$4".
+//
+// The reading is capped at three fifths of the width rather than given whatever it asks for,
+// because a row where the number won is a row with no name on it, and the name is what somebody
+// scrolling is reading. Both halves are drawn through ui::clip, so whichever one is over budget
+// ends in a period instead of running off the panel.
+int readingRoom(const char *value, int width)
+{
+	if (value == nullptr || value[0] == '\0') {
+		return 0;
+	}
+	const int budget = width * 3 / 5;
+	const int measured = (int)ui::gfx().textWidth(value);
+	return (measured < budget ? measured : budget) + 6;
+}
+
+// Rows on a screen: the surface a page becomes on a device with one screen instead of eight keys,
+// and the one this panel exists to draw at the offsite: a list of trending tokens somebody scrolls
+// with the arrow keys while the host holds the cursor.
+//
+// Selection is the host's (it is the only end that knows how many rows survived a filter) and the
+// window is this end's, because only this end knows how many rows its rect has room for. Which is
+// why this takes a mutable slot: `top` is remembered between frames, exactly as flint's own list
+// remembers `pickTop` in src/views/setup.cpp, so a cursor walking down the list scrolls it by one
+// row at the bottom edge rather than recentring under the reader's eyes every repaint.
+void drawList(Slot &s)
+{
+	M5GFX &g = ui::gfx();
+	// Nothing this function draws may leave the rect the host gave it, and unlike a tile it cannot
+	// promise that by arithmetic: a row is 15 pixels whatever the slot is, so a slot ten rows tall
+	// holds six of them and a slot ten pixels tall holds most of one. The panel asks the driver to
+	// hold the line instead. Every return below clears it, because it is global state on the
+	// display and a slot that left it set would trim whatever painted next.
+	g.setClipRect(s.x, s.y, s.w, s.h);
+	g.fillRect(s.x, s.y, s.w, s.h, palette[GROUND]);
+
+	constexpr int PAD = 4;
+	// The cursor lives in a gutter of its own, always reserved, so the labels sit on one left edge
+	// whether or not the row they are on is the selected one. A list whose text stepped sideways
+	// under the cursor would read as the list moving rather than the cursor.
+	constexpr int CURSOR_W = 3;
+	// Font0 is six pixels a character, and the four left over are the gap between an icon and the
+	// label beside it. At eight they touched.
+	constexpr int ICON_W = 10;
+	const int rowH = ui::LINE_H;
+	const int right = s.x + s.w - PAD;
+
+	if (s.rowCount == 0) {
+		// An empty list says why it is empty. When the host did not say, this says that much rather
+		// than leaving a rectangle somebody has to guess the meaning of: a blank panel and a panel
+		// with nothing to put on it are different states and look identical.
+		g.setFont(&fonts::Font2);
+		ui::clip(s.caption[0] != '\0' ? s.caption : "nothing to show", s.x + s.w / 2, s.y + s.h / 2,
+		         s.w - PAD * 2, palette[INK_DIM], palette[GROUND], textdatum_t::middle_center);
+		g.clearClipRect();
+		return;
+	}
+
+	// How many rows fit, and whether a strip at the bottom has to say where in the list they are.
+	// The strip is Font0 rather than a row of its own: a whole 15 pixel row spent on "4 of 23" is a
+	// row of the actual list, and on a panel with six of them that is a sixth of the screen.
+	constexpr int STRIP_H = 9;
+	int visible = (s.h - 1) / rowH;
+	const bool windowed = s.total > visible;
+	if (windowed) {
+		visible = (s.h - 1 - STRIP_H) / rowH;
+	}
+	if (visible < 1) {
+		visible = 1;
+	}
+
+	// setup.cpp's three lines: move the window only as far as it takes to keep the cursor inside
+	// it. The clamp after them is this file's own, because the host resends the whole list every
+	// frame, and a list that got shorter would otherwise leave the window past the end of it.
+	if (s.selected >= 0) {
+		if (s.selected < s.top) {
+			s.top = s.selected;
+		} else if (s.selected >= s.top + visible) {
+			s.top = (int16_t)(s.selected - visible + 1);
+		}
+	}
+	const int last = s.rowCount - visible;
+	if (s.top > last) {
+		s.top = (int16_t)(last < 0 ? 0 : last);
+	}
+	if (s.top < 0) {
+		s.top = 0;
+	}
+
+	// The selected row's band is painted before any text so that the row below it cannot erase the
+	// tail of a descender when it clears its own ground: only one row here has a ground of its own.
+	const int cursorRow = s.selected - s.top;
+	if (cursorRow >= 0 && cursorRow < visible) {
+		const int y = s.y + cursorRow * rowH;
+		g.fillRect(s.x, y, s.w, rowH, palette[RAISED]);
+		// A bar in the gutter rather than a tone over the row, for drawTile's reason: a row that
+		// announced focus by changing colour would be indistinguishable from a row whose reading
+		// had gone negative.
+		g.fillRect(s.x + 1, y + 1, CURSOR_W, rowH - 2, palette[ACCENT]);
+	}
+
+	const int labelX = s.x + PAD + CURSOR_W + (s.iconGutter ? ICON_W : 0);
+	for (int i = 0; i < visible; i++) {
+		const int index = s.top + i;
+		if (index >= s.rowCount) {
+			break;
+		}
+		const Row &r = s.rows[index];
+		const bool on = index == s.selected;
+		const uint16_t ground = on ? palette[RAISED] : palette[GROUND];
+		const int middle = s.y + i * rowH + rowH / 2;
+
+		const uint16_t ink = on ? palette[INK_STRONG] : palette[INK];
+
+		if (s.iconGutter && r.icon[0] != '\0') {
+			g.setFont(&fonts::Font0);
+			ui::clip(r.icon, s.x + PAD + CURSOR_W + 1, middle, ICON_W,
+			         r.hasTone ? r.tone : palette[ACCENT], ground, textdatum_t::middle_left);
+		}
+
+		g.setFont(&fonts::Font2);
+		const int room = readingRoom(r.value, s.w - PAD * 2);
+		ui::clip(r.label, labelX, middle, right - labelX - room, ink, ground,
+		         textdatum_t::middle_left);
+		if (room > 0) {
+			ui::clip(r.value, right, middle, room, r.hasTone ? r.tone : ink, ground,
+			         textdatum_t::middle_right);
+		}
+	}
+
+	if (windowed) {
+		// Counted against what the host sent rather than against what this table kept, which is the
+		// whole point of tracking `first`: a strip reading "4 of 12" on a list of 23 is a plausible
+		// number that is not the number it claims to be.
+		char strip[32];
+		const int at = s.selected >= 0 ? s.first + s.selected + 1 : s.first + s.top + 1;
+		snprintf(strip, sizeof(strip), "%d of %d", at, (int)s.total);
+		const int y = s.y + s.h - STRIP_H;
+		g.fillRect(s.x, y, s.w, STRIP_H, palette[GROUND]);
+		g.drawFastHLine(s.x, y, s.w, palette[LINE]);
+		g.setFont(&fonts::Font0);
+		ui::clip(strip, right, y + 1, s.w / 2, palette[INK_DIM], palette[GROUND],
+		         textdatum_t::top_right);
+	}
+	g.clearClipRect();
+}
+
+// One thing, in full: a title, labelled lines under it, and a footer the contract says is never
+// truncated. The surface a row opens into, which is the other half of browsing a list on a device
+// whose screen is the only place a reading can go.
+void drawDetail(const Slot &s)
+{
+	M5GFX &g = ui::gfx();
+	// Held inside its own rect by the driver, for drawList's reason: the title band is 18 pixels and
+	// the footer takes what the sentence needs, neither of which shrinks to fit a slot that is
+	// smaller than both.
+	g.setClipRect(s.x, s.y, s.w, s.h);
+	g.fillRect(s.x, s.y, s.w, s.h, palette[GROUND]);
+
+	constexpr int PAD = 4;
+	const int right = s.x + s.w - PAD;
+	const int rowH = ui::LINE_H;
+
+	// The footer is measured off the bottom before anything else is laid out, and it takes as many
+	// rows as it needs. The contract says this one is never truncated because it is where a card
+	// says that approving happens somewhere else, and a panel that cut that sentence in half would
+	// be making a different claim about what this device can do. So it costs a line of the reading
+	// rather than losing its second half: Font0 is six pixels a character, so a 240 wide slot wraps
+	// it at about 38.
+	constexpr int FOOT_H = 9;
+	constexpr int FOOT_LINES = 3;
+	char footer[FOOT_LINES][ui::WRAP_MAX];
+	int footCount = 0;
+	int bottom = s.y + s.h;
+	if (s.caption[0] != '\0') {
+		footCount = ui::wrap(s.caption, (s.w - PAD * 2) / 6, footer, FOOT_LINES);
+		bottom -= footCount * FOOT_H + 2;
+	}
+
+	const int top = s.y + ui::TITLE_H + 1;
+	int room = (bottom - top) / rowH;
+	if (room < 0) {
+		room = 0;
+	}
+	// What did not fit. Counted against what the host sent rather than against what the wire table
+	// kept, so a detail cut short by the screen and one cut short by LINES_MAX say the same true
+	// thing. And it is said rather than left to be inferred from a reading that stops early: a
+	// number somebody cannot see is survivable, a number somebody does not know exists is how a
+	// partial answer gets read as the whole one.
+	//
+	// It goes in the title band beside the badge rather than on a row of its own, which is not
+	// tidiness. A 105 pixel slot holds four of these rows, so spending one on the words "1 more"
+	// hides a second line in order to admit to the first, and the panel ends up showing three of
+	// five readings to say that it is showing four.
+	const int shown = s.lineCount < room ? s.lineCount : room;
+	const int missing = (int)s.total - shown;
+
+	// The badge shares the title's band for the same reason: a panel this size has four lines to
+	// spend and a one word badge is not worth one of them.
+	//
+	// Drawn as a filled pill in the warning colour with the ground's ink through it, which is what
+	// the same surface is on a Stream Deck (renderDetail in devices/src/svg.ts), and the title is
+	// in the strong ink there rather than the accent, so it is in the strong ink here too. A badge
+	// is a thing stuck to a name: it has to read as attached to that name on both devices, and it
+	// is the one place this file draws a filled shape it did not have to.
+	int titleRoom = s.w - PAD * 2;
+	g.setFont(&fonts::Font0);
+	if (s.badge[0] != '\0') {
+		const int width = (int)g.textWidth(s.badge) + 10;
+		const int height = 12;
+		g.fillRoundRect(right - width, s.y + 3, width, height, height / 2, palette[WARNING]);
+		ui::clip(s.badge, right - width / 2, s.y + 3 + height / 2, width - 4, palette[SUNKEN],
+		         palette[WARNING], textdatum_t::middle_center);
+		titleRoom -= width + 6;
+	}
+	if (missing > 0) {
+		// Quiet ink rather than the warning colour, because the badge beside it is already wearing
+		// that and two marks in one band in one colour read as one mark. The claim it makes is
+		// small: there is more of this than the panel is showing.
+		char more[16];
+		snprintf(more, sizeof(more), "+%d", missing);
+		ui::clip(more, s.x + PAD + titleRoom, s.y + 5, 28, palette[INK_DIM], palette[GROUND],
+		         textdatum_t::top_right);
+		titleRoom -= (int)g.textWidth(more) + 6;
+	}
+	g.setFont(&fonts::Font2);
+	ui::clip(s.label, s.x + PAD, s.y + 1, titleRoom, palette[INK_STRONG], palette[GROUND],
+	         textdatum_t::top_left);
+	g.drawFastHLine(s.x, s.y + ui::TITLE_H - 1, s.w, palette[LINE]);
+
+	if (footCount > 0) {
+		g.drawFastHLine(s.x, bottom, s.w, palette[LINE]);
+		g.setFont(&fonts::Font0);
+		for (int i = 0; i < footCount; i++) {
+			ui::clip(footer[i], s.x + PAD, bottom + 2 + i * FOOT_H, s.w - PAD * 2, palette[INK_DIM],
+			         palette[GROUND], textdatum_t::top_left);
+		}
+	}
+
+	for (int i = 0; i < shown; i++) {
+		const Line &l = s.lines[i];
+		const int middle = top + i * rowH + rowH / 2;
+		g.setFont(&fonts::Font2);
+		const int reading = readingRoom(l.value, s.w - PAD * 2);
+		ui::clip(l.label, s.x + PAD, middle, right - (s.x + PAD) - reading, palette[INK_DIM],
+		         palette[GROUND], textdatum_t::middle_left);
+		if (reading > 0) {
+			ui::clip(l.value, right, middle, reading, l.hasTone ? l.tone : palette[INK],
+			         palette[GROUND], textdatum_t::middle_right);
+		}
+	}
+	g.clearClipRect();
 }
 
 // Waiting, and every moment before a host has spoken. Not an empty panel, and
@@ -533,6 +885,10 @@ void draw()
 			drawTile(s);
 		} else if (s.kind == KIND_BAR) {
 			drawBar(s);
+		} else if (s.kind == KIND_LIST) {
+			drawList(s);
+		} else if (s.kind == KIND_DETAIL) {
+			drawDetail(s);
 		}
 		s.dirty = false;
 	}
@@ -712,11 +1068,22 @@ bool takeRect(JsonObjectConst op, Slot &s)
 
 void applyFrame(JsonObjectConst message)
 {
+	bool paintedScreen = false;
+	bool paintedKey = false;
+	// Which way the body was being used before this frame, read before the ops below change it.
+	const bool wasScreen = slots[SLOT_SCREEN].used;
+	bool wasKeys = false;
+	for (int i = SLOT_KEY_0; i < SLOT_SCREEN; i++) {
+		wasKeys = wasKeys || slots[i].used;
+	}
+
 	for (JsonObjectConst op : message["ops"].as<JsonArrayConst>()) {
 		const int index = slotIndex(op["id"] | (const char *)nullptr);
 		if (index < 0) {
 			continue;
 		}
+		paintedScreen = paintedScreen || index == SLOT_SCREEN;
+		paintedKey = paintedKey || (index >= SLOT_KEY_0 && index < SLOT_SCREEN);
 		JsonObjectConst surface = op["s"].as<JsonObjectConst>();
 		if (surface.isNull()) {
 			continue;
@@ -755,14 +1122,123 @@ void applyFrame(JsonObjectConst message)
 				seg.color = tokenColor(segment["tone"] | (const char *)nullptr, palette[INK]);
 				next.segCount++;
 			}
+		} else if (strcmp(kind, "list") == 0) {
+			next.kind = KIND_LIST;
+			JsonArrayConst rows = surface["rows"].as<JsonArrayConst>();
+			const int total = (int)rows.size();
+			// The host counts its selection against the list it actually has, so a selection past
+			// the end of the one that arrived is a frame this end cannot draw honestly: no cursor
+			// at all beats a cursor on the wrong row.
+			int selected = surface["selected"] | -1;
+			if (selected < 0 || selected >= total) {
+				selected = -1;
+			}
+
+			// Which ROWS_MAX of the host's rows to keep. Anchored on the selection rather than on
+			// the front of the list, because the selected row is the one thing a window must never
+			// drop: it is what the arrow keys are moving and what the strip counts.
+			int first = 0;
+			if (total > ROWS_MAX) {
+				first = selected < 0 ? 0 : selected - ROWS_MAX / 2;
+				if (first > total - ROWS_MAX) {
+					first = total - ROWS_MAX;
+				}
+				if (first < 0) {
+					first = 0;
+				}
+			}
+
+			int index = 0;
+			for (JsonObjectConst row : rows) {
+				if (index++ < first) {
+					continue;
+				}
+				if (next.rowCount >= ROWS_MAX) {
+					break;
+				}
+				Row &r = next.rows[next.rowCount];
+				takeText(r.label, sizeof(r.label), row["label"] | "");
+				takeText(r.value, sizeof(r.value), row["value"] | "");
+				takeText(r.icon, sizeof(r.icon), row["icon"] | "");
+				// The same path a tile's tone takes: a token name resolved against the theme the
+				// host sent, never a colour off the wire. What an absent tone means is drawList's
+				// to decide, so this only records that it was absent.
+				const char *tone = row["tone"] | (const char *)nullptr;
+				r.hasTone = tone != nullptr;
+				r.tone = tokenColor(tone, palette[INK]);
+				if (r.icon[0] != '\0') {
+					next.iconGutter = true;
+				}
+				next.rowCount++;
+			}
+			next.first = (int16_t)first;
+			next.total = (int16_t)total;
+			next.selected = selected < 0 ? -1 : (int16_t)(selected - first);
+			// The scroll position survives the frame that replaced the rows, which is what makes
+			// this a list somebody is reading rather than one that re snaps every time the host
+			// repaints. Only when the slot was already a list: the same rect holding a tile a
+			// moment ago has no window to keep.
+			next.top = s.kind == KIND_LIST ? s.top : 0;
+			takeText(next.caption, sizeof(next.caption), surface["empty"] | "");
+		} else if (strcmp(kind, "detail") == 0) {
+			next.kind = KIND_DETAIL;
+			takeText(next.label, sizeof(next.label), surface["title"] | "");
+			takeText(next.badge, sizeof(next.badge), surface["badge"] | "");
+			takeText(next.caption, sizeof(next.caption), surface["footer"] | "");
+			JsonArrayConst lines = surface["lines"].as<JsonArrayConst>();
+			// How many the host actually sent, which is not how many this table holds. The panel
+			// counts what it could not draw against this rather than against LINES_MAX, so a detail
+			// truncated by the wire table and one truncated by the screen say the same true thing.
+			next.total = (int16_t)lines.size();
+			for (JsonObjectConst line : lines) {
+				if (next.lineCount >= LINES_MAX) {
+					break;
+				}
+				Line &l = next.lines[next.lineCount];
+				takeText(l.label, sizeof(l.label), line["label"] | "");
+				takeText(l.value, sizeof(l.value), line["value"] | "");
+				const char *tone = line["tone"] | (const char *)nullptr;
+				l.hasTone = tone != nullptr;
+				l.tone = tokenColor(tone, palette[INK]);
+				next.lineCount++;
+			}
 		} else {
-			// A list or a detail surface, which this geometry never asks for.
-			// Left blank rather than drawn wrong.
+			// A grid surface, which this geometry never asks for: the panel composes one for a
+			// touch screen, and this device has keys. Left blank rather than drawn wrong.
 			next.kind = KIND_NONE;
 		}
 		next.used = true;
 		s = next;
 		s.dirty = true;
+	}
+
+	// The screen and the nine keys are two ways of using the same rectangle, and the host paints
+	// one or the other (`page.layout`, and the "never both" note on the screen slot in
+	// devices/src/adapters/cardputer.ts). A slot left over from the other way is not a stale
+	// reading going quietly out of date: it is pixels on top of, or underneath, the ones that are
+	// current. So whichever half this frame painted, the other is dropped here, rather than left
+	// for the next full repaint to draw over the top of what somebody is reading.
+	//
+	// Dropped rather than trusted to be covered, because a browse page paints the body with a list
+	// and a key page paints nine tiles that leave the strip's row alone: neither covers the other
+	// by construction, only by arithmetic that holds today.
+	if (paintedScreen) {
+		for (int i = SLOT_KEY_0; i < SLOT_SCREEN; i++) {
+			slots[i].used = false;
+		}
+	} else if (paintedKey) {
+		slots[SLOT_SCREEN].used = false;
+	}
+	// And the changeover gets the one full clear it needs, the same way the standby to content
+	// transition does. Without it the body is repainted by whichever slots are dirty, which covers
+	// the other layout's pixels only because a screen slot happens to be exactly as big as the nine
+	// tiles it replaces. That is arithmetic in somebody else's file: `bodyRect` in
+	// devices/src/adapters/cardputer.ts is derived from the tile size for this very reason, and a
+	// geometry where it came out a row short would leave a stripe of the old layout on the glass.
+	const bool toScreen = paintedScreen && (wasKeys || !wasScreen);
+	const bool toKeys = paintedKey && !paintedScreen && wasScreen;
+	if (toScreen || toKeys) {
+		hadContent = false;
 	}
 	view::repaint();
 }
