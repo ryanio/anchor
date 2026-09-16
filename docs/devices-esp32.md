@@ -399,6 +399,32 @@ Two things made it hard to see, both worth remembering:
 `x2 |= 1`). It costs at most two columns of redraw and cannot lose pixels. Anything else that ever
 drives this panel directly needs the same rule.
 
+### The corners of this panel are not on the glass — keep 20 px clear
+
+The framebuffer is a full 368×448 rectangle. The display is a rounded one, and the radius is not
+published: it is not in this tree, and Waveshare's 3D model gives no clean value for it. So anything
+drawn into a corner is partly behind the bezel's curve, and the only way anybody here has established
+the clearance is by looking at a unit.
+
+**Three separate measurements, all by eye, and the largest of them is the number to use.**
+
+| Where | What it measured | Value |
+|---|---|---|
+| `sensors/sensors.ino` | its own margins | 20 px |
+| `svg.gridMetrics` | 4.5% of the short side | 17 px here |
+| `pulse_wifi.cpp` | 12, then 20 after the "Wi-Fi" heading came out clipped | 20 px |
+
+It lives in one place now — `INSET` in `devices/firmware/esp32/pulse/pulse_design.h` — and every
+layout in that firmware is positioned against the safe rectangle it defines (20, 20)–(348, 428)
+rather than against the panel.
+
+What makes this cost more than it should: the failure is silent and partial. A heading loses a few
+pixels off the left of its first glyph, which reads as a font or an antialiasing problem rather than
+as geometry, and nothing in a screenshot shows it because the simulator draws the full rectangle. The
+drift is silent too — the Wi-Fi picker's three-button row stayed 109 px wide after `INSET` went from
+12 to 20, so the last button's right edge sat 5 px from the panel edge for as long as the number was
+written out by hand in two files. Derive the row from the safe width; do not retype it.
+
 ### The tearing line, and an oracle that was switched off
 
 GPIO 13 carries the panel's tearing-effect signal at about 58 Hz. It is worth its own paragraph

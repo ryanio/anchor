@@ -151,6 +151,7 @@ if [ "$needs_build" = "1" ]; then
 		"$here/src/pulse_ino.cpp" \
 		"$here/src/pulse_touch_sim.cpp" \
 		"$here/src/feed_sim.cpp" \
+		"$sketch/pulse_design.cpp" \
 		"$sketch/pulse_feed_view.cpp" \
 		"$sketch/pulse_ui.cpp" \
 		"$sketch/pulse_wifi.cpp" \

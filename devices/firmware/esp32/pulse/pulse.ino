@@ -289,7 +289,7 @@ static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data) {
  * keeps saying it. A number with no age on it is the failure `theme/README.md` principle 6 names,
  * and the one this project has already shipped once.
  */
-static pulse_ui::Reading reading;
+static pulse_ui::Screen screen;
 
 static uint32_t booted_at_ms = 0;
 static char age_text[24] = "just now";
@@ -344,10 +344,10 @@ static void refresh_feed(void) {
     view_tokens[i].changePositive = snap.tokens[i].changePositive;
   }
 
-  reading = pulse_feed_view::compose((pulse_feed_view::Status)snap.status, snap.reason, view_tokens,
-                                     snap.count, millis() / ROTATE_MS, snap.ageMs,
-                                     snap.everSucceeded);
-  pulse_ui::update(reading);
+  screen = pulse_feed_view::compose((pulse_feed_view::Status)snap.status, snap.reason, view_tokens,
+                                    snap.count, millis() / ROTATE_MS, snap.ageMs,
+                                    snap.everSucceeded);
+  pulse_ui::update(screen);
 }
 
 /* ------------------------------------------------------------------- the calibration readout --- */
@@ -393,13 +393,17 @@ static void on_touch(lv_event_t *event) {
 }
 
 /*
- * The footer, which now has two claimants and one of them wins for four seconds.
+ * The bottom line, which has two claimants and one of them wins for four seconds.
  *
- * The age itself belongs to the feed — it is the age of the *reading*, which is the only age worth
- * printing next to a number, and `pulse_feed_view::compose` sets it. What survives here is the
- * calibration readout: a touch replaces the footer with its own coordinate briefly, because the open
- * question about this board is still whether the CST820 ever answers at all, and the person who can
- * close it is holding the unit.
+ * Both archetypes have exactly one: the reading's age, and the status's note. `pulse_ui::setFooter`
+ * writes to whichever is up, which is why this function does not have to know which kind of screen
+ * is showing. The age itself belongs to the feed — it is the age of the *reading*, the only age
+ * worth printing next to a number — and `pulse_feed_view::compose` sets it.
+ *
+ * What survives here is the calibration readout: a touch replaces that line with its own coordinate
+ * briefly, because the open question about this board is still whether the CST820 ever answers at
+ * all, and the person who can close it is holding the unit. It is rewritten every pass rather than
+ * once, because `refresh_feed` runs twice a second and re-applies the screen underneath it.
  *
  * Before the feed existed this also counted up from boot, so that placeholder figures could never be
  * mistaken for live ones. There are no placeholder figures now — an unfed screen says what it is
@@ -408,15 +412,17 @@ static void on_touch(lv_event_t *event) {
 static void refresh_age(void) {
   if (!ever_touched) return;
   if ((millis() - touched_at_ms) >= TOUCH_READOUT_MS) {
-    /* Hand the footer back to the reading's own age, once, rather than every pass. */
+    /* Hand the line back to whatever the screen itself wanted there, once, rather than every pass.
+     * Through `update()` rather than `setFooter()` so that a status whose note is empty goes back to
+     * being a centred composition with nothing at the bottom, instead of an empty visible label. */
     if (age_text[0] != '\0') {
       age_text[0] = '\0';
-      pulse_ui::setAge(reading.age);
+      pulse_ui::update(screen);
     }
     return;
   }
   snprintf(age_text, sizeof(age_text), "touch %d,%d", (int)touch_x, (int)touch_y);
-  pulse_ui::setAge(age_text);
+  pulse_ui::setFooter(age_text);
 }
 
 /* -------------------------------------------------------------------------------- banner ------ */
@@ -584,7 +590,7 @@ void setup() {
    */
   feed::begin();
   refresh_feed();
-  pulse_ui::build(reading);
+  pulse_ui::build(screen);
 
   /*
    * Wi-Fi setup, which owns its own screen and takes over when it needs to.

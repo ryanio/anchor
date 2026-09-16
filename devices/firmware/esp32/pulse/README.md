@@ -12,6 +12,30 @@ larger call". This is that call, made.
 **`app/` is not touched by any of this and stays the firmware that ships** until LVGL is proven on
 glass. Nothing here has been flashed.
 
+## The design system
+
+`pulse_design.{h,cpp}` holds the palette, the spacing scale, the type scale and the four shapes of
+screen this firmware has. Nothing else in `pulse/` names a colour or a pixel.
+
+- **Colours by role**, not by hue: `ground`, `surface`, `raised`, `edge`, `ink`, `ink_dim`,
+  `ink_faint`, `accent`, `good`, `bad`, `warn` — and a `Tone` enum so a screen says `Tone::Warn`
+  rather than picking a shade. The values are the Tokyo Night ones sampled out of
+  `review/devices/pulse-amoled.png`; they used to exist twice, verbatim, in `pulse_ui.cpp` and
+  `pulse_wifi.cpp`.
+- **Six spacing steps** (4, 8, 12, 20, 32, 52) where `lg` is also `INSET`, the corner clearance, so
+  the outermost gutter is part of the same rhythm as everything inside it.
+- **Nine type steps**, each a Montserrat face `lv_conf.h` already carries, named for the job:
+  `caption` 16 … `hero` 40, `display` 48. Nothing is smaller than 16 — this panel is read from
+  across a room.
+- **Four archetypes**: `buildReading` (one subject, four labelled values, a footer),
+  `buildStatus` (one state, said plainly, with what to do about it), `buildChooser` (the network
+  list), `buildInput` (the passphrase keyboard). Every screen in the firmware is one of them, and
+  the Wi-Fi join result and the ambient "Not set up" screen are now the *same* archetype.
+
+The status archetype is why this exists. Every state with no data used to be drawn as a reading with
+one row filled — the state word landing in the right-aligned 40 px value column at x=123 with three
+empty label/value pairs beneath it — which is 250 px of dead panel and was reported as exactly that.
+
 ## Run it without hardware
 
 ```bash
@@ -19,6 +43,23 @@ devices/firmware/esp32/sim/lvgl.sh --shot /tmp/pulse --quit-after 4000
 devices/firmware/esp32/sim/lvgl.sh --taps "184,120 300,300" --shot /tmp/pulse
 devices/firmware/esp32/sim/lvgl.sh --no-psram --shot /tmp/pulse   # the fallback draw buffer
 ```
+
+Every state the ambient screen can be in has a `--feed` scenario, because a state nobody can
+photograph is a state nobody has designed:
+
+```bash
+sim/lvgl.sh --feed no-credentials --saved "Home:x" --shot /tmp/a   # nothing typed in yet
+sim/lvgl.sh --feed joining        --saved "Home:x" --shot /tmp/b
+sim/lvgl.sh --feed fetching       --saved "Home:x" --shot /tmp/c
+sim/lvgl.sh --feed failed         --saved "Home:x" --shot /tmp/d   # never worked
+sim/lvgl.sh --feed lost           --saved "Home:x" --shot /tmp/e   # worked, then stopped
+sim/lvgl.sh --feed waiting        --saved "Home:x" --shot /tmp/f
+sim/lvgl.sh --feed disabled       --saved "Home:x" --shot /tmp/g   # built with no API key
+sim/lvgl.sh --feed live           --saved "Home:x" --shot /tmp/h   # a reading
+sim/lvgl.sh --feed stale          --saved "Home:x" --shot /tmp/i   # a reading, labelled old
+```
+
+`--saved` is what keeps Wi-Fi setup from opening over the state being photographed.
 
 This builds `pulse.ino`, `pulse_ui.cpp` and LVGL 9.2.2 for the desktop, runs the firmware's real
 `setup()` and `loop()` against shims for Arduino, `Arduino_GFX` and the heap, points the firmware's
@@ -85,6 +126,26 @@ enumerates through the same Espressif descriptor, so a port index is a coin flip
 `docs/devices-esp32.md` about the 6,601 restarts that fact produced.
 
 ## Measured
+
+- **The design system costs 2,116 bytes of flash and 216 bytes of static RAM.** 1,713,839 →
+  1,715,955 (54% either way), 52,016 → 52,232. That is the whole of `pulse_design.cpp`, the status
+  archetype, both adaptive font rules and two new screens, against a build that already carried the
+  reading. No new face was enabled — the scale is the list of faces `lv_conf.h` already had, which
+  is why it is nine steps and not seven.
+- **The Wi-Fi picker's button row was 15 px wider than the safe area.** Three buttons of 109 px plus
+  two 8 px gaps is 343, against a safe width of 328 — arithmetic that was correct when `INSET` was
+  12 and was not updated when it became 20. Found by deriving the row from `SAFE_W` instead, which
+  changed the number.
+- **The keyboard ran 12 px past the safe rectangle** into both bottom corners, on the row carrying
+  the space bar and the OK key. It ends at 428 now.
+- **"ABC" on the mode key never fitted.** Ten columns is about 32 px a key and three glyphs of
+  Montserrat 24 is 39, so the "A" was clipped in every render including the one whose comment claimed
+  widening the keys had fixed it. The control keys are set in 18 now.
+- **`lv_obj_get_x/y` are relative to the parent's *content* box in LVGL 9.** Reading the simulator's
+  tree dump as absolute panel coordinates makes a correctly centred block look one `INSET` high. It
+  cost one wrong fix, immediately reverted.
+
+## Measured before the design system
 
 - **Compiles at 677,672 bytes (21% of the 3 MB app partition) and 25,144 bytes of static RAM (7%).**
   `../app/` is 963,539 (30%) and 55,392 (16%) — the blitter is *larger*, because it carries the

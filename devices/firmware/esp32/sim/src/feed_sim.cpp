@@ -106,6 +106,27 @@ void simScenario(const char *name) {
 		scenario_reason = "http 401";
 		scenario_ever = false;
 		scenario_count = 0;
+	} else if (strcmp(name, "lost") == 0) {
+		/*
+		 * Had data, lost the network, and has no rows left to show either.
+		 *
+		 * Distinct from `stale`, which keeps its tokens: this is the same status with an empty list,
+		 * so it is the one that falls through to the *status* archetype and has to say "Stale" with an
+		 * age rather than a price with an age. It existed as a branch in `pulse_feed_view.cpp` with no
+		 * way to photograph it, which by this repo's own rule is a state nobody has designed.
+		 */
+		scenario_status = Status::Failed;
+		scenario_reason = "rate limited by OpenSea";
+		scenario_ever = true;
+		scenario_age_ms = 22u * 60u * 1000u;
+		scenario_count = 0;
+	} else if (strcmp(name, "waiting") == 0) {
+		/* Associated, nothing fetched, nothing wrong — the default arm of `emptyFor`, which every
+		 * other scenario steps around. */
+		scenario_status = Status::Online;
+		scenario_reason = "waiting for the first fetch";
+		scenario_ever = false;
+		scenario_count = 0;
 	} else if (strcmp(name, "stale") == 0) {
 		/* The interesting one: data that arrived and then stopped. It stays on screen, because a
 		 * labelled old number beats a blank panel, and the age is what makes that honest. */

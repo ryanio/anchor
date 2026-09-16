@@ -20,6 +20,12 @@
  * can be in with nobody at a desk to interpret it — no network typed in yet, joining, joined but
  * nothing fetched, fetched and stale, fetched and fresh, and failed with a reason. A blank screen
  * that means six different things is the failure mode this project has already shipped once.
+ *
+ * **This function also picks the archetype.** A state with no data returns `Screen::Kind::Status`
+ * and a state with data returns `Screen::Kind::Reading`, which is the decision that stops a status
+ * word from being rendered as a portfolio with one row filled in — see the note at the top of
+ * `pulse_ui.h`. It belongs here rather than in the layout because "is there anything to read" is a
+ * question about the data.
  */
 namespace pulse_feed_view {
 
@@ -46,11 +52,11 @@ struct Token {
  * `ageMs` is only meaningful once something has been fetched; `everSucceeded` is what distinguishes
  * "nothing yet" from "nothing since", which are different sentences to a person holding the unit.
  */
-pulse_ui::Reading compose(Status status, const char *reason, const Token *tokens, size_t count,
-                          size_t rotation, uint32_t ageMs, bool everSucceeded);
+pulse_ui::Screen compose(Status status, const char *reason, const Token *tokens, size_t count,
+                         size_t rotation, uint32_t ageMs, bool everSucceeded);
 
-/* "just now", "12s ago", "4m ago" — shared with the boot-age footer so one clock is described one
- * way everywhere on this screen. */
+/* "just now", "12s ago", "4m ago" — shared with the stale footer so one clock is described one way
+ * everywhere on this screen. */
 void formatAge(uint32_t ms, char *into, size_t size);
 
 }  // namespace pulse_feed_view

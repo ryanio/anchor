@@ -3,14 +3,29 @@
 
 #include <lvgl.h>
 
+#include "pulse_design.h"
+
 /*
- * The screen, as LVGL objects, with no Arduino in it.
+ * The ambient screen, as LVGL objects, with no Arduino in it.
  *
- * This file and `pulse_ui.cpp` are the only part of this sketch that knows what a portfolio readout
+ * This file and `pulse_ui.cpp` are the only part of this sketch that knows what the resting panel
  * looks like, and they are deliberately free of `Arduino.h`, `Wire.h` and the panel driver. That is
  * what lets the host simulator (`../sim/lvgl.sh`) build the *same* screen against the *same* LVGL
  * and photograph it, rather than a transcription of it — the seam the Cardputer and the existing
  * `app/` simulator both put in the same place.
+ *
+ * ## Two kinds of screen, not one with holes in it
+ *
+ * There used to be one: a reading, with four label/value pairs. Every state that had no data was
+ * drawn through it anyway, which meant the word "not set up" landed in the right-aligned 40px value
+ * column at x=123 with three empty pairs beneath it and about 250px of dead panel underneath that.
+ * Reported in as many words — "the not set up is weirdly to the right with a lot of blank space" —
+ * and it is not a spacing bug. A status is a different kind of screen.
+ *
+ * So `Screen` is a tagged union of the two, both built at `build()` time and one shown at a time,
+ * and both drawn from the archetypes in `pulse_design.h`. Which one is up is decided by whoever
+ * composes the screen — `pulse_feed_view.cpp` — because the question "is there a reading" is a
+ * question about the data and not about the layout.
  *
  * ## Why this device draws at all
  *
@@ -20,17 +35,9 @@
  * these units have to work in the field with nothing on the cable, and a blitter with no host is a
  * dark panel. The doc names this exact case and leaves it open — "a standalone renderer for actual
  * portfolio data with no host present ... is still open, and is a separate, larger call". Ryan made
- * the call. This is that renderer, and it pays the costs the doc priced:
- *
- *   - **It holds its own palette.** The colours below are Tokyo Night, sampled out of
- *     `review/devices/pulse-amoled.png` rather than typed from memory, because that render is the
- *     design target. A device on a desk whose Omarchy theme has since changed will now disagree with
- *     the bar above it. That is the "one widget that ignores the user's desktop" failure, in
- *     hardware, and it is accepted here rather than denied — the fix, when it matters, is for the
- *     host to send a palette when it *is* connected, not for this file to pretend it has one.
- *   - **It holds its own typeface.** Montserrat, from LVGL, not the user's fontconfig monospace.
- *   - **A design change is a flash.** Which is why the simulator exists and why it is the thing to
- *     use first.
+ * the call. This is that renderer, and it pays the costs the doc priced: it holds its own palette
+ * (`pulse_design.h`, which is now the single place that is true of), it holds its own typeface, and
+ * a design change is a flash — which is why the simulator exists and is the thing to use first.
  */
 namespace pulse_ui {
 
@@ -69,17 +76,58 @@ struct Reading {
 	const char *labels[4] = {"Total", "P&L", "NFTs", "Window"};
 };
 
-/* Build the screen onto LVGL's active display. Call once, after `lv_init()` and after a display
- * exists. */
-void build(const Reading &reading);
+/*
+ * One state, said plainly, with what to do about it.
+ *
+ * The fields are the status archetype's slots and the rules for filling them are worth stating,
+ * because the difference between this reading well and reading like an error dialogue is entirely in
+ * the copy:
+ *
+ *   `eyebrow`  the subsystem this is about, so a person knows which of two things is unhappy.
+ *   `headline` the state, in two or three words. It is set in the largest face that fits it, which
+ *              means a long one silently shrinks — prefer short.
+ *   `tone`     `Accent` while something is in progress, `Bad` for a failure, `Warn` for a fact that
+ *              is not a fault. A unit built without an API key is behaving exactly as the checkout
+ *              it came from asked it to, and must not wear red.
+ *   `detail`   what a person can *do*, or what is being waited for. The sentence somebody who has
+ *              walked over to the device reads.
+ *   `support`  what the layer underneath said, in its own words — an HTTP reason, an IP address.
+ *   `note`     provenance. An age, or the touch coordinate the calibration readout borrows.
+ */
+struct Status {
+	const char *eyebrow = "";
+	const char *headline = "";
+	pulse_design::Tone tone = pulse_design::Tone::Ink;
+	const char *detail = "";
+	const char *support = "";
+	const char *note = "";
+};
 
-/* Repaint the values in place. LVGL invalidates only what changed, so an unchanged reading costs
- * nothing on the bus — the same promise the blitter's dirty-rect diff makes. */
-void update(const Reading &reading);
+/* What the panel should be showing. `kind` selects which of the two archetypes is up. */
+struct Screen {
+	enum class Kind : uint8_t { Reading, Status };
+	Kind kind = Kind::Status;
+	Reading reading;
+	Status status;
+};
 
-/* Just the footer, which is the one field that changes every second whether the reading does or
- * not. Separate so that a ticking age does not mark four unchanged numbers dirty. */
-void setAge(const char *age);
+/* Build both archetypes onto LVGL's active display and show the one `screen` selects. Call once,
+ * after `lv_init()` and after a display exists. */
+void build(const Screen &screen);
+
+/* Repaint in place, swapping archetypes if the kind changed. LVGL invalidates only what changed, so
+ * an unchanged screen costs nothing on the bus — the same promise the blitter's dirty-rect diff
+ * makes. */
+void update(const Screen &screen);
+
+/*
+ * Just the footer line, which is the one field that changes every second whether anything else does
+ * or not. Separate so that a ticking age does not mark four unchanged numbers dirty.
+ *
+ * It writes to whichever archetype is showing: the reading's age line, or the status's note. There
+ * is exactly one bottom line on this panel and both kinds of screen own theirs.
+ */
+void setFooter(const char *text);
 
 /*
  * The object a touch lands on, for whoever owns input.
@@ -88,6 +136,11 @@ void setAge(const char *age);
  * handler here. Keeping the seam at one accessor rather than putting an `lv_obj_add_event_cb` in
  * `build()` is what stops the layout from also being the place product behaviour accumulates — the
  * same reason the host's renderer has no opinion about what a tap means and `panel.ts` does.
+ *
+ * It is the whole panel and not the card, which matters for the one gesture that has to be
+ * discoverable: with no network saved, a tap anywhere opens setup, and the status screen says so in
+ * as many words. A target that stopped at the card's edge would have a ring of glass that silently
+ * does nothing.
  *
  * Null before `build()` has run.
  */

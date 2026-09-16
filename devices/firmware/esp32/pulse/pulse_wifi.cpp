@@ -8,121 +8,42 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "pulse_design.h"
+
 namespace pulse_wifi {
 
 namespace {
 
-/* ------------------------------------------------------------------------------ the palette ---- */
+using namespace pulse_design;
+
+/* ------------------------------------------------------------------------------- the screens --- */
 
 /*
- * Tokyo Night again, and yes these eight lines also exist in `pulse_ui.cpp`.
+ * Three of the four archetypes, and this file draws none of them itself.
  *
- * They are copied rather than shared because `pulse_ui.h` deliberately exposes a layout and a
- * reading, not a theme, and widening its interface to hand out colours would make it the place a
- * palette lives — which is one more thing for a screen to depend on. The real fix, when the host can
- * send its Omarchy theme down the cable, deletes both copies at once. Until then two files agreeing
- * on eight constants is cheaper than a header that exists to hold them.
- */
-constexpr uint32_t GROUND = 0x13141C;
-constexpr uint32_t CARD = 0x1A1B26;
-constexpr uint32_t EDGE = 0x292E42;
-constexpr uint32_t KEY = 0x24283B;
-constexpr uint32_t TEXT = 0xC0CAF5;
-constexpr uint32_t MUTED = 0x586089;
-constexpr uint32_t FAINT = 0x4E556D;
-constexpr uint32_t GAIN = 0x9ECE6A;
-constexpr uint32_t LOSS = 0xF7768E;
-constexpr uint32_t ACCENT = 0x7AA2F7;
-/*
- * Tokyo Night's yellow, for the word "open" on a network row.
+ * Eleven colour constants and every metric on these pages used to live here, duplicated from
+ * `pulse_ui.cpp` under a comment explaining that two files agreeing on eight constants was cheaper
+ * than a header to hold them. It was not: the duplication is what let the pick page's button row go
+ * on being 109 px wide after `INSET` moved from 12 to 20, which put the "Close" button's right edge
+ * five pixels from the panel edge — inside the rounded corner, on the first screen a stranger sees.
+ * The row is derived from `SAFE_W` in `pulse_design.cpp` now and that class of drift has one place
+ * to be fixed.
  *
- * It was `LOSS` — the red the P&L uses — for one render, and on the glass that reads as an error
- * rather than as a caution: an open network is a perfectly joinable network that happens to carry no
- * encryption, and the row is not a failure. Yellow is the one colour in this palette that says
- * "notice this" without saying "this went wrong", which is exactly the distinction wanted.
+ * What stays here is everything this module is actually about: the radio, the credential, the state
+ * machine, and what a tap on any of these objects means.
  */
-constexpr uint32_t WARN = 0xE0AF68;
+ChooserView pick;
+InputView typing;
+StatusView result;
 
-/* ------------------------------------------------------------------------------- the metrics --- */
-
-/*
- * The panel is 368x448 and everything is inset from it, by the amount `INSET` argues for below.
- *
- * Every number below is the one the render was checked at, not the one that was typed first — see
- * the notes against the keyboard and the button row, both of which moved after looking at a PNG.
- */
-constexpr int32_t PANEL_W = 368;
-constexpr int32_t PANEL_H = 448;
-/*
- * 20, because the corners of this panel are not on the glass.
- *
- * The framebuffer is a full 368x448 rectangle and the display is a rounded one, so anything drawn
- * into a corner is partly behind the bezel's curve. This was 12 and the "Wi-Fi" heading lost a few
- * pixels off the left of the W — reported from the desk, and the third time this exact radius has
- * caught something: `sensors/sensors.ino` measured the same clearance at 20 for the same reason, and
- * `svg.gridMetrics` insets its tile grid by 4.5% of the short side, which is 17 here.
- *
- * It is a margin measured by eye against a unit rather than a published number — the radius is not
- * in this tree and Waveshare's 3D model gives no clean value for it — so it is deliberately the
- * larger of the three rather than the tightest that happened to work.
- */
-constexpr int32_t INSET = 20;
-constexpr int32_t INNER_W = PANEL_W - 2 * INSET; /* 328 */
-
-/* The pick page. */
-constexpr int32_t PICK_TITLE_Y = 12;
-constexpr int32_t PICK_STATUS_Y = 44;
-constexpr int32_t LIST_Y = 72;
-/*
- * `LIST_HEIGHT` and not `LIST_H`, which is a name this file cannot have.
- *
- * `LIST_H` is an include guard in one of the headers the ESP32 core drags in behind `WiFi.h`, so on
- * the board it expands to nothing and the line becomes `constexpr int32_t = 296;`. The desktop
- * simulator compiles this file against shims that include no such header and was perfectly happy —
- * which is worth writing down, because it is the one class of mistake this harness cannot catch and
- * the only cure is to compile for the board before believing it.
- */
-constexpr int32_t LIST_HEIGHT = 296; /* 72..368 */
-constexpr int32_t PICK_BUTTON_Y = 380;
-constexpr int32_t PICK_BUTTON_H = 54;
-constexpr int32_t PICK_BUTTON_W = 109; /* three of these plus two 8 px gaps is 343 of 344 */
-constexpr int32_t PICK_BUTTON_GAP = 8;
-
-/* The typing page. */
-constexpr int32_t TYPE_TITLE_Y = 10;
-constexpr int32_t TYPE_SUB_Y = 40;
-constexpr int32_t ENTRY_Y = 66;
-constexpr int32_t ENTRY_H = 54;
-constexpr int32_t REVEAL_W = 72;
-constexpr int32_t ENTRY_W = INNER_W - REVEAL_W - 8; /* 264 */
-constexpr int32_t HINT_Y = 130;
-/*
- * The keyboard: 360 wide at x=4, 244 tall from y=196 to y=440.
- *
- * Not full-bleed, because of the corners above; not shorter, because key height is the axis that is
- * free here and `app/wifi_setup.cpp` measured what happens when it is spent badly — four rows ending
- * at y=304 left the bottom third of the panel dead while the keys were the hardest thing on it to
- * hit. LVGL's default map is four rows, so 244/4 is 61 px a row, about 4.8 mm on this 322 ppi glass,
- * against the 9-10 mm `TOUCH_TARGET_PX` is derived from. That is still under target and it is the
- * best this panel can do with ten columns; the popovers below are what closes the rest of the gap.
- *
- * The 56 px between the hint line and the top of the keyboard is not slack — it is where LVGL draws
- * the popover for a pressed key on the top row, and a keyboard flush against the hint would have the
- * popover cover the text somebody is checking.
- */
-constexpr int32_t KB_X = 4;
-constexpr int32_t KB_W = PANEL_W - 2 * KB_X; /* 360 */
-constexpr int32_t KB_Y = 196;
-constexpr int32_t KB_H = 244;
-
-/* The result page. */
-constexpr int32_t RESULT_HEADLINE_Y = 110;
-constexpr int32_t RESULT_DETAIL_Y = 158;
-constexpr int32_t RESULT_INFO_Y = 198;
-constexpr int32_t RESULT_NOTE_Y = 240;
-constexpr int32_t RESULT_BUTTON_Y = 320;
-constexpr int32_t RESULT_BUTTON_H = 56;
-constexpr int32_t RESULT_BUTTON_W = 166;
+/* Which of the result screen's two buttons is which. They live in the status archetype's action row,
+ * which is a flex container — so they are positioned by it rather than by a coordinate, which is
+ * what fixes the thing the old layout had to special-case: a lone button sat where the right-hand
+ * one of a pair goes, leaving a 166 px hole beside it that read as a second button that failed to
+ * draw. Hiding one now simply re-centres the other. */
+lv_obj_t *result_retry = nullptr;
+lv_obj_t *result_dismiss = nullptr;
+lv_obj_t *result_dismiss_label = nullptr;
 
 /* --------------------------------------------------------------------------------- timings ---- */
 
@@ -233,32 +154,6 @@ int hold_repeats = 0;
 lv_obj_t *screen = nullptr;
 lv_obj_t *return_screen = nullptr;
 
-lv_obj_t *pick_page = nullptr;
-lv_obj_t *pick_title = nullptr;
-lv_obj_t *pick_status = nullptr;
-lv_obj_t *list = nullptr;
-
-lv_obj_t *type_page = nullptr;
-lv_obj_t *type_title = nullptr;
-lv_obj_t *type_sub = nullptr;
-lv_obj_t *entry = nullptr;
-lv_obj_t *reveal_label = nullptr;
-lv_obj_t *keyboard = nullptr;
-
-lv_obj_t *result_page = nullptr;
-lv_obj_t *result_headline = nullptr;
-lv_obj_t *result_detail = nullptr;
-lv_obj_t *result_info = nullptr;
-lv_obj_t *result_note = nullptr;
-lv_obj_t *result_retry = nullptr;
-lv_obj_t *result_dismiss = nullptr;
-lv_obj_t *result_dismiss_label = nullptr;
-
-lv_color_t hex(uint32_t rgb)
-{
-	return lv_color_hex(rgb);
-}
-
 void setStatus(const char *format, ...)
 {
 	va_list args;
@@ -267,72 +162,10 @@ void setStatus(const char *format, ...)
 	va_end(args);
 }
 
-/* ------------------------------------------------------------------------------- the widgets --- */
-
-/*
- * A label that does not move when its text does, and ellipsises rather than wrapping.
- *
- * `LV_LABEL_LONG_DOT` against a pinned width is the whole of the fifth bug's fix. Arduino_GFX wraps
- * — a 32-character SSID at size 2 is 384 px on a 368 px panel and lands on the next line, over the
- * keyboard — and the old module's answer was to compute a character budget per call site, which was
- * a different guess about a different string in three places and wrong in all three. A width and a
- * long mode is one decision, made once, that LVGL enforces for every string it is ever given.
- */
-lv_obj_t *makeLabel(lv_obj_t *parent, const lv_font_t *font, uint32_t colour, int32_t x, int32_t y,
-                    int32_t width, lv_text_align_t align)
-{
-	lv_obj_t *label = lv_label_create(parent);
-	lv_obj_set_pos(label, x, y);
-	lv_obj_set_width(label, width);
-	lv_obj_set_style_text_font(label, font, LV_PART_MAIN);
-	lv_obj_set_style_text_color(label, hex(colour), LV_PART_MAIN);
-	lv_obj_set_style_text_align(label, align, LV_PART_MAIN);
-	lv_label_set_long_mode(label, LV_LABEL_LONG_DOT);
-	return label;
-}
-
-lv_obj_t *makeButton(lv_obj_t *parent, int32_t x, int32_t y, int32_t w, int32_t h, const char *text,
-                     const lv_font_t *font, lv_obj_t **label_out = nullptr)
-{
-	lv_obj_t *button = lv_button_create(parent);
-	lv_obj_set_pos(button, x, y);
-	lv_obj_set_size(button, w, h);
-	lv_obj_set_style_bg_color(button, hex(KEY), LV_PART_MAIN);
-	lv_obj_set_style_bg_opa(button, LV_OPA_COVER, LV_PART_MAIN);
-	lv_obj_set_style_border_color(button, hex(EDGE), LV_PART_MAIN);
-	lv_obj_set_style_border_width(button, 1, LV_PART_MAIN);
-	lv_obj_set_style_radius(button, 10, LV_PART_MAIN);
-	lv_obj_set_style_shadow_width(button, 0, LV_PART_MAIN);
-	lv_obj_set_style_pad_all(button, 0, LV_PART_MAIN);
-	lv_obj_t *label = lv_label_create(button);
-	lv_label_set_text(label, text);
-	lv_obj_set_style_text_font(label, font, LV_PART_MAIN);
-	lv_obj_set_style_text_color(label, hex(TEXT), LV_PART_MAIN);
-	lv_obj_center(label);
-	if (label_out != nullptr) *label_out = label;
-	return button;
-}
-
-/* A full-panel page. Transparent, so the screen's own ground shows through and only one object in
- * the tree paints the background. */
-lv_obj_t *makePage(lv_obj_t *parent)
-{
-	lv_obj_t *page = lv_obj_create(parent);
-	lv_obj_set_pos(page, 0, 0);
-	lv_obj_set_size(page, PANEL_W, PANEL_H);
-	lv_obj_set_style_bg_opa(page, LV_OPA_TRANSP, LV_PART_MAIN);
-	lv_obj_set_style_border_width(page, 0, LV_PART_MAIN);
-	lv_obj_set_style_radius(page, 0, LV_PART_MAIN);
-	lv_obj_set_style_pad_all(page, 0, LV_PART_MAIN);
-	lv_obj_remove_flag(page, LV_OBJ_FLAG_SCROLLABLE);
-	lv_obj_set_scrollbar_mode(page, LV_SCROLLBAR_MODE_OFF);
-	return page;
-}
-
 void showPage(lv_obj_t *page)
 {
-	if (pick_page == nullptr) return;
-	lv_obj_t *const pages[3] = {pick_page, type_page, result_page};
+	if (pick.page == nullptr) return;
+	lv_obj_t *const pages[3] = {pick.page, typing.page, result.page};
 	for (lv_obj_t *one : pages) {
 		if (one == page) {
 			lv_obj_remove_flag(one, LV_OBJ_FLAG_HIDDEN);
@@ -453,22 +286,11 @@ void onNetworkPicked(lv_event_t *event);
  */
 void rebuildList()
 {
-	if (list == nullptr) return;
-	lv_obj_clean(list);
+	if (pick.list == nullptr) return;
+	lv_obj_clean(pick.list);
 	for (int i = 0; i < network_count; i++) {
-		lv_obj_t *row = lv_list_add_button(list, LV_SYMBOL_WIFI, networks[i].ssid);
-		lv_obj_set_style_bg_color(row, hex(KEY), LV_PART_MAIN);
-		lv_obj_set_style_bg_opa(row, LV_OPA_COVER, LV_PART_MAIN);
-		lv_obj_set_style_text_color(row, hex(TEXT), LV_PART_MAIN);
-		lv_obj_set_style_text_font(row, &lv_font_montserrat_20, LV_PART_MAIN);
-		/* Clear of the scrollbar, which the list draws inside its own right edge. Without this the
-		 * security word ends underneath it and reads as clipped even though the label fits. */
-		lv_obj_set_style_pad_right(row, 14, LV_PART_MAIN);
-		lv_obj_set_style_border_width(row, 0, LV_PART_MAIN);
-		lv_obj_set_style_radius(row, 8, LV_PART_MAIN);
-		lv_obj_set_style_pad_hor(row, 10, LV_PART_MAIN);
-		lv_obj_set_style_pad_ver(row, 12, LV_PART_MAIN);
-		lv_obj_set_style_bg_color(row, hex(EDGE), LV_PART_MAIN | LV_STATE_PRESSED);
+		lv_obj_t *row = lv_list_add_button(pick.list, LV_SYMBOL_WIFI, networks[i].ssid);
+		styleChooserRow(row);
 
 		/*
 		 * `lv_list_add_button` gives its text label `LV_LABEL_LONG_SCROLL_CIRCULAR`, which animates a
@@ -496,8 +318,18 @@ void rebuildList()
 		         networks[i].open ? "open" : "WPA");
 		lv_obj_t *meta = lv_label_create(row);
 		lv_label_set_text(meta, detail);
-		lv_obj_set_style_text_font(meta, &lv_font_montserrat_16, LV_PART_MAIN);
-		lv_obj_set_style_text_color(meta, networks[i].open ? hex(WARN) : hex(MUTED), LV_PART_MAIN);
+		lv_obj_set_style_text_font(meta, type::caption(), LV_PART_MAIN);
+		/*
+		 * `Warn` for an open network, not `Bad`.
+		 *
+		 * It was the red the P&L uses for one render, and on the glass that reads as an error rather
+		 * than as a caution: an open network is a perfectly joinable network that happens to carry no
+		 * encryption, and the row is not a failure. `Warn` is the one role in this palette that says
+		 * "notice this" without saying "this went wrong", which is exactly the distinction wanted —
+		 * and naming roles by meaning is what makes picking the wrong one harder next time.
+		 */
+		lv_obj_set_style_text_color(
+		    meta, hex(toneColour(networks[i].open ? Tone::Warn : Tone::Quiet)), LV_PART_MAIN);
 
 		lv_obj_set_user_data(row, (void *)(intptr_t)i);
 		lv_obj_add_event_cb(row, onNetworkPicked, LV_EVENT_CLICKED, nullptr);
@@ -508,7 +340,7 @@ void rebuildList()
 
 void refreshPickStatus()
 {
-	if (pick_status == nullptr) return;
+	if (pick.subtitle == nullptr) return;
 	char line[96];
 	if (state == State::Scanning) {
 		const uint32_t seconds = (millis() - scan_started_at) / 1000u;
@@ -529,17 +361,35 @@ void refreshPickStatus()
 	} else {
 		snprintf(line, sizeof(line), "%d networks, strongest first.", network_count);
 	}
-	lv_label_set_text(pick_status, line);
+	lv_label_set_text(pick.subtitle, line);
 }
+
+/*
+ * The join result, on the same status archetype the ambient screen uses for "Not set up".
+ *
+ * That is the point of having archetypes at all: a unit saying "Joining" during setup and a unit
+ * saying "Joining" at rest are the same fact at two moments, and before this they were two different
+ * screens built by two different files that happened to agree about a font. Now the only difference
+ * is that this one has buttons.
+ *
+ * `result_info_text` is a buffer rather than a label pointer because the failure reason arrives from
+ * `fail()` and the elapsed count from `tickJoining()`, both of which used to write straight into the
+ * label. The archetype is repainted wholesale from a `StatusCopy`, so the text has to survive
+ * between repaints somewhere this function can read it.
+ */
+char result_info_text[96] = "";
 
 void showResult()
 {
-	showPage(result_page);
-	lv_label_set_text(result_detail, attempt.ssid);
+	showPage(result.page);
+	StatusCopy copy;
+	copy.eyebrow = "WI-FI";
+	copy.detail = attempt.ssid;
+	copy.support = result_info_text;
 	switch (state) {
 		case State::Joining:
-			lv_obj_set_style_text_color(result_headline, hex(ACCENT), LV_PART_MAIN);
-			lv_label_set_text(result_headline, "Joining");
+			copy.headline = "Joining";
+			copy.tone = Tone::Accent;
 			/*
 			 * The elapsed count is this screen's proof of life.
 			 *
@@ -550,25 +400,28 @@ void showResult()
 			 * and naming the budget it is counting towards says what happens when it runs out.
 			 */
 			join_seconds_shown = -1;
-			lv_label_set_text(result_info, "0s of 20");
-			lv_label_set_text(result_note, "");
+			snprintf(result_info_text, sizeof(result_info_text), "0s of 20");
+			copy.support = result_info_text;
 			lv_obj_add_flag(result_retry, LV_OBJ_FLAG_HIDDEN);
 			lv_obj_add_flag(result_dismiss, LV_OBJ_FLAG_HIDDEN);
 			break;
 		case State::Joined:
-			lv_obj_set_style_text_color(result_headline, hex(GAIN), LV_PART_MAIN);
-			lv_label_set_text(result_headline, "Connected");
-			lv_label_set_text(result_info, WiFi.localIP().toString().c_str());
-			lv_label_set_text(result_note, "Saved on this unit.");
+			copy.headline = "Connected";
+			copy.tone = Tone::Good;
+			snprintf(result_info_text, sizeof(result_info_text), "%s",
+			         WiFi.localIP().toString().c_str());
+			copy.support = result_info_text;
+			copy.note = "Saved on this unit.";
 			lv_obj_add_flag(result_retry, LV_OBJ_FLAG_HIDDEN);
 			lv_obj_remove_flag(result_dismiss, LV_OBJ_FLAG_HIDDEN);
 			lv_label_set_text(result_dismiss_label, "Done");
 			break;
 		case State::Failed:
-			lv_obj_set_style_text_color(result_headline, hex(LOSS), LV_PART_MAIN);
-			lv_label_set_text(result_headline, "Did not join");
-			/* `result_info` is written by whoever decided it failed, so the reason survives to here. */
-			lv_label_set_text(result_note, "Nothing was saved.");
+			copy.headline = "Did not join";
+			copy.tone = Tone::Bad;
+			/* `result_info_text` is written by whoever decided it failed, so the reason survives to
+			 * here. */
+			copy.note = "Nothing was saved.";
 			lv_obj_remove_flag(result_retry, LV_OBJ_FLAG_HIDDEN);
 			lv_obj_remove_flag(result_dismiss, LV_OBJ_FLAG_HIDDEN);
 			lv_label_set_text(result_dismiss_label, "Back");
@@ -577,16 +430,21 @@ void showResult()
 			break;
 	}
 	/*
-	 * One button sits in the middle, two sit apart.
+	 * The action row itself goes when both buttons do.
 	 *
-	 * The success screen first put its only button where the right-hand one of a pair goes, leaving a
-	 * 166 px hole beside it that reads as a second button that failed to draw. Which button is
-	 * showing is already decided above, so the position follows from it rather than being a third
-	 * thing to keep in step.
+	 * A flex container with nothing visible in it is still 56 px of reserved height, and on the
+	 * joining screen — the one with no buttons at all — that is a rectangle of nothing between the
+	 * elapsed count and the bottom of the panel. Hiding the row is what lets the composition recentre
+	 * on what is actually being said, which is the whole reason this archetype is a flex column.
 	 */
-	const bool alone = lv_obj_has_flag(result_retry, LV_OBJ_FLAG_HIDDEN);
-	lv_obj_set_pos(result_dismiss, alone ? (PANEL_W - RESULT_BUTTON_W) / 2 : PANEL_W - INSET - RESULT_BUTTON_W,
-	               RESULT_BUTTON_Y);
+	const bool any_action = !lv_obj_has_flag(result_retry, LV_OBJ_FLAG_HIDDEN) ||
+	                        !lv_obj_has_flag(result_dismiss, LV_OBJ_FLAG_HIDDEN);
+	if (any_action) {
+		lv_obj_remove_flag(result.actions, LV_OBJ_FLAG_HIDDEN);
+	} else {
+		lv_obj_add_flag(result.actions, LV_OBJ_FLAG_HIDDEN);
+	}
+	applyStatus(result, copy);
 }
 
 void startScan()
@@ -596,7 +454,7 @@ void startScan()
 	scan_started_at = millis();
 	scan_seconds_shown = -1;
 	rebuildList();
-	showPage(pick_page);
+	showPage(pick.page);
 	refreshPickStatus();
 	WiFi.mode(WIFI_STA);
 	WiFi.scanDelete();
@@ -615,23 +473,23 @@ void startTyping(const char *ssid, bool for_ssid, bool open)
 	 * `app/wifi_setup.cpp` left `entry` populated across a cancel, which is how three characters
 	 * typed for one network ended up saved against another.
 	 */
-	lv_textarea_set_text(entry, "");
-	lv_textarea_set_password_mode(entry, !for_ssid);
-	lv_textarea_set_max_length(entry, for_ssid ? (uint32_t)SSID_MAX : (uint32_t)PASS_MAX);
-	lv_label_set_text(reveal_label, LV_SYMBOL_EYE_OPEN);
-	lv_keyboard_set_mode(keyboard, LV_KEYBOARD_MODE_TEXT_LOWER);
+	lv_textarea_set_text(typing.field, "");
+	lv_textarea_set_password_mode(typing.field, !for_ssid);
+	lv_textarea_set_max_length(typing.field, for_ssid ? (uint32_t)SSID_MAX : (uint32_t)PASS_MAX);
+	lv_label_set_text(typing.reveal_label, LV_SYMBOL_EYE_OPEN);
+	lv_keyboard_set_mode(typing.keyboard, LV_KEYBOARD_MODE_TEXT_LOWER);
 
-	lv_obj_set_style_text_color(type_sub, hex(MUTED), LV_PART_MAIN);
+	lv_obj_set_style_text_color(typing.subtitle, hex(colour::ink_dim), LV_PART_MAIN);
 	if (for_ssid) {
-		lv_label_set_text(type_title, "Hidden network");
-		lv_label_set_text(type_sub, "Type the name exactly, then OK");
+		lv_label_set_text(typing.title, "Hidden network");
+		lv_label_set_text(typing.subtitle, "Type the name, then OK");
 	} else {
-		lv_label_set_text(type_title, pending_ssid);
-		lv_label_set_text(type_sub, open ? "This network is open - no passphrase"
-		                                 : "Passphrase, at least 8 characters");
+		lv_label_set_text(typing.title, pending_ssid);
+		lv_label_set_text(typing.subtitle, open ? "Open network, no passphrase"
+		                                          : "Passphrase, at least 8");
 	}
 	state = for_ssid ? State::TypingSsid : State::TypingPass;
-	showPage(type_page);
+	showPage(typing.page);
 }
 
 /*
@@ -665,7 +523,7 @@ void startJoin(const char *ssid, const char *pass, bool open)
 void fail(const char *reason)
 {
 	state = State::Failed;
-	lv_label_set_text(result_info, reason);
+	snprintf(result_info_text, sizeof(result_info_text), "%s", reason == nullptr ? "" : reason);
 	showResult();
 	setStatus("wi-fi: %s did not join - %s", attempt.ssid, reason);
 }
@@ -716,9 +574,9 @@ void onReveal(lv_event_t *event)
 	 * unmasks the last character for `LV_TEXTAREA_DEF_PWD_SHOW_TIME` (1.5 s) as it is typed; this is
 	 * for the other question, which is whether the whole thing is right before committing it.
 	 */
-	const bool hidden = lv_textarea_get_password_mode(entry);
-	lv_textarea_set_password_mode(entry, !hidden);
-	lv_label_set_text(reveal_label, hidden ? LV_SYMBOL_EYE_CLOSE : LV_SYMBOL_EYE_OPEN);
+	const bool hidden = lv_textarea_get_password_mode(typing.field);
+	lv_textarea_set_password_mode(typing.field, !hidden);
+	lv_label_set_text(typing.reveal_label, hidden ? LV_SYMBOL_EYE_CLOSE : LV_SYMBOL_EYE_OPEN);
 }
 
 /*
@@ -740,9 +598,8 @@ void onReveal(lv_event_t *event)
  * nobody anything they did not already know from pressing it, and a 64 px glyph of an arrow over the
  * passphrase field is noise where the letters are signal.
  */
-constexpr int32_t MAG_W = 112;
-constexpr int32_t MAG_H = 124;
-
+/* Its size and its styling are `pulse_design::makeMagnifier`'s; where it goes is this file's, because
+ * that is a question about a finger. */
 lv_obj_t *magnifier = nullptr;
 
 void hideMagnifier()
@@ -820,7 +677,7 @@ void onKeyboardReleased(lv_event_t *event)
 void onKeyboardReady(lv_event_t *event)
 {
 	(void)event;
-	const char *typed = lv_textarea_get_text(entry);
+	const char *typed = lv_textarea_get_text(typing.field);
 	if (typed == nullptr) typed = "";
 
 	/* The subtitle is where a refusal lands, and it changes colour to say so. It said the same thing
@@ -828,8 +685,8 @@ void onKeyboardReady(lv_event_t *event)
 	 * its words is a line somebody re-reads twice before noticing it moved. */
 	if (state == State::TypingSsid) {
 		if (typed[0] == '\0') {
-			lv_obj_set_style_text_color(type_sub, hex(LOSS), LV_PART_MAIN);
-			lv_label_set_text(type_sub, "A network needs a name");
+			lv_obj_set_style_text_color(typing.subtitle, hex(colour::bad), LV_PART_MAIN);
+			lv_label_set_text(typing.subtitle, "A network needs a name");
 			return;
 		}
 		startTyping(typed, false, false);
@@ -847,8 +704,8 @@ void onKeyboardReady(lv_event_t *event)
 		/* Kept under the width of this label, which is 344 px at 16 px Montserrat and fits about 33
 		 * characters. The first wording was 42 and ellipsised itself into "...8 charact...", which is
 		 * a refusal that does not say what to do about it. */
-		lv_obj_set_style_text_color(type_sub, hex(LOSS), LV_PART_MAIN);
-		lv_label_set_text(type_sub, "Too short - 8 characters minimum");
+		lv_obj_set_style_text_color(typing.subtitle, hex(colour::bad), LV_PART_MAIN);
+		lv_label_set_text(typing.subtitle, "Too short: at least 8");
 		return;
 	}
 	startJoin(pending_ssid, typed, pending_open);
@@ -859,7 +716,7 @@ void onKeyboardCancel(lv_event_t *event)
 {
 	(void)event;
 	state = State::Picking;
-	showPage(pick_page);
+	showPage(pick.page);
 	refreshPickStatus();
 }
 
@@ -881,7 +738,7 @@ void onDismiss(lv_event_t *event)
 		return;
 	}
 	state = State::Picking;
-	showPage(pick_page);
+	showPage(pick.page);
 	refreshPickStatus();
 }
 
@@ -910,249 +767,49 @@ void build()
 	if (built) return;
 	built = true;
 
+	/*
+	 * Its own LVGL screen, not a region of somebody else's.
+	 *
+	 * `open()` remembers whatever screen was active and `close()` puts it back, so the ambient readout
+	 * in `pulse_ui.cpp` is never rebuilt, never partly overdrawn, and does not have to know this module
+	 * exists. That is also why the whole thing is four calls from `pulse.ino`.
+	 */
 	screen = lv_obj_create(nullptr);
-	lv_obj_set_style_bg_color(screen, hex(GROUND), LV_PART_MAIN);
-	lv_obj_set_style_bg_opa(screen, LV_OPA_COVER, LV_PART_MAIN);
-	lv_obj_set_style_pad_all(screen, 0, LV_PART_MAIN);
-	lv_obj_remove_flag(screen, LV_OBJ_FLAG_SCROLLABLE);
+	paintGround(screen);
 
-	/* ---- pick ---- */
-	pick_page = makePage(screen);
-	pick_title = makeLabel(pick_page, &lv_font_montserrat_28, TEXT, INSET, PICK_TITLE_Y, INNER_W,
-	                       LV_TEXT_ALIGN_LEFT);
-	lv_label_set_text(pick_title, "Wi-Fi");
-	/*
-	 * Brighter and a size up, as an experiment against a symptom the simulator cannot reproduce.
-	 *
-	 * This line was reported twice as looking "italicised" and "super slanted" on the glass, while
-	 * rendering perfectly here and surviving a fix for tearing that did help elsewhere. What is
-	 * unusual about it is contrast, not layout: at `MUTED` on near black it is the faintest text on
-	 * the screen, and fine low contrast antialiased glyphs on an AMOLED's subpixel geometry fringe in
-	 * a way that reads as a slant. Larger and brighter is the cheap test of that theory, and is an
-	 * improvement to a subtitle nobody could read either way.
-	 *
-	 * If it still slants after this, the cause is not contrast and this comment should be replaced
-	 * with what it actually was.
-	 */
-	pick_status = makeLabel(pick_page, &lv_font_montserrat_20, TEXT, INSET, PICK_STATUS_Y, INNER_W,
-	                        LV_TEXT_ALIGN_LEFT);
-	lv_label_set_text(pick_status, "");
+	/* ---- the chooser ---- */
+	pick = buildChooser(screen, "Wi-Fi", "Rescan", "Hidden", "Close");
+	lv_obj_add_event_cb(pick.action[0], onRescan, LV_EVENT_CLICKED, nullptr);
+	lv_obj_add_event_cb(pick.action[1], onHidden, LV_EVENT_CLICKED, nullptr);
+	lv_obj_add_event_cb(pick.action[2], onCloseTapped, LV_EVENT_CLICKED, nullptr);
 
-	list = lv_list_create(pick_page);
-	lv_obj_set_pos(list, INSET, LIST_Y);
-	lv_obj_set_size(list, INNER_W, LIST_HEIGHT);
-	lv_obj_set_style_bg_color(list, hex(CARD), LV_PART_MAIN);
-	lv_obj_set_style_bg_opa(list, LV_OPA_COVER, LV_PART_MAIN);
-	lv_obj_set_style_border_color(list, hex(EDGE), LV_PART_MAIN);
-	lv_obj_set_style_border_width(list, 1, LV_PART_MAIN);
-	lv_obj_set_style_radius(list, 12, LV_PART_MAIN);
-	lv_obj_set_style_pad_all(list, 6, LV_PART_MAIN);
-	lv_obj_set_style_pad_row(list, 6, LV_PART_MAIN);
-	/* The scrollbar is the only thing that tells somebody a seventh network exists. It is the fix for
-	 * the list that silently held entries nobody could reach, so it is always on rather than fading. */
-	lv_obj_set_scrollbar_mode(list, LV_SCROLLBAR_MODE_ON);
-	/*
-	 * Vertically only. The first render came back with a horizontal scrollbar across the bottom of the
-	 * list, because a row's content is a hair wider than the space left once the vertical bar has
-	 * taken its six pixels — so the list was draggable sideways into nothing. Harmless to look at and
-	 * not harmless to use: a finger dragging down a list of networks that also slides left is a list
-	 * that fights back. Seen in the PNG, not deduced.
-	 */
-	lv_obj_set_scroll_dir(list, LV_DIR_VER);
-	lv_obj_set_style_bg_color(list, hex(MUTED), LV_PART_SCROLLBAR);
-	lv_obj_set_style_bg_opa(list, LV_OPA_COVER, LV_PART_SCROLLBAR);
-	lv_obj_set_style_width(list, 6, LV_PART_SCROLLBAR);
-	lv_obj_set_style_radius(list, 3, LV_PART_SCROLLBAR);
-
-	lv_obj_add_event_cb(makeButton(pick_page, INSET, PICK_BUTTON_Y, PICK_BUTTON_W, PICK_BUTTON_H,
-	                               "Rescan", &lv_font_montserrat_18),
-	                    onRescan, LV_EVENT_CLICKED, nullptr);
-	lv_obj_add_event_cb(makeButton(pick_page, INSET + PICK_BUTTON_W + PICK_BUTTON_GAP, PICK_BUTTON_Y,
-	                               PICK_BUTTON_W, PICK_BUTTON_H, "Hidden", &lv_font_montserrat_18),
-	                    onHidden, LV_EVENT_CLICKED, nullptr);
-	lv_obj_add_event_cb(makeButton(pick_page, INSET + 2 * (PICK_BUTTON_W + PICK_BUTTON_GAP),
-	                               PICK_BUTTON_Y, PICK_BUTTON_W, PICK_BUTTON_H, "Close",
-	                               &lv_font_montserrat_18),
-	                    onCloseTapped, LV_EVENT_CLICKED, nullptr);
-
-	/* ---- type ---- */
-	type_page = makePage(screen);
-	type_title = makeLabel(type_page, &lv_font_montserrat_24, TEXT, INSET, TYPE_TITLE_Y, INNER_W,
-	                       LV_TEXT_ALIGN_LEFT);
-	lv_label_set_text(type_title, "");
-	type_sub = makeLabel(type_page, &lv_font_montserrat_18, MUTED, INSET, TYPE_SUB_Y, INNER_W,
-	                     LV_TEXT_ALIGN_LEFT);
-	lv_label_set_text(type_sub, "");
-
-	entry = lv_textarea_create(type_page);
-	/* `set_one_line` before `set_size`: it sets the height to `LV_SIZE_CONTENT` itself, so called
-	 * afterwards it undoes the 54 and leaves a 46 px field beside a 54 px button — eight pixels of
-	 * misalignment that is invisible in the source and obvious in a render. */
-	lv_textarea_set_one_line(entry, true);
-	lv_obj_set_pos(entry, INSET, ENTRY_Y);
-	lv_obj_set_size(entry, ENTRY_W, ENTRY_H);
-	lv_textarea_set_password_mode(entry, true);
-	lv_textarea_set_placeholder_text(entry, "passphrase");
-	/*
-	 * A middle dot, asked for by name, and LVGL will not choose it on its own.
-	 *
-	 * `lv_textarea_get_password_bullet` asks the *font* whether it carries U+2022 and quietly returns
-	 * "*" when it does not — so the masked field came out as a row of asterisks, which on this glass
-	 * read as ragged and hard to count. Setting it explicitly is the whole fix, provided the face
-	 * actually has the glyph; if it does not, this renders as a placeholder box rather than falling
-	 * back, which is why it was checked in the simulator rather than assumed.
-	 */
-	lv_textarea_set_password_bullet(entry, "•");
-	/*
-	 * The character shows for a moment and then becomes a dot, and the moment is short.
-	 *
-	 * LVGL's default is 1500ms, which on this panel was reported as a glyph that looks wrong for
-	 * most of a second before resolving. Some of that was the touch driver below this one: a contact
-	 * that flickered press/release several times a second had the field redrawing the same character
-	 * over and over, which is exactly what a smeared or slanted glyph looks like. That is fixed in
-	 * `pulse_touch.cpp`.
-	 *
-	 * This is the other half, and it stands on its own: the point of showing the character at all is
-	 * to confirm the key that registered, which a glance answers. Anything longer is a passphrase
-	 * sitting in the clear on a screen somebody is holding in a room with other people in it, for no
-	 * further benefit — and the eye button is the considered way to read the whole thing back.
-	 */
-	lv_textarea_set_password_show_time(entry, 400);
-	lv_obj_set_style_text_font(entry, &lv_font_montserrat_24, LV_PART_MAIN);
-	lv_obj_set_style_text_color(entry, hex(TEXT), LV_PART_MAIN);
-	lv_obj_set_style_bg_color(entry, hex(KEY), LV_PART_MAIN);
-	lv_obj_set_style_bg_opa(entry, LV_OPA_COVER, LV_PART_MAIN);
-	lv_obj_set_style_border_color(entry, hex(EDGE), LV_PART_MAIN);
-	lv_obj_set_style_border_width(entry, 1, LV_PART_MAIN);
-	lv_obj_set_style_radius(entry, 10, LV_PART_MAIN);
-	lv_obj_set_style_text_color(entry, hex(FAINT), LV_PART_TEXTAREA_PLACEHOLDER);
-
-	lv_obj_t *reveal = makeButton(type_page, INSET + ENTRY_W + 8, ENTRY_Y, REVEAL_W, ENTRY_H,
-	                              LV_SYMBOL_EYE_OPEN, &lv_font_montserrat_22, &reveal_label);
-	lv_obj_add_event_cb(reveal, onReveal, LV_EVENT_CLICKED, nullptr);
-
-	lv_obj_t *hint = makeLabel(type_page, &lv_font_montserrat_18, FAINT, INSET, HINT_Y, INNER_W,
-	                           LV_TEXT_ALIGN_LEFT);
-	lv_label_set_text(hint, LV_SYMBOL_OK "  joins      " LV_SYMBOL_KEYBOARD "  goes back");
-
-	keyboard = lv_keyboard_create(type_page);
-	/*
-	 * `lv_obj_set_align` before `lv_obj_set_pos`, and it is not decoration.
-	 *
-	 * `lv_keyboard`'s constructor aligns itself `LV_ALIGN_BOTTOM_MID` and defaults to 100% wide by
-	 * 50% tall — so a plain `set_pos(4, 196)` is read as an *offset from the bottom centre*, and the
-	 * first render put the keyboard at (8, 400) with 196 px of it hanging off the panel. The
-	 * simulator's tree dump said `<< PAST ITS PARENT'S BOTTOM EDGE` before any pixel was looked at,
-	 * which is the whole reason that check is in it.
-	 */
-	lv_obj_set_align(keyboard, LV_ALIGN_TOP_LEFT);
-	lv_obj_set_pos(keyboard, KB_X, KB_Y);
-	lv_obj_set_size(keyboard, KB_W, KB_H);
-	lv_keyboard_set_textarea(keyboard, entry);
-	/* A pressed key draws itself above the finger covering it. On a panel where a key is 36 px wide
-	 * and a fingertip is about 100, this is the difference between seeing what you typed and finding
-	 * out later. */
-	lv_keyboard_set_popovers(keyboard, true);
-	lv_obj_set_style_bg_color(keyboard, hex(GROUND), LV_PART_MAIN);
-	lv_obj_set_style_bg_opa(keyboard, LV_OPA_COVER, LV_PART_MAIN);
-	lv_obj_set_style_border_width(keyboard, 0, LV_PART_MAIN);
-	lv_obj_set_style_pad_all(keyboard, 2, LV_PART_MAIN);
-	/* 3 px between keys rather than the theme's default. The first render clipped the "ABC" and "1#"
-	 * mode keys — they are the narrowest in the map and a 22 px face does not fit three glyphs inside
-	 * them once the theme's gap and a 1 px border have taken their share. Widening the keys is the
-	 * fix that keeps the face legible; shrinking the face to 16 would have cost every letter. */
-	lv_obj_set_style_pad_gap(keyboard, 3, LV_PART_MAIN);
-	lv_obj_set_style_bg_color(keyboard, hex(KEY), LV_PART_ITEMS);
-	lv_obj_set_style_bg_opa(keyboard, LV_OPA_COVER, LV_PART_ITEMS);
-	lv_obj_set_style_text_color(keyboard, hex(TEXT), LV_PART_ITEMS);
-	lv_obj_set_style_text_font(keyboard, &lv_font_montserrat_24, LV_PART_ITEMS);
-	lv_obj_set_style_border_color(keyboard, hex(EDGE), LV_PART_ITEMS);
-	lv_obj_set_style_border_width(keyboard, 1, LV_PART_ITEMS);
-	lv_obj_set_style_radius(keyboard, 6, LV_PART_ITEMS);
-	/*
-	 * The control keys are `LV_STATE_CHECKED`, and styling only the default state leaves them wearing
-	 * the *stock theme* — which is `LV_THEME_DEFAULT_DARK 0`, so the first render had nine white keys
-	 * with black glyphs scattered through a dark keyboard. It looked like a rendering fault and was a
-	 * missing selector. They are darker than the letters here on purpose: shift, backspace and the
-	 * mode switch are not things somebody is aiming at while typing a passphrase.
-	 */
-	lv_obj_set_style_bg_color(keyboard, hex(EDGE), LV_PART_ITEMS | LV_STATE_CHECKED);
-	lv_obj_set_style_text_color(keyboard, hex(TEXT), LV_PART_ITEMS | LV_STATE_CHECKED);
-	lv_obj_set_style_border_color(keyboard, hex(MUTED), LV_PART_ITEMS | LV_STATE_CHECKED);
-	/* Pressed has to be loud. The popover above shows *what* was pressed; this is what says a press
-	 * registered at all, on a controller that has never yet answered with a coordinate. */
-	lv_obj_set_style_bg_color(keyboard, hex(ACCENT), LV_PART_ITEMS | LV_STATE_PRESSED);
-	lv_obj_set_style_text_color(keyboard, hex(GROUND), LV_PART_ITEMS | LV_STATE_PRESSED);
-	/*
-	 * The key under the finger is drawn a size and a half up, which is what makes the popover a
-	 * magnifier rather than a repeat.
-	 *
-	 * A press style applies to the popover too — LVGL draws it from the same button's styles — so a
-	 * larger face in this one state enlarges precisely the glyph being covered by a fingertip and
-	 * nothing else. That is the whole feature: hold to see which key you are actually on, slide until
-	 * it is the right one, and let go to commit it, the way a phone keyboard behaves. The button
-	 * matrix already selects on release rather than on contact, so the "slide to correct" half comes
-	 * for free and needed no code.
-	 *
-	 * 32 against a 24 px base. Bigger looked like a different widget appearing rather than the same
-	 * key growing, and on the top row it started to reach the hint line above the keyboard.
-	 */
-	lv_obj_set_style_text_font(keyboard, &lv_font_montserrat_32, LV_PART_ITEMS | LV_STATE_PRESSED);
-	lv_obj_add_event_cb(keyboard, onKeyboardReady, LV_EVENT_READY, nullptr);
-	lv_obj_add_event_cb(keyboard, onKeyboardCancel, LV_EVENT_CANCEL, nullptr);
+	/* ---- the input ---- */
+	typing = buildInput(screen, "passphrase");
+	lv_textarea_set_password_mode(typing.field, true);
+	lv_obj_add_event_cb(typing.reveal, onReveal, LV_EVENT_CLICKED, nullptr);
+	lv_obj_add_event_cb(typing.keyboard, onKeyboardReady, LV_EVENT_READY, nullptr);
+	lv_obj_add_event_cb(typing.keyboard, onKeyboardCancel, LV_EVENT_CANCEL, nullptr);
 
 	/*
-	 * The magnifier, built once on the top layer and moved around thereafter.
-	 *
-	 * On `lv_layer_top()` rather than on this page, because it has to draw outside the keyboard and a
-	 * child is clipped to its parent. Created hidden, and every path that ends a press hides it again
-	 * — including `LV_EVENT_RELEASED`, which fires for the press that commits a key, so the magnifier
-	 * never outlives the finger that summoned it.
+	 * The magnifier, built once on the top layer and moved around thereafter. Created hidden, and
+	 * every path that ends a press hides it again — including `LV_EVENT_RELEASED`, which fires for the
+	 * press that commits a key, so it never outlives the finger that summoned it.
 	 */
-	magnifier = lv_label_create(lv_layer_top());
-	lv_obj_set_size(magnifier, MAG_W, MAG_H);
-	lv_obj_set_style_bg_color(magnifier, hex(ACCENT), LV_PART_MAIN);
-	lv_obj_set_style_bg_opa(magnifier, LV_OPA_COVER, LV_PART_MAIN);
-	lv_obj_set_style_text_color(magnifier, hex(GROUND), LV_PART_MAIN);
-	lv_obj_set_style_text_font(magnifier, &lv_font_montserrat_48, LV_PART_MAIN);
-	lv_obj_set_style_text_align(magnifier, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-	lv_obj_set_style_radius(magnifier, 14, LV_PART_MAIN);
-	lv_obj_set_style_border_color(magnifier, hex(TEXT), LV_PART_MAIN);
-	lv_obj_set_style_border_width(magnifier, 2, LV_PART_MAIN);
-	/* Vertically centred by padding rather than by alignment: the label owns a fixed box here and a
-	 * 40 px glyph in a 108 px box otherwise sits against the top edge. */
-	lv_obj_set_style_pad_top(magnifier, (MAG_H - 56) / 2, LV_PART_MAIN);
-	lv_obj_add_flag(magnifier, LV_OBJ_FLAG_HIDDEN);
-	lv_obj_remove_flag(magnifier, LV_OBJ_FLAG_CLICKABLE);
+	magnifier = makeMagnifier();
+	lv_obj_add_event_cb(typing.keyboard, onKeyboardPressing, LV_EVENT_PRESSING, nullptr);
+	lv_obj_add_event_cb(typing.keyboard, onKeyboardReleased, LV_EVENT_RELEASED, nullptr);
+	lv_obj_add_event_cb(typing.keyboard, onKeyboardReleased, LV_EVENT_PRESS_LOST, nullptr);
 
-	lv_obj_add_event_cb(keyboard, onKeyboardPressing, LV_EVENT_PRESSING, nullptr);
-	lv_obj_add_event_cb(keyboard, onKeyboardReleased, LV_EVENT_RELEASED, nullptr);
-	lv_obj_add_event_cb(keyboard, onKeyboardReleased, LV_EVENT_PRESS_LOST, nullptr);
-
-	/* ---- result ---- */
-	result_page = makePage(screen);
-	result_headline = makeLabel(result_page, &lv_font_montserrat_40, TEXT, INSET, RESULT_HEADLINE_Y,
-	                            INNER_W, LV_TEXT_ALIGN_CENTER);
-	lv_label_set_text(result_headline, "");
-	result_detail = makeLabel(result_page, &lv_font_montserrat_22, TEXT, INSET, RESULT_DETAIL_Y,
-	                          INNER_W, LV_TEXT_ALIGN_CENTER);
-	lv_label_set_text(result_detail, "");
-	result_info = makeLabel(result_page, &lv_font_montserrat_18, MUTED, INSET, RESULT_INFO_Y, INNER_W,
-	                        LV_TEXT_ALIGN_CENTER);
-	lv_label_set_text(result_info, "");
-	result_note = makeLabel(result_page, &lv_font_montserrat_18, FAINT, INSET, RESULT_NOTE_Y, INNER_W,
-	                        LV_TEXT_ALIGN_CENTER);
-	lv_label_set_text(result_note, "");
-
-	result_retry = makeButton(result_page, INSET, RESULT_BUTTON_Y, RESULT_BUTTON_W, RESULT_BUTTON_H,
-	                          "Try again", &lv_font_montserrat_22);
+	/* ---- the result, which is the status archetype with two buttons in it ---- */
+	result = buildStatus(screen, true /* with actions */);
+	result_retry = makeButton(result.actions, 0, 0, STATUS_ACTION_PAIR_W, STATUS_ACTION_H, "Try again",
+	                          type::subhead());
 	lv_obj_add_event_cb(result_retry, onRetry, LV_EVENT_CLICKED, nullptr);
-	result_dismiss = makeButton(result_page, PANEL_W - INSET - RESULT_BUTTON_W, RESULT_BUTTON_Y,
-	                            RESULT_BUTTON_W, RESULT_BUTTON_H, "Back", &lv_font_montserrat_22,
-	                            &result_dismiss_label);
+	result_dismiss = makeButton(result.actions, 0, 0, STATUS_ACTION_PAIR_W, STATUS_ACTION_H, "Back",
+	                            type::subhead(), &result_dismiss_label);
 	lv_obj_add_event_cb(result_dismiss, onDismiss, LV_EVENT_CLICKED, nullptr);
 
-	showPage(pick_page);
+	showPage(pick.page);
 }
 
 /* ------------------------------------------------------------------------------------ tick ---- */
@@ -1222,9 +879,11 @@ void tickJoining()
 	const int seconds = (int)((millis() - join_started_at) / 1000u);
 	if (seconds != join_seconds_shown) {
 		join_seconds_shown = seconds;
-		char line[32];
-		snprintf(line, sizeof(line), "%ds of 20", seconds);
-		lv_label_set_text(result_info, line);
+		/* Straight into the archetype's support slot rather than through `showResult()`, which would
+		 * re-apply the whole status once a second — including the headline font lookup — for a label
+		 * that gained one character. */
+		snprintf(result_info_text, sizeof(result_info_text), "%ds of 20", seconds);
+		lv_label_set_text(result.support, result_info_text);
 	}
 }
 
@@ -1328,7 +987,7 @@ void close()
 	state = State::Closed;
 	/* Nothing typed survives leaving the screen, on principle: a passphrase left in a widget is a
 	 * passphrase the next person to open this screen can reveal with one tap. */
-	if (entry != nullptr) lv_textarea_set_text(entry, "");
+	if (typing.field != nullptr) lv_textarea_set_text(typing.field, "");
 	WiFi.scanDelete();
 	if (return_screen != nullptr) lv_screen_load(return_screen);
 	if (have_saved && WiFi.status() != WL_CONNECTED) {

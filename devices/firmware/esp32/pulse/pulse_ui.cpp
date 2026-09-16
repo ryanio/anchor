@@ -4,198 +4,128 @@ namespace pulse_ui {
 
 namespace {
 
-/* ------------------------------------------------------------------------------ the palette ---- */
+using namespace pulse_design;
 
 /*
- * Tokyo Night, sampled from the design target rather than remembered.
+ * The two archetypes, both built once and one shown at a time.
  *
- * `magick review/devices/pulse-amoled.png -crop 368x448+20+20 -colors 12 -format %c histogram:` is
- * where these came from — the +20 offset drops the bezel the review renderer draws around the panel,
- * so what is left is the 368x448 the glass actually shows. Reading them out of the picture rather
- * than off a palette page matters because the picture is the thing this screen has to match, and a
- * hex value typed from memory is how two renderers start to drift.
+ * Built once rather than torn down and rebuilt on every kind change, because a device that spends a
+ * minute joining a network crosses this boundary several times — no credentials, joining, fetching,
+ * a reading, stale — and rebuilding an LVGL tree per transition is allocation churn on a 64 kB pool
+ * for a screen that is going to change back. `lv_mem_monitor` in the boot banner is the check on
+ * that claim; the whole of this screen was 8,816 bytes with one archetype in it.
  */
-constexpr uint32_t GROUND = 0x13141C; /* behind everything; on an AMOLED this is nearly free */
-constexpr uint32_t CARD = 0x1A1B26;   /* the surface the reading sits on */
-constexpr uint32_t EDGE = 0x292E42;   /* card border and the footer rule */
-constexpr uint32_t TEXT = 0xC0CAF5;   /* titles and values: the theme's foreground */
-constexpr uint32_t MUTED = 0x586089;  /* row labels — the quiet half of each pair */
-constexpr uint32_t FAINT = 0x4E556D;  /* the footer, which is metadata about the reading */
-constexpr uint32_t GAIN = 0x9ECE6A;
-constexpr uint32_t LOSS = 0xF7768E;
+lv_obj_t *frame = nullptr;
+ReadingView reading_view;
+StatusView status_view;
+Screen::Kind showing = Screen::Kind::Status;
 
-/* ------------------------------------------------------------------------------- the metrics --- */
-
-/*
- * The panel is 368x448 and these are laid out against it directly rather than through a flex or
- * grid container.
- *
- * Four rows and a footer is not a layout problem; it is five y-coordinates. A flex container would
- * add a solver, a set of gap/pad styles to reason about and one more thing between a number on the
- * glass and a number in this file — and the failure being guarded against is a value running into
- * a label, which is checked by looking at the render, not by trusting a solver.
- *
- * The arithmetic that is not arbitrary: the card is inset 10 px so the rounded corners of the panel
- * itself never clip content (`app/wifi_setup.cpp` learned that the hard way on this glass), the
- * rows are 78 px apart because four of them plus the title block and the footer is exactly the 448
- * available, and the value column is right-aligned to a single edge so that four numbers of
- * different widths still form a column.
- *
- * The footer numbers were moved once, after looking at the render. The first pass left 6 px between
- * the last row and the rule and 32 px of dead space under the footer text, which reads as a screen
- * that has slumped upward — obvious in a PNG and invisible in the arithmetic, which is the whole
- * reason `sim/lvgl.sh` exists.
- */
-constexpr int32_t PANEL_W = 368;
-constexpr int32_t PANEL_H = 448;
-constexpr int32_t CARD_INSET = 10;
-constexpr int32_t PAD_X = 22; /* inside the card */
-constexpr int32_t TITLE_Y = 22;
-constexpr int32_t ROW_0_Y = 86;
-constexpr int32_t ROW_STEP = 78;
-constexpr int32_t FOOTER_RULE_Y = 380;
-constexpr int32_t FOOTER_TEXT_Y = 396;
-
-constexpr int ROW_COUNT = 4;
-
-lv_obj_t *card = nullptr;
-lv_obj_t *title_label = nullptr;
-lv_obj_t *row_label[ROW_COUNT] = {nullptr, nullptr, nullptr, nullptr};
-lv_obj_t *row_value[ROW_COUNT] = {nullptr, nullptr, nullptr, nullptr};
-lv_obj_t *age_label = nullptr;
-
-lv_color_t hex(uint32_t rgb)
+void show(Screen::Kind kind)
 {
-	return lv_color_hex(rgb);
+	if (reading_view.page == nullptr) return;
+	showing = kind;
+	const bool is_reading = kind == Screen::Kind::Reading;
+	if (is_reading) {
+		lv_obj_remove_flag(reading_view.page, LV_OBJ_FLAG_HIDDEN);
+		lv_obj_add_flag(status_view.page, LV_OBJ_FLAG_HIDDEN);
+	} else {
+		lv_obj_add_flag(reading_view.page, LV_OBJ_FLAG_HIDDEN);
+		lv_obj_remove_flag(status_view.page, LV_OBJ_FLAG_HIDDEN);
+	}
 }
 
-/*
- * A label that does not move when its text does.
- *
- * `lv_label` sizes itself to its content by default, so a right-aligned value would re-anchor every
- * time the number got a digit longer — which on a screen showing money is a column that jitters.
- * Pinning the width and letting the text align inside it is what keeps `$3,299` and `$48,214` on the
- * same right edge.
- */
-lv_obj_t *makeLabel(lv_obj_t *parent, const lv_font_t *font, uint32_t colour, int32_t x, int32_t y,
-                    int32_t width, lv_text_align_t align)
+void applyReading(const Reading &reading)
 {
-	lv_obj_t *label = lv_label_create(parent);
-	lv_obj_set_pos(label, x, y);
-	lv_obj_set_width(label, width);
-	lv_obj_set_style_text_font(label, font, LV_PART_MAIN);
-	lv_obj_set_style_text_color(label, hex(colour), LV_PART_MAIN);
-	lv_obj_set_style_text_align(label, align, LV_PART_MAIN);
-	lv_label_set_long_mode(label, LV_LABEL_LONG_CLIP);
-	return label;
+	lv_label_set_text(reading_view.title, reading.title);
+	/* Only the second row carries a tone; the other three are numbers with no direction. The labels
+	 * are re-applied on every pass on purpose — a screen showing a token must never end up wearing a
+	 * portfolio's, which is a number claiming to be a different number. */
+	const char *const values[4] = {reading.total, reading.pnl, reading.nfts, reading.window};
+	for (int i = 0; i < 4; i++) {
+		const Tone tone = i == 1 ? toneForSign(reading.pnl_tone) : Tone::Ink;
+		setReadingRow(reading_view, i, reading.labels[i], values[i], tone);
+	}
+	lv_label_set_text(reading_view.footer, reading.age == nullptr ? "" : reading.age);
 }
 
-void applyTone(lv_obj_t *label, int tone)
+StatusCopy copyOf(const Status &status)
 {
-	lv_obj_set_style_text_color(label, hex(tone > 0 ? GAIN : (tone < 0 ? LOSS : TEXT)),
-	                            LV_PART_MAIN);
+	StatusCopy copy;
+	copy.eyebrow = status.eyebrow;
+	copy.headline = status.headline;
+	copy.tone = status.tone;
+	copy.detail = status.detail;
+	copy.support = status.support;
+	copy.note = status.note;
+	return copy;
 }
 
 }  // namespace
 
-void build(const Reading &reading)
+void build(const Screen &screen)
 {
-	lv_obj_t *screen = lv_screen_active();
-	lv_obj_set_style_bg_color(screen, hex(GROUND), LV_PART_MAIN);
-	lv_obj_set_style_bg_opa(screen, LV_OPA_COVER, LV_PART_MAIN);
-	lv_obj_remove_flag(screen, LV_OBJ_FLAG_SCROLLABLE);
-	lv_obj_set_style_pad_all(screen, 0, LV_PART_MAIN);
-
-	card = lv_obj_create(screen);
-	lv_obj_set_pos(card, CARD_INSET, CARD_INSET);
-	lv_obj_set_size(card, PANEL_W - 2 * CARD_INSET, PANEL_H - 2 * CARD_INSET);
-	lv_obj_set_style_bg_color(card, hex(CARD), LV_PART_MAIN);
-	lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_PART_MAIN);
-	lv_obj_set_style_border_color(card, hex(EDGE), LV_PART_MAIN);
-	lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
-	lv_obj_set_style_radius(card, 18, LV_PART_MAIN);
-	lv_obj_set_style_pad_all(card, 0, LV_PART_MAIN);
-	/*
-	 * No scrolling and no scrollbar. An `lv_obj` is a scroll container by default, so a child one
-	 * pixel past the edge silently turns this into a thing that can be dragged — on a panel with a
-	 * finger on it, that is a readout that slides away when somebody brushes it.
-	 */
-	lv_obj_remove_flag(card, LV_OBJ_FLAG_SCROLLABLE);
-	lv_obj_set_scrollbar_mode(card, LV_SCROLLBAR_MODE_OFF);
-
-	const int32_t inner_w = (PANEL_W - 2 * CARD_INSET) - 2 * PAD_X;
-
-	title_label = makeLabel(card, &lv_font_montserrat_28, TEXT, PAD_X, TITLE_Y, inner_w,
-	                        LV_TEXT_ALIGN_LEFT);
+	lv_obj_t *active = lv_screen_active();
+	paintGround(active);
 
 	/*
-	 * Label and value share a row's y but not its width: the label takes the left third and the
-	 * value the right two thirds. That split is decided by the longest thing each column has to
-	 * hold, not by taste — "Window" at 22 px is about 72 px wide, comfortably inside a third, while
-	 * the value is the number that grows: `$3,299` is 154 px at 40 px, and a portfolio that reaches
-	 * `$148,214` is 203. A value clipped at the left edge of its own box is a balance missing its
-	 * leading digit, which is the worst possible way for this screen to fail.
+	 * One frame under both archetypes, and it is the touch target.
 	 *
-	 * They are separate objects rather than one two-part string so that the P&L value can carry a
-	 * tone while its label does not.
+	 * The pages themselves are transparent and not clickable (see `makePage`), so a touch anywhere on
+	 * the glass lands here whichever kind of screen is up. That is what makes "tap anywhere to set up
+	 * wi-fi" true rather than aspirational — it used to be the reading's card, which is inset from the
+	 * panel, so the outer ring of glass was dead on the one screen whose entire job is to be pressed.
 	 */
-	const int32_t label_w = inner_w / 3;
-	const int32_t value_w = inner_w - label_w;
-	for (int i = 0; i < ROW_COUNT; i++) {
-		const int32_t y = ROW_0_Y + i * ROW_STEP;
-		/* The label sits on the value's baseline rather than its top edge: a 22 px face and a 40 px
-		 * face aligned at the top look like the smaller one floated. 14 px is the difference in cap
-		 * height, near enough. */
-		row_label[i] = makeLabel(card, &lv_font_montserrat_22, MUTED, PAD_X, y + 14, label_w,
-		                         LV_TEXT_ALIGN_LEFT);
-		row_value[i] = makeLabel(card, &lv_font_montserrat_40, TEXT, PAD_X + label_w, y, value_w,
-		                         LV_TEXT_ALIGN_RIGHT);
+	frame = lv_obj_create(active);
+	lv_obj_set_pos(frame, 0, 0);
+	lv_obj_set_size(frame, PANEL_W, PANEL_H);
+	lv_obj_set_style_bg_opa(frame, LV_OPA_TRANSP, LV_PART_MAIN);
+	lv_obj_set_style_border_width(frame, 0, LV_PART_MAIN);
+	lv_obj_set_style_radius(frame, 0, LV_PART_MAIN);
+	lv_obj_set_style_pad_all(frame, 0, LV_PART_MAIN);
+	lv_obj_remove_flag(frame, LV_OBJ_FLAG_SCROLLABLE);
+	lv_obj_set_scrollbar_mode(frame, LV_SCROLLBAR_MODE_OFF);
+
+	reading_view = buildReading(frame);
+	status_view = buildStatus(frame, false);
+
+	update(screen);
+}
+
+void update(const Screen &screen)
+{
+	if (frame == nullptr) return;
+	if (screen.kind == Screen::Kind::Reading) {
+		applyReading(screen.reading);
+	} else {
+		applyStatus(status_view, copyOf(screen.status));
 	}
-
-	/* Set from the reading rather than written here, so a screen showing a token cannot end up with
-	 * a portfolio's labels over it. `update()` re-applies them on every pass for the same reason. */
-	for (int i = 0; i < 4; i++) lv_label_set_text(row_label[i], reading.labels[i]);
-
-	/* The rule, as a one-pixel object rather than `lv_line` — which is a widget this build does not
-	 * enable, for a mark that is a filled rectangle. */
-	lv_obj_t *rule = lv_obj_create(card);
-	lv_obj_set_pos(rule, PAD_X, FOOTER_RULE_Y);
-	lv_obj_set_size(rule, inner_w, 1);
-	lv_obj_set_style_bg_color(rule, hex(EDGE), LV_PART_MAIN);
-	lv_obj_set_style_bg_opa(rule, LV_OPA_COVER, LV_PART_MAIN);
-	lv_obj_set_style_border_width(rule, 0, LV_PART_MAIN);
-	lv_obj_set_style_radius(rule, 0, LV_PART_MAIN);
-	lv_obj_set_style_pad_all(rule, 0, LV_PART_MAIN);
-	lv_obj_remove_flag(rule, LV_OBJ_FLAG_SCROLLABLE);
-
-	age_label = makeLabel(card, &lv_font_montserrat_16, FAINT, PAD_X, FOOTER_TEXT_Y, inner_w,
-	                      LV_TEXT_ALIGN_CENTER);
-
-	update(reading);
+	show(screen.kind);
 }
 
-void update(const Reading &reading)
+void setFooter(const char *text)
 {
-	if (title_label == nullptr) return;
-	lv_label_set_text(title_label, reading.title);
-	for (int i = 0; i < 4; i++) lv_label_set_text(row_label[i], reading.labels[i]);
-	lv_label_set_text(row_value[0], reading.total);
-	lv_label_set_text(row_value[1], reading.pnl);
-	lv_label_set_text(row_value[2], reading.nfts);
-	lv_label_set_text(row_value[3], reading.window);
-	applyTone(row_value[1], reading.pnl_tone);
-	setAge(reading.age);
-}
-
-void setAge(const char *age)
-{
-	if (age_label == nullptr || age == nullptr) return;
-	lv_label_set_text(age_label, age);
+	if (frame == nullptr || text == nullptr) return;
+	if (showing == Screen::Kind::Reading) {
+		lv_label_set_text(reading_view.footer, text);
+		return;
+	}
+	/*
+	 * On a status the bottom line is the note, and it is hidden when empty so the composition stays
+	 * centred. Writing to it has to unhide it, or the calibration readout — a touch coordinate, for
+	 * four seconds, which is the only way anybody can find out whether the CST820 ever answers — would
+	 * land in an object nobody can see.
+	 */
+	lv_label_set_text(status_view.note, text);
+	if (text[0] == '\0') {
+		lv_obj_add_flag(status_view.note, LV_OBJ_FLAG_HIDDEN);
+	} else {
+		lv_obj_remove_flag(status_view.note, LV_OBJ_FLAG_HIDDEN);
+	}
 }
 
 lv_obj_t *surface()
 {
-	return card;
+	return frame;
 }
 
 }  // namespace pulse_ui

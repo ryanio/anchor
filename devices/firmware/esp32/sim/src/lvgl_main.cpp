@@ -211,7 +211,8 @@ void usage() {
   printf(
       "anchor pulse LVGL simulator\n"
       "  --taps \"X,Y X,Y\"   scripted touches, one every --gap ms, each held 160ms\n"
-      "  --feed <state>     live|one|no-credentials|joining|fetching|disabled|failed|stale\n"
+      "  --feed <state>     live|one|no-credentials|joining|fetching|disabled|failed|stale|\n"
+      "                     lost|waiting\n"
       "  --tap X,Y           one more touch on the end of the script\n"
       "  --hold X,Y[,MS]     a touch held (default 1600ms), for duration gestures\n"
       "  --wait              a script slot that touches nothing (a frame of whatever happens next)\n"

@@ -14,6 +14,31 @@ becomes `## [0.1.0] - YYYY-MM-DD` at the moment the tag is pushed, and not befor
 
 ### Added
 
+**The ESP32 panel has a design system, and every state that has no data now gets a screen built for
+saying so.** `devices/firmware/esp32/pulse/pulse_design.{h,cpp}` holds one palette addressed by role
+(`ink`, `ink_dim`, `accent`, `good`, `bad`, `warn`, …) with a `Tone` enum in front of it, a six-step
+spacing scale whose `lg` is also the panel's 20 px corner clearance, a nine-step type scale that
+bottoms out at 16 px because this panel is read from across a room, and four screen archetypes —
+reading, status, chooser, input — that every screen in the firmware is now built from. The palette
+previously existed twice, verbatim, in `pulse_ui.cpp` and `pulse_wifi.cpp`.
+
+The status archetype replaces the thing that prompted this: a unit with no network typed into it was
+drawn as a *reading with one row filled*, so "not set up" landed in the right-aligned 40 px value
+column at x=123 with three empty label/value pairs under it and about 250 px of dead panel below
+that. All six no-data states — no network saved, joining, fetching, failed, stale, and built without
+an API key — are now a centred composition with an eyebrow, the state in the largest face that fits
+it, a tone bar, what to do about it, and whatever the feed itself said; each keeps the distinct copy
+it had. The Wi-Fi join result is the same archetype, so a unit saying "Joining" during setup and one
+saying it at rest are one screen rather than two that happened to agree about a font.
+
+Four things the renders caught on the way: the picker's three-button row was 15 px wider than the
+safe area (109 px buttons sized when `INSET` was 12, never updated when it became 20, leaving the
+last button 5 px from the panel edge); the keyboard ran 12 px past the safe rectangle into both
+bottom corners; "ABC" on the mode key had never fitted at 24 px; and a price of `$26,444,366` came
+out as `$26,444…` — a reading’s value now steps down a face rather than losing its tail. Costs 2,116
+bytes of flash (1,713,839 → 1,715,955, 54% either way) and 216 bytes of static RAM. The corner
+clearance now has its own heading in `docs/devices-esp32.md`, where the next driver will look.
+
 **The Cardputer browses what is trending, not just what Ryan owns, with three facets per item.** Two
 new pages — `browse-tokens` and `browse-nfts` — carry `layout: "screen"`, a new optional
 `PageConfig` field that tells `Panel.build` to fill a device's screen slot and blank its keys rather
