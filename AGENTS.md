@@ -133,6 +133,75 @@ command confirming your tools are the tools you think they are.
 authenticates. `anchor-service --check-credentials` makes a real call against an endpoint that is
 known to 401 without a key; prefer it to reading `/health`.
 
+**A green build can mean the feature is not there.** `arduino-cli` discovers libraries by
+preprocessing a sketch and reading the *failures*, so wrapping an include in
+`#if __has_include(<ArduinoJson.h>)` answered "no", compiled the whole fetch away, and reported
+success at a byte-identical size. It looked like a tidy zero-cost abstraction and was a feature that
+did not exist. The check that found it was `compile -v | grep "Using library"`. When a build gets
+*smaller* or stays identical after adding something, that is the reading to distrust.
+
+**Say what the harness cannot see, next to what it can.** `devices/firmware/esp32/sim/` catches
+layout, state machines and logic, and it is structurally blind to how the panel is *addressed* — a
+framebuffer does not care which column a rectangle starts on. A whole evening went into text that
+looked italic on the glass and rendered perfectly in the simulator every single time, because the
+bug was odd-column addressing on the CO5300 and no framebuffer can have it. A test harness that does
+not document its blind spots will be trusted past them.
+
+## A finding about hardware belongs where the next driver will look
+
+Four separate things learned about this hardware were already written down in this repository, in
+prose, in the file that discovered them — and then a new file was written without them:
+
+- The CST820 reports a momentary zero finger count mid-contact. `app/sensors.cpp` found that and
+  handles it with a 40ms settle. `pulse_touch.cpp`, written fresh for LVGL, read the register
+  straight through, so LVGL saw press/release several times a second and no touch gesture that
+  depends on duration could ever work.
+- The panel's corners are not on the glass. That clearance has now been measured by eye **three
+  times** — `sensors/sensors.ino` at 20px, `svg.gridMetrics` at 4.5% of the short side, and
+  `pulse_wifi.cpp` at 12 and then 20 after a heading came out clipped.
+- `Serial` on the ESP32 *is* the protocol, so nothing may print to it. True of `app/`, not of
+  `pulse/`, and each file has to know which it is.
+- Every flushed rectangle needs an even column. Documented now, in `docs/devices-esp32.md`.
+
+None of these is discoverable by reading a datasheet and none is visible in the code that depends on
+them. **A finding about how this hardware behaves goes in the device's doc under its own heading, and
+the driver that relies on it links there** — not only in the comment of whichever file paid for it.
+The test is simple: if somebody wrote a second driver for this part tomorrow without reading the
+first one, which of your findings would they lose?
+
+## Say which side of the cable a new feature lives on
+
+These units are carried around and handed to people, so "works when nobody is at a desk" is a
+product requirement rather than a nicety. That makes *where a feature runs* a decision worth stating
+out loud, because it is easy to drift without noticing: in one day the ESP32 was moved to LVGL
+specifically so it needs no host, and the Cardputer's newest feature — browse mode, Overview,
+Holders and Activity — was built entirely host-side and therefore only works on a cable. Both were
+defensible on their own and the pair is incoherent.
+
+A device here can be in one of three states, and a new feature should name which ones it serves:
+
+1. **Tethered**, with a desktop rendering or feeding it. Live Omarchy theme, the user's own
+   portfolio, anything that needs a credential the device must not hold.
+2. **Untethered with a network** — it fetches public discovery data itself and draws it natively.
+3. **Untethered with nothing** — it says what it is waiting for. An empty screen that means six
+   different things is the failure this project has already shipped once.
+
+If a feature only works in state 1, say so where it is declared, so the gap is a known one rather
+than something discovered at a venue.
+
+## When a human is standing at the hardware, ask for an observation, not a theory
+
+Four wrong explanations were offered for one bug across a long evening — a font problem, a contrast
+problem, a tearing problem, a stale-frame problem — each costing a round trip, before the cause was
+found by reading the panel driver. Meanwhile the words that actually identified it came from the
+person holding the device: "italicised", "laggy", "only the first 5% animates". Each was literally
+accurate and each named a mechanism. *Italic* meant a shear; *laggy* meant rendering out of PSRAM.
+
+So: when somebody is in front of the glass, spend the round trip on the one observation that splits
+the hypotheses rather than on the hypothesis itself — "is the middle dark during the grid test, yes
+or no" beats a paragraph about what it might be. And take a plain description as data. A person
+saying a thing looks italic is not being imprecise; they are reporting the shape of the corruption.
+
 ## Keeping the record
 
 Two artefacts, both part of the work rather than an afterthought:
