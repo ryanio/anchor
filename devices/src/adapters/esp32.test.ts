@@ -250,6 +250,43 @@ describe("paint", { skip: noRasteriser }, () => {
     await device.close();
   });
 
+  test("a device that says HELLO mid-session is repainted in full", async () => {
+    /*
+     * The bug this pins cost a week of looking at the hardware.
+     *
+     * The firmware announces itself whenever it has no session, which it reaches by blanking on
+     * silence, by a momentary USB CDC drop, or by rejecting something and starting over. Its panel
+     * is black by then. The host used to decode that HELLO and ignore it, keeping `#frame` — its
+     * belief about what is on the glass — so the next paint diffed against a picture that no longer
+     * existed and sent only the tiles that happened to differ.
+     *
+     * On a desk that looked like a fault in the display: a dark panel with a sliver of sync bar at
+     * the top, a sliver of footer at the bottom, and one lit square where a reading had changed.
+     * The panel, the PSRAM, the blit and the decoder were all measured healthy, because they were.
+     */
+    const { link, device } = await connect();
+    await device.paint(frameFor(tile("ready")));
+    link.sent.length = 0;
+
+    // The device drops its session and says so.
+    link.receive(encodeHello(1, smallHello));
+    await new Promise((resolve) => setImmediate(resolve));
+
+    // READY first: a device outside a session drops every input the glass produces.
+    const afterHello = sent(link);
+    assert.ok(afterHello.types.includes(MessageType.Ready), "the session is re-established");
+
+    // And the next paint is whole, even though only one label changed.
+    link.sent.length = 0;
+    await device.paint(frameFor(tile("moved")));
+    assert.equal(
+      paintedPixels(sent(link).tiles),
+      PANEL_PIXELS,
+      "a repaint after a HELLO must cover the panel, not diff against a frame that is gone",
+    );
+    await device.close();
+  });
+
   test("a changed label repaints a fraction of the panel, not the panel", async () => {
     // This is the whole case for shipping pixels. Without it the link carries a quarter of a
     // megabyte every time a portfolio ticks; with it, it carries the digits.

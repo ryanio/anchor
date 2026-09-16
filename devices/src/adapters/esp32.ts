@@ -376,7 +376,45 @@ export class Esp32PulseDevice implements AnchorDevice {
     for (const parsed of decoded.messages) {
       if (parsed.type === MessageType.Input) this.#inputHandler?.(parsed.input);
       else if (parsed.type === MessageType.Pong) this.#pongHandler?.(parsed.seq);
+      else if (parsed.type === MessageType.Hello) void this.#resync();
     }
+  }
+
+  /**
+   * The device threw its picture away and said so. Repaint it in full.
+   *
+   * A HELLO mid-session is not a greeting, it is the one way this protocol has of saying "I am no
+   * longer showing what you think I am showing": the firmware only announces itself while it has no
+   * session, which it reaches by blanking on silence past `staleAfterMs * 4`, by a momentary drop of
+   * the USB CDC connection, or by rejecting something and starting over.
+   *
+   * Until now the host decoded that message and dropped it. `#frame` — the host's belief about what
+   * is on the glass — survived, so the next `paint` diffed against a panel that had since gone black
+   * and sent only the handful of tiles that happened to differ. The result is a dark screen carrying
+   * a sliver of sync bar at the top, a sliver of footer at the bottom, and one lit square wherever a
+   * reading had changed: precisely what was reported from the desk, and for a week read as a display
+   * fault. Every other instrument agreed, correctly, that the hardware was fine — the panel, the
+   * PSRAM, the blit and the decoder were all doing exactly as told. The lie was in the host's memory.
+   *
+   * Forgetting the frame is what makes the next paint whole, and READY goes with it because the
+   * device left its session when it blanked: without one it would sit outside a session, announcing
+   * itself every 500ms, and drop every input the glass produced.
+   */
+  async #resync(): Promise<void> {
+    if (this.#closed) return;
+    this.#frame = null;
+    await this.#link
+      .send(
+        encodeReady(this.#next(), {
+          version: PROTOCOL_VERSION,
+          brightness: this.#options.brightness,
+          keepaliveMs: this.#options.keepaliveMs,
+          staleAfterMs: this.#options.staleAfterMs,
+        }),
+      )
+      .catch(() => {
+        /* the close handler is the one that reports a dead link */
+      });
   }
 
   async close(): Promise<void> {
