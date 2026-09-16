@@ -28,6 +28,7 @@
 
 #include "anchor_pulse.h"
 #include "sensors.h"
+#include "wifi_setup.h"
 
 /*
  * The panel this device claims, measured rather than chosen.
@@ -441,6 +442,7 @@ void setup() {
   banner();
   // After `banner()`, because `scan_i2c()` inside it is what calls `Wire.begin()`.
   sensors::begin();
+  if (panel_ready) wifi_setup::begin(panel, panel_width, panel_height);
   last_heard_ms = millis();
   say_hello();
 }
@@ -497,8 +499,14 @@ void loop() {
    * `poll()` is bounded and throttled internally, so calling it every pass costs a comparison on
    * the passes where it does nothing, and never costs the decoder a frame.
    */
+  /*
+   * One consumer of `sensors::poll()`, always, the same discipline flint documents for its own
+   * keyboard: whoever calls it first is the only one told about the gesture. A host session gets it
+   * exactly as before; without one, Wi-Fi setup gets it instead of the touch going nowhere.
+   */
+  const bool host_linked = (bool)Serial;
+  const sensors::Event gesture = sensors::poll();
   if (have_ready) {
-    const sensors::Event gesture = sensors::poll();
     if (gesture.kind != sensors::Kind::None) {
       static uint16_t input_seq = 0;
       uint8_t out[64];
@@ -508,7 +516,12 @@ void loop() {
                                           gesture.a, gesture.b);
       if (n > 0) Serial.write(out, n);
     }
+  } else if (!host_linked) {
+    // A host that is mid-handshake (linked but not yet READY) still says nothing to touch, exactly
+    // as before — only a cable with nobody on the other end at all hands the panel to Wi-Fi setup.
+    wifi_setup::handleTouch(gesture);
   }
+  wifi_setup::tick(host_linked);
 
   /*
    * Noticing that the host went away.
@@ -531,7 +544,9 @@ void loop() {
     last_fault = ANCHOR_OK;
     have_ready = false;
     presented = false;
-    set_backlight(0);
+    // Not while Wi-Fi setup owns the panel: it manages its own backlight and a cable dropping out
+    // mid-setup should not blank the very screen that lets someone recover from that.
+    if (!wifi_setup::active()) set_backlight(0);
   }
   was_connected = connected;
 

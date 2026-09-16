@@ -226,6 +226,18 @@ Hourglass is the one surface where a round trip per tick is genuinely silly. The
 still pixels — a dirty rect containing just the digits, which the table above prices at about 1 KB —
 not a second renderer.
 
+**One exception was taken anyway, and it is a second renderer.** `app/wifi_setup.{h,cpp}` draws a
+network list and an on-screen keyboard directly on the panel with `Arduino_GFX`'s own font, so a unit
+carried away from a desk can join whatever WiFi is nearby without a phone or a laptop in the loop.
+Ryan chose this over the two options that would have kept the rule intact — a phone-facing captive
+portal (no font needed at all, the browser renders), or staying cable-only for WiFi the way this
+device already is for everything else — with the trade-off named, not by default. It is kept as
+narrow as the reasoning above argues a native renderer should be: one module, one job, no palette, no
+layout beyond what typing a passphrase requires, and it hands the panel back to the protocol decoder
+the instant a host is on the cable. It does not reopen the question this section answers for
+everything else a pulse display might show; that decision — a standalone renderer for actual
+portfolio data with no host present — is still open, and is a separate, larger call.
+
 ### The messages
 
 Binary, little-endian, one TCP stream. Header is 8 bytes: `[magic 0xA5][type][seq u16][length u32]`.
@@ -357,6 +369,35 @@ agree independently, which is what makes this an identification rather than a pl
 The panel is **368x448**, on QSPI at CS=12, SCK=11, D0-D3 = 4, 5, 6, 7, with **no reset pin** — the
 vendor's example passes `GFX_NOT_DEFINED`. The old `amoled-466` guess in the geometry table named the
 right driver family and the wrong size.
+
+### Every flushed rectangle starts on an even column, or the text comes out italic
+
+The CO5300 is written by setting a column window (`CASET`) and streaming pixels into it, and
+`Arduino_CO5300::writeAddrWindow` passes whatever `x` and `w` it is handed straight through with no
+alignment. This panel wants those on even columns. Give it an odd one and the controller's write
+pointer advances at a different rate from the data being fed to it, so each row lands a pixel further
+across than the row above — and down a block of text that is a progressive shear.
+
+It does not look like corruption. It looks like *italics*, which is how it was reported from the desk
+and why it cost most of an evening: the glyphs are the right glyphs, in the right font, at the right
+size, drawn with every row offset from the last. Three separate theories died on it — a font problem,
+a contrast problem, and a tearing problem — because all three are things that could plausibly slant
+text, and none of them was this.
+
+Two things made it hard to see, both worth remembering:
+
+- **Only some elements shear.** LVGL invalidates the bounding box of whatever changed, so whether a
+  given label lands on an odd column is luck. A subtitle repainting on its own is a small rectangle
+  that may be odd; a full-screen repaint starts at zero and is even. So the panel looks mostly fine
+  with one line wrong, which reads as a problem with *that line*.
+- **The simulator cannot reproduce it, ever.** `sim/` renders into a framebuffer, and a framebuffer
+  does not care where a rectangle begins. This is the sharp edge of that tool: it catches layout and
+  logic and it is structurally blind to anything about how the panel is addressed. A clean render
+  proves nothing about column alignment.
+
+`pulse.ino` snaps every invalidated area outward on `LV_EVENT_INVALIDATE_AREA` (`x1 &= ~1`,
+`x2 |= 1`). It costs at most two columns of redraw and cannot lose pixels. Anything else that ever
+drives this panel directly needs the same rule.
 
 ### The tearing line, and an oracle that was switched off
 

@@ -1,0 +1,197 @@
+#ifndef ANCHOR_PULSE_FEED_H
+#define ANCHOR_PULSE_FEED_H
+
+#include <Arduino.h>
+
+#include <stddef.h>
+#include <stdint.h>
+
+/*
+ * Trending tokens, fetched by this unit over WiFi, with no host on the cable.
+ *
+ * `docs/devices-esp32.md` argues — correctly, and the argument stands — that the host renders and
+ * the device blits. A unit with no USB cable attached therefore shows nothing at all, which is fine
+ * on a desk and is not fine at the end of the month: these units go to an OpenSea offsite and have
+ * to work untethered. So this module is the second half of the exception `app/wifi_setup.{h,cpp}`
+ * already took (see that file's header, and the "One exception was taken anyway" section in
+ * `docs/devices-esp32.md`): typing a passphrase on the glass is only useful if something then uses
+ * the network it joined.
+ *
+ * The sibling device solved exactly this first, in
+ * `devices/firmware/cardputer/app/src/standalone.{h,cpp}`, and where the two agree it is on purpose
+ * rather than by coincidence: the same endpoint, the same four fields, the same ArduinoJson filter
+ * so a payload never lands whole in RAM, the same formatted-on-the-device strings, the same
+ * `OPENSEA_API_KEY` gate. Two devices in one repository speaking two dialects of the same fetch is
+ * how one of them quietly rots.
+ *
+ * Three things are different here, each because this board is different:
+ *
+ *   1. **The fetch runs on its own FreeRTOS task**, not inline in `tick()`. The Cardputer's
+ *      `standalone::tick()` blocks its caller for the length of a TLS handshake; on this board the
+ *      same loop also drives a 368x448 AMOLED and feeds `anchor_pulse_feed()`, and a blocking fetch
+ *      is a frozen panel and a dropped frame. See `feed.cpp` for the guarantee and what bounds it.
+ *   2. **Credentials come out of NVS**, written by `wifi_setup.cpp` under the `anchor-wifi`
+ *      namespace, rather than from a compiled-in `WIFI_SSID`. A unit handed to somebody at the
+ *      offsite gets its network typed on it; nothing about the network is baked in here.
+ *   3. **There is a status, and a reason.** AGENTS.md is not negotiable about this — an empty list
+ *      must say *why* it is empty — and a panel that can draw a token list can draw a sentence.
+ *
+ * Deliberately narrow, exactly as the Cardputer's is: public discovery data only, the same data
+ * `devices/src/state/discovery.ts` reads host-side. Never a wallet, never a portfolio, never
+ * anything needing more than a key scoped to public reads. This module owns fetching, parsing and
+ * saying what state it is in; it owns no pixels, and deciding *when* a screen shows this belongs to
+ * whoever draws it.
+ *
+ * Everything that comes back over the wire is marketplace content, which AGENTS.md treats as a
+ * prompt-injection surface and this file treats as hostile bytes: see `copyBounded` in `feed.cpp`.
+ *
+ * **Build prerequisite: ArduinoJson 7** — `arduino-cli lib install "ArduinoJson@7.2.0"`, the same
+ * pin `devices/firmware/cardputer/flint/flint.ini` already carries for the sibling device. See the
+ * comment above the includes in `feed.cpp` for why it cannot be an optional `__has_include`.
+ *
+ * **Nothing calls this yet.** `app.ino` is deliberately untouched: it is the working firmware, and
+ * wiring a new subsystem into it is a change somebody should make on purpose rather than find. The
+ * whole wiring is three lines — `feed::begin()` next to `wifi_setup::begin()` in `setup()`, and
+ * `feed::tick(wifi_setup::active())` next to `wifi_setup::tick()` in `loop()`, with whatever draws
+ * the panel calling `feed::snapshot()`. With no `app/secrets.h` present those three lines compile
+ * to nothing at all: measured, `963,539` bytes of flash and `55,392` of static RAM either way,
+ * byte-identical to the build before this module existed.
+ */
+namespace feed {
+
+/*
+ * One row, formatted.
+ *
+ * Same shape and same reasoning as `standalone::Token`: the strings are formatted once, here, at
+ * fetch time, rather than shipped to a renderer as floats. This device has no more business
+ * deciding how a dollar figure rounds than the Stream Deck does — `state/anchor.ts`'s `usd()` lives
+ * on the host for exactly that reason — and a renderer handed a `double` is a renderer that has to
+ * grow an opinion about it.
+ *
+ * Every array is fixed-size and every write into one is bounded. A 200-character collection name
+ * truncates; it does not overrun. The sizes are the Cardputer's, which were picked for a 240x123
+ * screen — this panel is 368x448 and could hold more, but a wider `name` would be a second dialect
+ * for no measured gain, and nothing here has yet been drawn on this glass to say what fits.
+ */
+struct Token {
+	char symbol[12];
+	char name[24];
+	char price[16];
+	char change[10];
+	bool changePositive;
+};
+
+constexpr size_t MAX_TOKENS = 8;
+
+/*
+ * Why a screen is empty, in the vocabulary a screen needs.
+ *
+ * These are not log levels. Each one is a different sentence for a person holding the unit, and
+ * they are ordered by how early in the chain the answer stops: no key compiled in, no network
+ * saved, joining one, joined, asking OpenSea, and "the last ask did not work". A UI that renders
+ * all six never has to draw a blank panel and hope.
+ */
+enum class Status : uint8_t {
+	/* No `OPENSEA_API_KEY` (or no ArduinoJson) compiled in. Nothing here will ever touch the
+	   network, which is the whole point of the gate — see `app/secrets.h.example`. */
+	Disabled,
+	/* Nothing saved under the `anchor-wifi` NVS namespace. `wifi_setup.cpp` is how that gets
+	   filled in, on the glass, by whoever is holding the unit. */
+	NoCredentials,
+	/* Credentials exist and the station has not associated yet. */
+	Joining,
+	/* Associated, idle, waiting for the poll interval. `everSucceeded`/`ageMs` say whether there
+	   is anything to show while it waits. */
+	Online,
+	/* A request is in flight on the worker task right now. */
+	Fetching,
+	/* The last attempt failed. `reason` says how far it got. Any data in the snapshot is the last
+	   good data and `ageMs` says how old — stale and labelled beats absent and unexplained. */
+	Failed,
+};
+
+/*
+ * A consistent view of everything a UI needs, copied out in one go.
+ *
+ * By value, and copied under the publish lock, because the alternative is a renderer reading
+ * `tokens[3]` while the worker task is halfway through replacing it — a row with one token's symbol
+ * and another's price, which is a plausible number that is not the number it claims to be, this
+ * project's named worst failure mode. 512-odd bytes off a loop task with an 8 KB stack is a cheap
+ * way to make that impossible rather than unlikely.
+ */
+struct Snapshot {
+	Status status;
+	/*
+	 * A short, fixed, compiled-in sentence — never a string that came off the network. Safe to
+	 * draw and safe to print. See `feed.cpp` for why nothing from the response is ever allowed
+	 * near `Serial` on this board.
+	 */
+	const char *reason;
+	Token tokens[MAX_TOKENS];
+	size_t count;
+	/* Milliseconds since the last *successful* fetch, or `UINT32_MAX` if there has never been
+	   one. A UI that shows data without showing this is showing an unlabelled claim. */
+	uint32_t ageMs;
+	bool everSucceeded;
+	/* HTTP status of the last completed request, or 0 if none has completed. Negative values are
+	   `HTTPClient`'s own transport errors (`HTTPC_ERROR_*`), which is why this is signed. */
+	int lastHttpCode;
+	/*
+	 * Smallest free stack the worker task has ever had, in bytes.
+	 *
+	 * Here because the stack size below is the one number in this module that is an estimate
+	 * rather than a measurement, and "present" is not "works": a TLS handshake and an ArduinoJson
+	 * parse on one stack is exactly the shape of thing that overflows in the field and not on a
+	 * desk. Reading it back is how that estimate becomes a measurement. 0 before the task has
+	 * run.
+	 */
+	uint32_t workerStackFreeBytes;
+};
+
+/*
+ * Call once, after `wifi_setup::begin()`.
+ *
+ * Reads the saved network out of NVS and starts the worker task. Does not connect, does not fetch,
+ * and returns immediately — `wifi_setup::begin()` has already started an opportunistic join with
+ * the same credentials, and racing it here would only produce two `WiFi.begin()` calls in the same
+ * millisecond.
+ *
+ * Safe to call on a unit with no key compiled in: it short-circuits to `Status::Disabled` and
+ * creates no task, so a checkout with no `secrets.h` costs a branch and one byte of RAM.
+ */
+void begin();
+
+/*
+ * Call every `loop()` pass. Never blocks.
+ *
+ * This function does no I/O at all: it compares a few `millis()` deltas, reads `WiFi.status()`, and
+ * at most posts a notification to the worker task. The blocking parts — DNS, TCP, the TLS
+ * handshake, the read, the parse — live on that task, pinned to the core the Arduino loop is not
+ * running on. `feed.cpp` states the guarantee and what would falsify it.
+ *
+ * `radioBusy` is `wifi_setup::active()`. While the setup UI owns the radio somebody is picking or
+ * typing a network, and a `WiFi.begin()` from here would join over the top of the one they are
+ * making. Nothing else in this module cares who owns the panel.
+ */
+void tick(bool radioBusy = false);
+
+/* The whole state, atomically. Cheap: a bounded `memcpy` inside a spinlock, no waiting. */
+Snapshot snapshot();
+
+/*
+ * The parser, as a pure function over a stream — the part with the judgement in it.
+ *
+ * Exposed for the same reason every `readX` in `devices/src/state/discovery.ts` is exported: a
+ * parser that has only ever been run against the live API is a parser nobody has tested against the
+ * payloads that break it. This one can be handed a fixture — a real captured response, a row with a
+ * 200-character name, a `usdPrice` that is a number where the API sends a string, an array of
+ * nothing — with no radio, no key and no board.
+ *
+ * Writes at most `max` rows, returns how many it wrote, and never writes an unterminated string.
+ * `err` is filled with a compiled-in reason on failure and left alone on success.
+ */
+size_t parseTrending(Stream &in, Token *out, size_t max, const char **err);
+
+}  // namespace feed
+
+#endif /* ANCHOR_PULSE_FEED_H */
