@@ -189,10 +189,14 @@ src/anchor_pulse.{c,h}   the protocol. C99, no allocation, no platform. This is 
 host/conformance.c       the same decoder as a desktop binary, driven by the Node test
 app/app.ino              the application: transport, framebuffer, the LED, and nothing else
 app/sensors.{h,cpp}      the CST820 touch driver, bounded and throttled, and why the IMU is not one
+app/wifi_setup.{h,cpp}   the one screen this device draws itself: pick a network, type, join
 probe/probe.ino          what is actually wired to this board — measured, not assumed
 panelsweep/panelsweep.ino  hunt for the display's bus using the panel's own tearing line
 panel/panel.ino          wake the panel from the known pin map, and prove it woke
 sensors/sensors.ino      what the touch controller and the IMU say when a person uses them
+sim/                     the whole firmware on a desktop: shims, a framebuffer, a scripted finger
+sim/run.sh               one command — build it and run a scenario, writing frames as PPM/PNG
+sim/wifi_setup.test.ts   six of those scenarios, on every `npm test`
 tools/bringup.ts         host side — paint one frame down the cable and hold it there
 tools/measure.ts         host side — what a frame actually costs, end to end
 library.properties       so the Arduino IDE can find src/ as a library
@@ -376,6 +380,103 @@ The last argument is the chunk size. `1` feeds the stream a byte at a time, whic
 message at every possible offset — what a 64-byte USB endpoint and a TCP segment boundary do to it
 in practice.
 
+## Running the whole firmware without hardware
+
+`sim/` builds this firmware for the desktop and draws its panel into a file. One command, no board,
+no cable:
+
+```bash
+sim/run.sh --networks "HomeNet:-42,Skylark Cafe:-58:open" \
+  --taps "180,80 342,120 20,174 60,174 60,174 54,120 306,120 126,120 100,174 320,278" \
+  --shot /tmp/pulse
+```
+
+That picks the first network, types `password` on the on-screen keyboard and presses JOIN. It writes
+`/tmp/pulse-NN.ppm` — and `.png` alongside, where `magick` is installed — one frame before every tap,
+and prints what the panel is holding at each one, so a headless run says in words what a screenshot
+says in pixels:
+
+```
+frame 14  t=48803ms
+  panel 368x448  brightness 178/255
+    text  ( 20, 16) size 2  right edge  104  "HomeNet"
+    text  (130,102) size 2  right edge  238  "connected"
+    text  (112,137) size 2  right edge  256  "192.168.1.74"
+```
+
+`sim/run.sh --help` lists the rest: `--saved` for a unit that was already provisioned, `--join-fail`
+for the failure path, `--scan-ms`/`--connect-ms` for the timing a state machine is made of,
+`--no-psram` for the fallback panel nobody can trigger on real silicon without a soldering iron, and
+`--host` for a cable with somebody on the other end.
+
+**The protocol path runs here too, against a real host frame.** `tools/frame.ts` drives the actual
+`Esp32PulseDevice` and writes what it put on the wire; the simulator feeds those bytes to the same
+`anchor_pulse.c` the board runs and blits the result:
+
+```bash
+node sim/tools/frame.ts /tmp/frame.bin
+sim/run.sh --feed /tmp/frame.bin --shot /tmp/pulse --quit-after 1500
+```
+
+### What is real and what is not
+
+Real: `app/app.ino` and `app/wifi_setup.cpp` in full, compiled unmodified — nothing in `app/` knows
+the simulator exists — plus `src/anchor_pulse.c`, the panel geometry, the 6x8 glyph cell and the
+glyphs themselves, which come from the installed `GFX_Library_for_Arduino` rather than a copy. Text
+wraps where Arduino_GFX wraps, which is how three overflowing strings were found.
+
+Simulated: the clock is counted rather than measured, so a five second grace period costs nothing and
+a run is reproducible; the radio answers on a schedule with a join rule (open joins, a passphrase
+under eight characters fails); NVS is a text file; and the cable is whatever `--host` and `--feed`
+say it is.
+
+Not simulated at all, on purpose: **touch below the gesture layer**. The CST820 has never answered
+with a coordinate on this board, so `sim/src/sensors_sim.cpp` injects `sensors::Event` directly
+rather than pretending to be an I2C part whose real behaviour nobody has seen. Everything above that
+point is the firmware's own code. **Whether a finger on the glass ever becomes one of these events is
+the one question this harness cannot answer**, and it is still the open one.
+
+`sim/wifi_setup.test.ts` runs six of these scenarios on every `npm test`, and skips — loudly — where
+there is no C++ compiler or no Arduino_GFX to borrow a font from.
+
+### What the simulator found
+
+`app/wifi_setup.{h,cpp}` compiled and had never been run — not on hardware, not anywhere. The first
+realistic flow through it found seven faults, and the shape of the list is the argument for the
+harness: none of them is visible in the source, none needs a board, and the first two are the kind
+that make a device look broken while behaving exactly as written.
+
+1. **A join's result was never drawn.** `tickConnecting` recorded success, saved the credentials to
+   NVS and returned without touching any of the three things `tick` redraws on. The unit joined the
+   network and went on showing `connecting` under a frozen spinner. The failure screen was worse: it
+   was never drawn either, and `onConnectingTap` accepts TRY AGAIN and CANCEL at coordinates where
+   nothing had been painted.
+2. **A refusal waited twenty seconds to be reported.** `WL_CONNECT_FAILED` — a wrong passphrase,
+   which is the one mistake this screen exists to let somebody correct — was ignored in favour of
+   `CONNECT_TIMEOUT_MS`.
+3. **The wrong passphrase was saved.** `saveCredentials(connectingSsid, entry)` persisted whatever
+   was in the keyboard buffer rather than what the join used. Type three characters, back out to the
+   list, tap an *open* network: it joins with no passphrase and saves the three characters, so the
+   next boot replays a credential that never worked.
+4. **A third of the panel was a hidden JOIN button.** The control row's hit test was "below the
+   letters", and the letters end 144px above the bottom of the glass. A tap at (320, 420), on blank
+   panel, submitted the passphrase.
+5. **Three strings ran past 368px**, and Arduino_GFX wraps rather than clips — so they landed on
+   whatever was drawn below. A 32-character SSID broke across two lines on the connecting screen; a
+   long passphrase painted itself over the top row of keys.
+6. **Two networks were kept and could not be picked.** `MAX_LISTED` was 8, `DISPLAY_ROWS` 6, and
+   `pickScroll` is assigned zero and nothing else. `collectScan` also stopped at the first six
+   results the radio returned rather than keeping the strongest six, which its own comment claimed.
+7. **Text over the ground carried a key-coloured box**, because the glcd font fills its own cell and
+   `centerText` hard-coded `KEY_BG` for every caller.
+
+One more is **not** fixed, because it is `app.ino`'s and the fix is a judgement call about the host
+path: a unit with no cable attached sits at brightness zero for **35 seconds** before setup appears —
+30 of them in `setup()`'s `while (!Serial)` wait, which exists so the boot banner reaches a host that
+connects late, and then `GRACE_MS` on top. The comment on `GRACE_MS` says "short enough that a unit
+with nothing saved doesn't sit on a black panel for a worrying length of time"; measured, it is 35
+seconds of black panel.
+
 ## What the firmware may not do
 
 Restating it here because this is the file a firmware author opens, and the boundary is the design
@@ -439,3 +540,10 @@ rather than an omission.
   looked at.
 - **No Wi-Fi, no TLS-PSK.** Deliberate. The cable keeps invariant 6 vacuous rather than merely
   satisfied.
+- **Wi-Fi setup has run in the simulator and never on the glass.** Every screen in
+  `app/wifi_setup.cpp` is now drawn, tapped and photographed on this desktop, and the seven faults
+  above came out of that — but the simulator injects `sensors::Event` directly, so what is still
+  unproven is the half below it: the CST820 producing a coordinate at all. Until somebody puts a
+  finger on the lit glass, "the keyboard works" means "the keyboard works given a tap", which is a
+  smaller claim than it sounds. `WiFi.begin` against a real access point is likewise still a
+  scheduled answer here, not a radio.
