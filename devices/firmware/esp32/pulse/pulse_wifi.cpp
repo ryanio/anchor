@@ -1348,9 +1348,29 @@ const char *status()
 	return status_text;
 }
 
+/*
+ * A plain tap reopens setup while no network is saved.
+ *
+ * The hold below is the right gesture for a *provisioned* unit: it takes deliberate contact, so an
+ * ambient display nobody is using cannot be knocked into a settings screen by a sleeve. It is the
+ * wrong and only gesture for an unprovisioned one. Somebody closed the picker, read "wi-fi / not set
+ * up", and had no way back in — the way back was 1.4 seconds of continuous contact that nothing on
+ * the screen mentions, on a controller that until recently dropped contact mid-press anyway.
+ *
+ * With nothing saved there is nothing else this screen can usefully do, so the whole of it is the
+ * button. The ambient screen says so in as many words; see `pulse_feed_view.cpp`.
+ */
+void onTapWhenUnset(lv_event_t *event)
+{
+	(void)event;
+	if (have_saved) return;
+	open();
+}
+
 void attachOpenGesture(lv_obj_t *target)
 {
 	if (target == nullptr) return;
+	lv_obj_add_event_cb(target, onTapWhenUnset, LV_EVENT_SHORT_CLICKED, nullptr);
 	lv_obj_add_event_cb(target, onHold, LV_EVENT_LONG_PRESSED, nullptr);
 	lv_obj_add_event_cb(target, onHold, LV_EVENT_LONG_PRESSED_REPEAT, nullptr);
 	lv_obj_add_event_cb(target, onHold, LV_EVENT_RELEASED, nullptr);

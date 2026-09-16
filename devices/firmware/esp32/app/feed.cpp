@@ -709,7 +709,7 @@ Snapshot snapshot() {
 	 */
 	if (!haveCreds) {
 		out.status = Status::NoCredentials;
-		out.reason = "no WiFi saved on this unit";
+		out.reason = "tap anywhere to set up wi-fi";
 	} else if (WiFi.status() != WL_CONNECTED) {
 		out.status = Status::Joining;
 		out.reason = "joining the saved network";

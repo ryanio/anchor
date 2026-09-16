@@ -187,14 +187,21 @@ this line is legacy to be removed rather than a design to extend.
 processor to render with — it is a display and a key matrix on USB — so a host is not a choice there,
 it is the only place the pixels can come from.
 
-**What independence costs, stated plainly: these devices can show public data and nothing else.**
-Trending tokens and collections come from a read-only API key, which is the deliberate exception
-`docs/devices-esp32.md` and `standalone.h` both argue for. A *portfolio* needs the PAT, and
-`service/src/keyring.ts` is explicit that a PAT "carries whatever scopes it was created with, which
-can include write scopes". That does not go on a unit handed to a stranger — invariant 5, and
-flint's own "no secrets on the device". So a wallet-scoped reading is something these devices do not
-do, rather than something not built yet, and a feature asking for one is asking to break an
-invariant.
+**A portfolio is public data about an address, so an independent device can show one.** This was
+briefly written down here the other way round — that a portfolio needs the PAT and therefore cannot
+live on a handheld unit — and that is wrong twice over. `service/src/config.ts` says it plainly:
+Anchor "holds no wallet credential by design (the PAT step was removed once it was measured to be
+unnecessary)", and `wallets` is a list of addresses somebody typed. An address is configuration, not
+a secret: what it holds is on a public chain and a read-only API key is enough to read it.
+
+So a device is given **addresses**, the same way it is given a network, and fetches their holdings
+itself. Defaulting to Ryan's addresses is a reasonable starting configuration; the shape should stay
+a list, because `wallets` is already a list for the reason recorded above — a wallet-scoped read
+means *every* wallet, and a total that silently covers one of nine is this project's worst failure.
+
+What genuinely cannot go on these units is a credential that can *act*: a PAT carries whatever
+scopes it was created with, which can include write scopes, and invariant 5 and flint's "no secrets
+on the device" both apply. The line is between reading something public and holding an authority.
 
 ## When a human is standing at the hardware, ask for an observation, not a theory
 

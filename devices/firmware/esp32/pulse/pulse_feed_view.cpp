@@ -39,6 +39,8 @@ Empty emptyFor(Status status, bool everSucceeded) {
 			 */
 			return {"Anchor", "trending", "off"};
 		case Status::NoCredentials:
+			/* The footer says how, because on this screen the whole panel is the button — see
+			 * `pulse_wifi::attachOpenGesture`. A state somebody cannot act on is a dead end. */
 			return {"Anchor", "wi-fi", "not set up"};
 		case Status::Joining:
 			return {"Anchor", "wi-fi", "joining"};
