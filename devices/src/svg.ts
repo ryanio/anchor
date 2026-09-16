@@ -996,7 +996,9 @@ function renderDetail(surface: Extract<Surface, { kind: "detail" }>, tokens: Tok
     const barH = Math.max(2, Math.round(short * 0.012));
     const filled = Math.max(0, Math.min(1, surface.syncProgress));
     parts.push(`<rect x="0" y="0" width="${w}" height="${barH}" fill="${tokens.sunken}" opacity="0.55"/>`);
-    parts.push(`<rect x="0" y="0" width="${(w * filled).toFixed(1)}" height="${barH}" fill="${tokens.accent}"/>`);
+    parts.push(
+      `<rect x="0" y="0" width="${(w * filled).toFixed(1)}" height="${barH}" fill="${tokens.accent}"/>`,
+    );
   }
 
   let footerTop = h - pad;

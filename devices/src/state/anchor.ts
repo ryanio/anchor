@@ -14,7 +14,7 @@
  * already cost this project an afternoon.
  */
 
-import { type Envelope, baseUrl, get, isEnvelope, metaOf } from "./service.ts";
+import { baseUrl, type Envelope, get, isEnvelope, metaOf } from "./service.ts";
 
 export type { Envelope };
 export { baseUrl };
@@ -63,7 +63,6 @@ export async function status(timeoutMs = 1500): Promise<ServiceStatus> {
     primaryChain: typeof health.primaryChain === "string" ? health.primaryChain : "",
   };
 }
-
 
 /**
  * Fetch `/portfolio/value`. Returns the envelope, or null when the service is absent or refused.
@@ -389,7 +388,6 @@ export async function orderByValue(nfts: readonly OwnedNft[], timeoutMs = 8000):
   if (floors.size === 0) return [...nfts];
   return [...nfts].sort((a, b) => (floors.get(b.collection) ?? -1) - (floors.get(a.collection) ?? -1));
 }
-
 
 /**
  * Fetch everything the portfolio page shows, in one pass.

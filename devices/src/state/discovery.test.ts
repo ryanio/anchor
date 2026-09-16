@@ -113,7 +113,8 @@ describe("readTokenActivity", () => {
           amountUsd: "139.63929875052474",
           amountNative: 1.378881196312084,
         },
-        transactionHash: "47baFVTSs3sYfnn1Rg6KK6E2rs4FqKXZk7evDPMt5vw5YFbHDFph2BZMf4ebNjSypdiGwFLwfKrBHag7TqJSNGZw",
+        transactionHash:
+          "47baFVTSs3sYfnn1Rg6KK6E2rs4FqKXZk7evDPMt5vw5YFbHDFph2BZMf4ebNjSypdiGwFLwfKrBHag7TqJSNGZw",
         swapProtocol: "Meteora",
         chain: "solana",
       },
@@ -152,7 +153,9 @@ describe("readTrendingCollections", () => {
 describe("readCollectionHolders", () => {
   test("reads a plain-number quantity and percentage, unlike a token holder's string money", () => {
     const [only] = readCollectionHolders({
-      holders: [{ address: "0x732134d7f99b90c704d736b360db45425073380f", quantity: 20286, percentage: 0.0491 }],
+      holders: [
+        { address: "0x732134d7f99b90c704d736b360db45425073380f", quantity: 20286, percentage: 0.0491 },
+      ],
     });
     assert.equal(only?.address, "0x732134d7f99b90c704d736b360db45425073380f");
     assert.equal(only?.quantity, 20286);

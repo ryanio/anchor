@@ -142,6 +142,10 @@ describe("a frame built for a case", () => {
     assert.equal(surface?.kind, "detail");
     if (surface?.kind !== "detail") return;
     assert.notEqual(surface.title, "");
-    assert.equal(/^Key \d+$/.test(surface.title), false, `title fell back to a slot number: ${surface.title}`);
+    assert.equal(
+      /^Key \d+$/.test(surface.title),
+      false,
+      `title fell back to a slot number: ${surface.title}`,
+    );
   });
 });

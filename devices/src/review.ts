@@ -45,8 +45,8 @@ import { keySlot, Panel, type PanelState, SCREEN_SLOT } from "./panel.ts";
 import { composeSvg, type PreviewRect, writePreview } from "./preview.ts";
 import type { OwnedNft, PortfolioSnapshot, Timeframe } from "./state/anchor.ts";
 import { EMPTY_PORTFOLIO, type ServiceStatus } from "./state/anchor.ts";
-import type { TrendingCollection, TrendingToken } from "./state/discovery.ts";
 import { type DesktopSnapshot, EMPTY_SNAPSHOT } from "./state/desktop.ts";
+import type { TrendingCollection, TrendingToken } from "./state/discovery.ts";
 import { themeOnDisk } from "./themes.ts";
 import { deviceTokens, type Tokens } from "./tokens.ts";
 import type { AnchorDevice, DeviceCapabilities, DeviceInput, Frame, Surface } from "./types.ts";
@@ -589,7 +589,7 @@ export const CASES: readonly CaseSpec[] = [
     title: "ESP32 pulse — the gallery page as an ambient art frame",
     looking:
       "The one piece in rotation, full-bleed, with its own name as the title rather than a row of " +
-      "thumbnails. Check the title never falls back to \"Untitled\" for a piece that has a name, and " +
+      'thumbnails. Check the title never falls back to "Untitled" for a piece that has a name, and ' +
       "that the scrim still leaves the title readable over a mostly-light piece of art.",
   },
   {
@@ -618,7 +618,7 @@ export const CASES: readonly CaseSpec[] = [
     pressedGridCell: 1,
     title: "ESP32 pulse — a cell mid-flash, right after a tap",
     looking:
-      "A device with no key travel has only this to say \"you hit this\": a wash across the whole " +
+      'A device with no key travel has only this to say "you hit this": a wash across the whole ' +
       "cell, gone again within PRESS_FLASH_MS. Check it reads as a flash rather than a state — " +
       "distinct enough from the thin selection ring to notice, gone quickly enough on the real " +
       "device that it reads as this cell having just been hit rather than a permanent look.",
