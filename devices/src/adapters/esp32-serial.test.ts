@@ -91,6 +91,19 @@ describe("finding a port", () => {
     // throws when nothing is attached is one no caller can probe.
     const ports = listPorts();
     assert.ok(Array.isArray(ports));
-    for (const port of ports) assert.ok(port.startsWith("/dev/serial/by-id/"), port);
+    /*
+     * Two shapes now, because this repo's firmware is developed on Linux and on a MacBook. udev
+     * builds `/dev/serial/by-id/...` out of the USB descriptor and Darwin has no equivalent, so
+     * there the answer comes from `/dev/cu.usbmodem*` instead. Whichever platform this runs on, a
+     * path is a path and the function still never throws with nothing attached.
+     */
+    const prefix = process.platform === "darwin" ? "/dev/cu.usbmodem" : "/dev/serial/by-id/";
+    for (const port of ports) assert.ok(port.startsWith(prefix), port);
+  });
+
+  test("a machine with neither a by-id directory nor a Darwin node answers with nothing", () => {
+    // The property every caller relies on: probing costs nothing and reports nothing, rather than
+    // throwing at a host that simply has no device plugged in.
+    assert.doesNotThrow(() => listPorts());
   });
 });

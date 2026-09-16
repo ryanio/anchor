@@ -172,11 +172,34 @@ namespace {
  * board it matters more, not less: the 329,728-byte framebuffer already has PSRAM, and the JSON
  * document is built out of internal heap, which is the scarce one here.
  */
+/*
+ * Both spellings, because this parser reads two different servers.
+ *
+ * The camelCase names came from `state/discovery.ts`, which is the host's model of this data — and
+ * the host normalises. OpenSea itself answers in snake_case: measured against the live endpoint with
+ * a real key on 2026-09-16, a trending row is `usd_price` (a string) and `price_change_24h` (a
+ * number), alongside `image_url`, `market_cap_usd` and `volume_24h`.
+ *
+ * So the first version of this parsed nothing useful from the API it was actually pointed at. Symbol
+ * and name matched by luck — they are one word in both dialects — and every price and change came
+ * back missing, which `formatUsd` would have rendered as "--" on a panel showing eight tokens. It
+ * would have looked like an upstream outage rather than a field name.
+ *
+ * `docs/upstream.md` already records this exact hazard: "every endpoint path in docs/tokens.md was
+ * wrong until the generated types replaced them". A name taken from a model of an API is not a name
+ * from the API.
+ *
+ * Both are named here rather than only the true one, because the module is documented to read the
+ * service's envelope too — `anchor-service` hands over the normalised shape — and a filter that
+ * accepts both costs two lines.
+ */
 void fillRowFilter(JsonObject row) {
 	row["symbol"] = true;
 	row["name"] = true;
 	row["usdPrice"] = true;
+	row["usd_price"] = true;
 	row["priceChange24h"] = true;
+	row["price_change_24h"] = true;
 }
 
 /*
@@ -272,8 +295,13 @@ size_t parseTrending(Stream &in, Token *out, size_t max, const char **err) {
 		if (token.symbol[0] == '\0' && token.name[0] == '\0') {
 			continue;
 		}
-		formatUsd(numberOf(entry["usdPrice"]), token.price, sizeof(token.price));
-		const double change = numberOf(entry["priceChange24h"]);
+		/* Whichever dialect answered. See `fillRowFilter` for why there are two. */
+		JsonVariantConst price = entry["usdPrice"];
+		if (price.isNull()) price = entry["usd_price"];
+		JsonVariantConst change_field = entry["priceChange24h"];
+		if (change_field.isNull()) change_field = entry["price_change_24h"];
+		formatUsd(numberOf(price), token.price, sizeof(token.price));
+		const double change = numberOf(change_field);
 		formatPercent(change, token.change, sizeof(token.change));
 		token.changePositive = isfinite(change) && change >= 0.0;
 		count++;

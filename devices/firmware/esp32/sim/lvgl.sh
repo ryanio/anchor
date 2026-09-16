@@ -21,6 +21,19 @@
 # translation units and rebuilds in a second, which is the loop that has to stay fast.
 set -euo pipefail
 
+# How many jobs to compile LVGL with. `nproc` is GNU and absent on macOS, where the same question is
+# `sysctl -n hw.ncpu`; this repo's firmware is developed on both. Falls back to 4 rather than failing,
+# because a wrong core count is a slower build and a missing one is no build at all.
+cpu_count() {
+	if command -v nproc >/dev/null 2>&1; then
+		nproc
+	elif command -v sysctl >/dev/null 2>&1; then
+		sysctl -n hw.ncpu 2>/dev/null || echo 4
+	else
+		echo 4
+	fi
+}
+
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 firmware="$(dirname "$here")"
 sketch="$firmware/pulse"
@@ -103,7 +116,7 @@ if [ "$rebuild_lvgl" = "1" ]; then
 	mkdir -p "$lvgl_objects"
 	export LVGL_ROOT="$lvgl" LVGL_OBJECTS="$lvgl_objects" LVGL_INCLUDES="${includes[*]}"
 	find "$lvgl/src" -name '*.c' -print0 |
-		xargs -0 -P "$(nproc)" -I{} bash -c '
+		xargs -0 -P "$(cpu_count)" -I{} bash -c '
 			src="$1"
 			rel="${src#"$LVGL_ROOT"/src/}"
 			obj="$LVGL_OBJECTS/${rel%.c}.o"

@@ -47,13 +47,47 @@ export function listPorts(): string[] {
   try {
     entries = readdirSync(BY_ID);
   } catch {
-    // No `by-id` directory means udev has not populated one — not an error, just no devices.
-    return [];
+    // No `by-id` directory means udev has not populated one — not an error, just no devices. On
+    // macOS there is no such directory at all, which is a different question with its own answer.
+    return macPorts();
   }
-  return entries
+  const found = entries
     .filter((name) => /espressif|usb_jtag|m5stack/i.test(name))
     .map((name) => join(BY_ID, name))
     .sort();
+  return found.length > 0 ? found : macPorts();
+}
+
+/**
+ * The same question on macOS, where `/dev/serial/by-id` does not exist.
+ *
+ * udev builds those stable names out of the USB descriptor; Darwin does not, and offers
+ * `/dev/cu.usbmodem<serial>` instead. `cu` rather than `tty` deliberately: opening a `tty.` device
+ * on Darwin blocks waiting for carrier detect, which a USB CDC endpoint never asserts, so the open
+ * never returns and the daemon looks hung rather than failing.
+ *
+ * **This loses the guarantee the by-id path was carrying, which is worth being explicit about.**
+ * Both boards in this project enumerate through the same Espressif JTAG/serial descriptor, so on
+ * Linux the only thing stopping the daemon from driving the wrong one is pinning the exact by-id
+ * path — the lesson behind 6,601 crash-looped restarts. Darwin's node names embed the USB serial
+ * number so they are stable per board, but they are not self-describing: nothing in
+ * `cu.usbmodem588A0847A1` says which of the two devices it is.
+ *
+ * So on macOS `--esp32 <path>` wants giving explicitly, exactly as the systemd units do on Linux,
+ * and this fallback is for finding out what is attached rather than for a daemon to guess with.
+ * `cli.ts` already probes candidates and reads the device id out of HELLO, which is the honest
+ * identification and works identically on both platforms.
+ */
+function macPorts(): string[] {
+  if (process.platform !== "darwin") return [];
+  try {
+    return readdirSync("/dev")
+      .filter((name) => /^cu\.usbmodem/i.test(name))
+      .map((name) => join("/dev", name))
+      .sort();
+  } catch {
+    return [];
+  }
 }
 
 /**

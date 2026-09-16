@@ -243,7 +243,36 @@ Moving to Wi-Fi later replaces two functions in the sketch and nothing above the
 
 ```bash
 sudo pacman -S --needed arduino-cli esptool
+arduino-cli core install esp32:esp32
+arduino-cli lib install "lvgl@9.2.2" "ArduinoJson@7.2.0"
+ln -sfn "$PWD" ~/Arduino/libraries/AnchorPulse   # how app.ino resolves anchor_pulse.h
 ```
+
+### Picking this up on another machine
+
+Four things do not travel with a `git clone`, and each of them fails quietly rather than loudly:
+
+1. **`app/secrets.h` is gitignored**, so a fresh clone has no OpenSea key. The firmware still
+   builds; it reports `Status::Disabled` and the panel reads "trending / off" with "no OpenSea key
+   on this unit" underneath. That is the designed behaviour and not a fault — copy
+   `app/secrets.h.example` to `app/secrets.h` and put a scoped read-only key in it. Verify the key
+   before trusting it, per AGENTS.md: a CDN sits in front of this API and will serve a cached 200
+   to an unauthenticated request, so append a cache-busting parameter and check `cf-cache-status`
+   is `MISS` or `BYPASS`, then check the same call **without** the key returns 401.
+2. **`~/Arduino/libraries/AnchorPulse` is a symlink into this checkout.** Without it `app.ino` does
+   not resolve `anchor_pulse.h`; with it pointed at the *wrong* checkout, every build silently
+   compiles a different decoder than the one in your tree. That happened here: it pointed at an
+   abandoned worktree for weeks and the builds were green the whole time.
+3. **The libraries are pinned by hand** — `arduino-cli` has no manifest. LVGL 9.2.2 and ArduinoJson
+   7.2.0 are what this tree is built against; ArduinoJson in particular must be present or the feed
+   compiles away to nothing, which looks like success.
+4. **The host daemon is Linux-shaped.** `state/desktop.ts` shells out to `omarchy` and the services
+   are systemd user units. On macOS the LVGL firmware needs none of that — it has no host — but
+   driving the *blitter* firmware or the Cardputer from a Mac means running `cli.ts` by hand.
+
+On macOS, ports are `/dev/cu.usbmodem*` rather than `/dev/serial/by-id/...` (`listPorts` handles
+both). Pass `--esp32 <path>` explicitly there: both boards enumerate through the same Espressif
+descriptor, and Darwin's node names embed a serial number without saying which device it belongs to.
 
 The serial device is `root:uucp` on Arch. On this machine it was made usable through the udev
 `uaccess` ACL, so the logged-in user gets read/write with no `sudo` and no group change.
