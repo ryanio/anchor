@@ -154,7 +154,140 @@ void formatPercent(double value, char *out, size_t n) {
 	snprintf(out, n, "%s%.2f%%", value >= 0.0 ? "+" : "", value);
 }
 
+/* ---------------------------------------------------------------- decimal money ---------------- */
+
+/*
+ * Addition that refuses to be wrong rather than wrapping.
+ *
+ * A portfolio total is summed from one response per address, and the one outcome worse than no total
+ * is a total that overflowed into a negative number and got drawn in a 40px face. `int64_t` overflow
+ * is undefined behaviour in C++, so this checks *before* adding rather than looking at the result.
+ * At a scale of 1e6 the headroom is about nine trillion dollars, so a true portfolio cannot reach it
+ * and a response that does is hostile or broken — either way the pass fails and says so.
+ */
+bool addMicros(int64_t a, int64_t b, int64_t *out) {
+	if (b > 0 && a > INT64_MAX - b) return false;
+	if (b < 0 && a < INT64_MIN - b) return false;
+	*out = a + b;
+	return true;
+}
+
 }  // namespace
+
+/*
+ * Money from the fixed-point total, formatted once, here.
+ *
+ * Same *rounding* rule as `formatUsd` above and as `usd()` in `devices/src/panel.ts`: at or above a
+ * thousand dollars the cents are noise on an ambient panel, below it they are the reading. Two
+ * Anchor devices on one table must not round the same figure differently, and this is the one place
+ * that opinion lives on this board.
+ *
+ * It does add thousands separators where `formatUsd` does not, and that is a deliberate divergence
+ * rather than drift. `formatUsd` is byte-identical to `standalone::formatUsd` on the Cardputer
+ * because both draw the same trending row, and changing one without the other is how two devices
+ * start disagreeing. There is no Cardputer portfolio screen for this to disagree with, and the host
+ * *does* group — `usd()` formats through `toLocaleString("en-US")`, so `anchor.total` on the bar
+ * reads "$3,125" — so grouping here is what keeps the panel and the bar the same number.
+ *
+ * The boundary artefact is the host's too: $999.996 rounds to "$1,000.00" rather than "$1,000",
+ * because the branch tests the unrounded figure. Copied rather than corrected, for the same reason
+ * as the rounding itself.
+ */
+void formatUsdMicros(int64_t micros, char *out, size_t n) {
+	/* `-INT64_MIN` is undefined; negating through unsigned is not. */
+	const bool negative = micros < 0;
+	const uint64_t magnitude =
+	    negative ? (uint64_t)(-(micros + 1)) + 1u : (uint64_t)micros;
+
+	uint64_t whole = 0;
+	uint64_t cents = 0;
+	bool showCents = false;
+	if (magnitude >= 1000ull * 1000000ull) {
+		whole = (magnitude + 500000ull) / 1000000ull;
+	} else {
+		const uint64_t rounded = (magnitude + 5000ull) / 10000ull;
+		whole = rounded / 100ull;
+		cents = rounded % 100ull;
+		showCents = true;
+	}
+
+	/* Grouped from the right, which is the direction the groups actually fall in. */
+	char digits[24];
+	int written = snprintf(digits, sizeof(digits), "%llu", (unsigned long long)whole);
+	if (written < 0) {
+		snprintf(out, n, "--");
+		return;
+	}
+	char grouped[32];
+	size_t g = 0;
+	for (int i = 0; i < written && g + 1 < sizeof(grouped); i++) {
+		if (i > 0 && (written - i) % 3 == 0) grouped[g++] = ',';
+		if (g + 1 < sizeof(grouped)) grouped[g++] = digits[i];
+	}
+	grouped[g] = '\0';
+
+	if (showCents) {
+		snprintf(out, n, "%s$%s.%02u", negative ? "-" : "", grouped, (unsigned)cents);
+	} else {
+		snprintf(out, n, "%s$%s", negative ? "-" : "", grouped);
+	}
+}
+
+/*
+ * A decimal string as micro-dollars, or nothing.
+ *
+ * The API sends money as strings — `"total_value_usd": "2191.42"`, measured against the live
+ * endpoint on 2026-09-17 — and this is the only place one becomes a number. Everything it refuses is
+ * something that would otherwise become a wrong total: a scientific-notation literal `strtod` would
+ * happily take, a second decimal point, trailing junk after the digits, an empty string, and any
+ * value too large to hold. `strtod` is not used at all here, on purpose: it would parse "1e30" and
+ * "0x10" and round "2191.42" to the nearest double, and a total assembled out of doubles is the
+ * float sum AGENTS.md rules out.
+ */
+bool parseDecimalMicros(const char *text, int64_t *out) {
+	if (text == nullptr || out == nullptr) return false;
+	size_t i = 0;
+	while (text[i] == ' ') i++;
+	bool negative = false;
+	if (text[i] == '+' || text[i] == '-') {
+		negative = text[i] == '-';
+		i++;
+	}
+
+	/* Assembled as unsigned and range-checked once, so nothing here can overflow on the way in. */
+	uint64_t value = 0;
+	bool sawDigit = false;
+	constexpr uint64_t LIMIT = (uint64_t)INT64_MAX / 1000000ull; /* whole dollars that still fit */
+	for (; text[i] >= '0' && text[i] <= '9'; i++) {
+		sawDigit = true;
+		if (value > LIMIT / 10ull) return false;
+		value = value * 10ull + (uint64_t)(text[i] - '0');
+		if (value > LIMIT) return false;
+	}
+	uint64_t micros = value * 1000000ull;
+
+	if (text[i] == '.') {
+		i++;
+		/* Six places kept, the rest dropped rather than rounded: a seventh decimal of a dollar is
+		 * below the smallest unit anything downstream can show, and truncating is the behaviour that
+		 * cannot surprise a total by rounding a fraction of a millionth upward. */
+		uint64_t scale = 100000ull;
+		for (; text[i] >= '0' && text[i] <= '9'; i++) {
+			sawDigit = true;
+			if (scale > 0) {
+				micros += (uint64_t)(text[i] - '0') * scale;
+				scale /= 10ull;
+			}
+		}
+	}
+	while (text[i] == ' ') i++;
+	/* Anything left over means this was not a number — "12.3.4", "1e9", "2191.42 USD". */
+	if (!sawDigit || text[i] != '\0') return false;
+	if (micros > (uint64_t)INT64_MAX) return false;
+
+	*out = negative ? -(int64_t)micros : (int64_t)micros;
+	return true;
+}
 
 /* ---------------------------------------------------------------- the parser ------------------ */
 
@@ -312,6 +445,127 @@ size_t parseTrending(Stream &in, Token *out, size_t max, const char **err) {
 	return count;
 }
 
+/* ---------------------------------------------------------------- the portfolio parser --------- */
+
+namespace {
+
+/*
+ * The field names, measured rather than remembered — and measured against the API this device is
+ * actually pointed at, which is the mistake the trending parser had to be corrected for once
+ * already.
+ *
+ * `curl` against `https://api.opensea.io/api/v2/account/{address}/portfolio`, 2026-09-17, with the
+ * key from `app/secrets.h` and a unique query parameter so Cloudflare could not answer for the
+ * origin (`cf-cache-status: MISS`):
+ *
+ *     { "total_value_usd": "2191.42", "nft_value_usd": "71.48", "token_value_usd": "2119.94",
+ *       "pnl_absolute": "+57.79", "pnl_percentage": "+2.71", "timeframe": "DAY" }
+ *
+ * Every money field is a **string**, and `pnl_absolute` carries an explicit leading `+`. Snake case,
+ * like the trending rows — the camelCase spellings below are the host's: `service/src/aggregate.ts`
+ * reads `totalValueUsd`/`netWorthUsd`, because the SDK camelises and because the shape has changed
+ * more than once. Both dialects cost two filter lines each and mean a unit pointed at an
+ * `anchor-service` on the LAN reads the same figures.
+ *
+ * `token_value_usd` is deliberately not read: the panel shows a total, its NFT half and the move,
+ * and a fourth figure that is just `total - nft` would be a row spent on arithmetic the reader can
+ * do. `pnl_percentage` is not read either, and that one matters — see `combinePortfolio`.
+ */
+void fillPortfolioFilter(JsonObject figures) {
+	figures["total_value_usd"] = true;
+	figures["totalValueUsd"] = true;
+	figures["net_worth_usd"] = true;
+	figures["netWorthUsd"] = true;
+	figures["nft_value_usd"] = true;
+	figures["nftValueUsd"] = true;
+	figures["pnl_absolute"] = true;
+	figures["pnlAbsolute"] = true;
+}
+
+/* The first spelling that is present, as micro-dollars. Mirrors `pickDecimal` in
+ * `service/src/aggregate.ts`, including its rule that a number on the wire is as acceptable as a
+ * string — 51 of OpenSea's money fields are strings and 24 are not yet (`docs/upstream.md`), and the
+ * day one of those 24 flips is a day nothing here breaks. */
+bool pickMicros(JsonObjectConst source, const char *snake, const char *camel, int64_t *out) {
+	const char *keys[2] = {snake, camel};
+	for (size_t k = 0; k < 2; k++) {
+		JsonVariantConst value = source[keys[k]];
+		if (value.isNull()) continue;
+		if (value.is<const char *>()) {
+			if (parseDecimalMicros(value.as<const char *>(), out)) return true;
+			continue;
+		}
+		/*
+		 * A JSON number, printed back to a decimal string and parsed by the same code as a string
+		 * field. Round-tripping through `%.6f` rather than scaling the double directly is what keeps
+		 * one parser — and therefore one set of refusals — in front of every figure that is summed.
+		 */
+		if (value.is<double>()) {
+			const double raw = value.as<double>();
+			if (!isfinite(raw) || raw > 9.0e12 || raw < -9.0e12) continue;
+			char text[32];
+			snprintf(text, sizeof(text), "%.6f", raw);
+			if (parseDecimalMicros(text, out)) return true;
+		}
+	}
+	return false;
+}
+
+}  // namespace
+
+bool parsePortfolio(Stream &in, Figures &out, const char **err) {
+	memset(&out, 0, sizeof(out));
+
+	/*
+	 * Three shapes of the same figures, for the same reason the trending filter has two.
+	 *
+	 * The live API answers flat. `anchor-service` wraps its own envelope around a `stats` object
+	 * (`combinePortfolio`), and older responses put them under `portfolio` — `stats()` in
+	 * `aggregate.ts` tries exactly this sequence, so this is that function's shape in a filter.
+	 */
+	JsonDocument filter;
+	fillPortfolioFilter(filter.to<JsonObject>());
+	fillPortfolioFilter(filter["stats"].to<JsonObject>());
+	fillPortfolioFilter(filter["portfolio"].to<JsonObject>());
+	fillPortfolioFilter(filter["data"]["stats"].to<JsonObject>());
+
+	JsonDocument doc;
+	const DeserializationError error = deserializeJson(doc, in, DeserializationOption::Filter(filter),
+	                                                   DeserializationOption::NestingLimit(6));
+	if (error) {
+		/* A compiled-in string table, never response bytes. */
+		if (err != nullptr) *err = error.c_str();
+		return false;
+	}
+
+	JsonObjectConst figures = doc["data"]["stats"].as<JsonObjectConst>();
+	if (figures.isNull()) figures = doc["stats"].as<JsonObjectConst>();
+	if (figures.isNull()) figures = doc["portfolio"].as<JsonObjectConst>();
+	if (figures.isNull()) figures = doc.as<JsonObjectConst>();
+	if (figures.isNull()) {
+		if (err != nullptr) *err = "the portfolio response had no figures in it";
+		return false;
+	}
+
+	out.haveTotal = pickMicros(figures, "total_value_usd", "totalValueUsd", &out.totalMicros) ||
+	                pickMicros(figures, "net_worth_usd", "netWorthUsd", &out.totalMicros);
+	out.haveNft = pickMicros(figures, "nft_value_usd", "nftValueUsd", &out.nftMicros);
+	out.havePnl = pickMicros(figures, "pnl_absolute", "pnlAbsolute", &out.pnlMicros);
+
+	/*
+	 * No total is a failed read, not a wallet worth nothing.
+	 *
+	 * The difference is the whole of rule 2: a wallet whose figure never arrived belongs in the
+	 * *uncovered* count, where the panel says "2 of 3". Counting it as zero would fold a failure into
+	 * the total silently, which is the shape of this project's worst bug.
+	 */
+	if (!out.haveTotal) {
+		if (err != nullptr) *err = "the portfolio response had no total in it";
+		return false;
+	}
+	return true;
+}
+
 /* ---------------------------------------------------------------- the live path --------------- */
 
 namespace {
@@ -335,6 +589,33 @@ namespace {
 constexpr const char *TRENDING_URL = "https://api.opensea.io/api/v2/tokens/trending?limit=8";
 
 /*
+ * The portfolio endpoint, also not written from memory.
+ *
+ * `/api/v2/account/{address}/portfolio` is the "Net worth and P&L" row in `docs/tokens.md`, the path
+ * `service/src/server.ts` calls through `@opensea/sdk`'s `portfolioStats`, and the one
+ * `service/src/auth.ts` records re-measuring. It was called from this checkout on 2026-09-17 with
+ * the key in `app/secrets.h`: 200 with the key, 401 without it, `cf-cache-status: MISS` on both so
+ * neither answer came out of Cloudflare instead of the origin. There is no `@opensea/sdk` for an
+ * ESP32; the mitigation is that this file now contains exactly two URLs and no URL building beyond
+ * substituting an address that has already been checked character by character.
+ *
+ * **`timeframe=DAY` is not decoration.** Two reasons, and the second is the one worth writing down:
+ *
+ *   1. It pins what the 24h row means. `DAY` is the server's default — measured, the response echoes
+ *      `"timeframe": "DAY"` when nothing is asked for — but a default is a thing that can change
+ *      under a panel whose label says "24h".
+ *   2. `docs/upstream.md` entry 7: the bare route returns `500 Internal Server Error` for a large
+ *      account and `200` for that same account "the moment any query parameter is supplied". The
+ *      recorded workaround is to always send a parameter. This one is sent for its own sake anyway,
+ *      which makes it the cheapest possible form of that workaround. Note what is deliberately *not*
+ *      sent: a `chains` filter would also dodge the 500, and would also make the total cover some
+ *      chains rather than all of them — a plausible number that is not the number it claims to be,
+ *      under a label reading "Total".
+ */
+constexpr const char *PORTFOLIO_URL_FORMAT =
+    "https://api.opensea.io/api/v2/account/%s/portfolio?timeframe=DAY";
+
+/*
  * Timing. Every one of these is "how long before the *worker* gives up", never a wait imposed on
  * `loop()`.
  *
@@ -344,6 +625,23 @@ constexpr const char *TRENDING_URL = "https://api.opensea.io/api/v2/tokens/trend
  */
 constexpr uint32_t POLL_MS = 60000;
 constexpr uint32_t RETRY_MS = 15000;
+/*
+ * The portfolio's own clock, because it is a different kind of number.
+ *
+ * 120 seconds is `ttl.portfolio` from `service/src/config.ts` — the desktop already decided how
+ * stale a portfolio figure is allowed to be, and a second opinion about that on a device sitting
+ * next to the desktop is a second number. It is also a request *per address*: six wallets at this
+ * interval is three requests a minute, against the `requestsPerSecond: 2` the service holds itself
+ * to. `WALLET_GAP_MS` keeps the fan-out inside that budget rather than firing them back to back.
+ */
+constexpr uint32_t PORTFOLIO_POLL_MS = 120000;
+constexpr uint32_t PORTFOLIO_RETRY_MS = 30000;
+constexpr uint32_t WALLET_GAP_MS = 500;
+/* Slower than the credential re-check, because the two are looking for different things. That one is
+ * waiting for somebody standing at the unit to finish typing a network; nothing types an address on
+ * the glass yet, so this is only ever a unit that was re-pointed between polls. A minute is faster
+ * than the portfolio refreshes anyway. */
+constexpr uint32_t WALLET_RECHECK_MS = 60000;
 constexpr uint32_t JOIN_RETRY_MS = 30000;
 constexpr uint32_t CRED_RECHECK_MS = 5000;
 constexpr uint32_t CONNECT_TIMEOUT_MS = 8000;
@@ -405,6 +703,21 @@ int lastHttpCode = 0;
 const char *failReason = nullptr;
 uint32_t workerStackFree = 0;
 
+/* The same discipline for the portfolio: published under the same lock, in one `memcpy`, so a
+ * renderer can never catch a total that has been replaced while its coverage label has not. */
+Portfolio publishedPortfolio;
+uint32_t portfolioSuccessMs = 0;
+bool portfolioEver = false;
+bool portfolioFetching = false;
+const char *portfolioFailReason = nullptr;
+
+/* What the worker has been asked to do. Set under the lock by `tick()`, drained by the worker. Two
+ * bits rather than two tasks: the jobs are minutes apart, they share one TLS-sized stack, and doing
+ * them on one task is what guarantees only one handshake is ever in flight on this unit. */
+constexpr uint8_t JOB_TRENDING = 1u << 0;
+constexpr uint8_t JOB_PORTFOLIO = 1u << 1;
+uint8_t pendingJobs = 0;
+
 /* Loop-task-owned: written and read only from `begin()`/`tick()`, so no lock. */
 TaskHandle_t worker = nullptr;
 bool haveCreds = false;
@@ -413,6 +726,115 @@ String savedPass;
 uint32_t lastCredCheck = 0;
 uint32_t lastJoinMs = 0;
 uint32_t lastAttemptMs = 0;
+uint32_t lastPortfolioAttemptMs = 0;
+uint32_t lastWalletCheck = 0;
+
+/*
+ * The addresses this unit reads, and where they come from.
+ *
+ * **An address is configuration, not a secret** — AGENTS.md says so in as many words, and it is the
+ * difference between this and `OPENSEA_API_KEY`: what an address holds is on a public chain, and the
+ * read-only key this unit already carries is enough to read it. So addresses are treated exactly the
+ * way the network is: a compiled-in default so a unit ships knowing whose portfolio it shows, and an
+ * NVS override so it can be re-pointed without a cable.
+ *
+ * NVS wins when it is present. The namespace is `anchor-wallets`, a sibling of `wifi_setup.cpp`'s
+ * `anchor-wifi` rather than a key inside it, for the reason that file's own comment gives: one
+ * writer per namespace, because two credential stores on one device is how a unit ends up replaying
+ * something that never worked. This module only ever *reads* both.
+ *
+ * **Nothing on the device writes `anchor-wallets` yet**, and that is worth stating rather than
+ * implying. The Wi-Fi flow types a passphrase on the glass through `pulse_wifi.cpp`, and the same
+ * input archetype could take an address list — that is a screen somebody should design on purpose,
+ * not a thing to smuggle in here. Until then the override is reachable by writing the namespace
+ * (the simulator's NVS is a text file, and `nvs_partition_gen` writes a real one), and the
+ * compiled-in list is what a flashed unit runs on.
+ */
+constexpr size_t ADDRESS_MAX = 64;
+char wallets[MAX_WALLETS][ADDRESS_MAX + 1];
+size_t walletsAsked = 0;
+size_t walletsConfigured = 0;
+
+/*
+ * What may be put into a URL path, checked character by character.
+ *
+ * This string is interpolated into `PORTFOLIO_URL_FORMAT`, which makes it the one piece of
+ * configuration on this device that can change *which endpoint is called*. A `/` or a `..` would
+ * reach another route; a `?` or a `#` would append a parameter this file did not write. So the
+ * accepted set is letters and digits and nothing else, which covers a 42-character `0x…` EVM
+ * address and a base58 Solana one and excludes every character that means something to a URL.
+ *
+ * That also removes the percent-encoding question entirely, which `docs/upstream.md` records as a
+ * live hazard in the other direction — encoding a path segment twice. There is nothing here to
+ * encode: an address that would need it is refused instead.
+ */
+bool addressLooksSane(const char *text, size_t length) {
+	if (length < 26 || length > ADDRESS_MAX) return false;
+	for (size_t i = 0; i < length; i++) {
+		const char c = text[i];
+		const bool alnum = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
+		if (!alnum) return false;
+	}
+	return true;
+}
+
+/*
+ * Split a configured list into addresses.
+ *
+ * Commas, spaces and newlines all separate, because a list somebody typed or pasted is a list with
+ * whatever whitespace came with it. `configured` counts every *plausible* address in the string,
+ * including any past `MAX_WALLETS` that this unit will not ask about — so a list of fourteen on a
+ * unit that reads twelve renders "12 of 14" rather than a total that quietly covers twelve.
+ * Something that is not an address at all is not counted as a wallet the answer is missing: it is
+ * not a wallet.
+ */
+void splitWallets(const char *list) {
+	walletsAsked = 0;
+	walletsConfigured = 0;
+	if (list == nullptr) return;
+	size_t i = 0;
+	while (list[i] != '\0') {
+		while (list[i] == ',' || list[i] == ' ' || list[i] == '\n' || list[i] == '\r' ||
+		       list[i] == '\t') {
+			i++;
+		}
+		const size_t start = i;
+		while (list[i] != '\0' && list[i] != ',' && list[i] != ' ' && list[i] != '\n' &&
+		       list[i] != '\r' && list[i] != '\t') {
+			i++;
+		}
+		const size_t length = i - start;
+		if (length == 0) continue;
+		if (!addressLooksSane(list + start, length)) continue;
+		walletsConfigured++;
+		if (walletsAsked < MAX_WALLETS) {
+			memcpy(wallets[walletsAsked], list + start, length);
+			wallets[walletsAsked][length] = '\0';
+			walletsAsked++;
+		}
+	}
+}
+
+void loadWallets() {
+	Preferences prefs;
+	String stored;
+	if (prefs.begin("anchor-wallets", true /* read-only */)) {
+		stored = prefs.getString("list", "");
+		prefs.end();
+	}
+	if (stored.length() > 0) {
+		splitWallets(stored.c_str());
+		if (walletsConfigured > 0) return;
+		/* Written but unusable — fall through to the compiled-in list rather than showing nothing.
+		 * A unit that was handed a malformed list is better off saying what it knows than saying
+		 * nothing, and the coverage label is what keeps that honest. */
+	}
+#if defined(ANCHOR_WALLETS)
+	splitWallets(ANCHOR_WALLETS);
+#else
+	splitWallets("");
+#endif
+}
 
 /*
  * The network this unit was told to join, read rather than owned.
@@ -524,6 +946,164 @@ bool fetchOnce(Token *out, size_t &count, const char *&err, int &code) {
 }
 
 /*
+ * One address's portfolio. Same discipline as `fetchOnce`: every blocking call is on the worker.
+ *
+ * Factored so the request setup is written once — the CA bundle, the timeouts, HTTP/1.0, the size
+ * ceiling and the header are properties of *this unit talking to OpenSea*, not of one endpoint, and
+ * a second copy of them is a second place for `setInsecure()` to appear during a debugging session.
+ */
+bool fetchPortfolioOnce(const char *address, Figures &out, const char *&err, int &code) {
+	if (WiFi.status() != WL_CONNECTED) {
+		err = "the network dropped mid-fetch";
+		return false;
+	}
+
+	char url[160];
+	const int written = snprintf(url, sizeof(url), PORTFOLIO_URL_FORMAT, address);
+	if (written < 0 || (size_t)written >= sizeof(url)) {
+		err = "that address does not fit in a request";
+		return false;
+	}
+
+	WiFiClientSecure client;
+	client.setCACertBundle(x509CrtBundleStart, (size_t)(x509CrtBundleEnd - x509CrtBundleStart));
+	client.setHandshakeTimeout(HANDSHAKE_TIMEOUT_S);
+	client.setTimeout(READ_TIMEOUT_MS / 1000);
+
+	HTTPClient http;
+	if (!http.begin(client, url)) {
+		err = "could not open the request";
+		return false;
+	}
+	http.setConnectTimeout(CONNECT_TIMEOUT_MS);
+	http.setTimeout(READ_TIMEOUT_MS);
+	http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+	http.setRedirectLimit(3);
+	http.useHTTP10(true);
+	http.addHeader("Accept", "application/json");
+	http.addHeader("X-API-KEY", OPENSEA_API_KEY);
+
+	code = http.GET();
+	if (code != HTTP_CODE_OK) {
+		err = reasonForHttp(code);
+		http.end();
+		return false;
+	}
+
+	const int size = http.getSize();
+	if (size < 0 || size > MAX_RESPONSE_BYTES) {
+		err = size < 0 ? "the response would not say how big it is"
+		               : "the response is larger than this unit will read";
+		http.end();
+		return false;
+	}
+
+	err = nullptr;
+	const bool ok = parsePortfolio(http.getStream(), out, &err);
+	http.end();
+	if (!ok && err == nullptr) err = "the portfolio did not parse";
+	return ok;
+}
+
+/*
+ * Every configured wallet, summed, with what it could not reach counted rather than dropped.
+ *
+ * Sequential, which is `fanOut`'s choice in `service/src/aggregate.ts` and for the same reason: one
+ * radio, one TLS session's worth of heap, and a fan-out that cannot starve anything behind it. The
+ * gap between requests is this unit's share of the same politeness the service's rate limiter
+ * enforces.
+ *
+ * The three rules from AGENTS.md are all visible in this function, which is the point of it being
+ * one function: **every** wallet is read, the money is summed as integers, and a wallet that did not
+ * answer raises `configured` above `covered` instead of vanishing.
+ */
+bool fetchPortfolio(Portfolio &out, const char *&err, int &code) {
+	memset(&out, 0, sizeof(out));
+	out.configured = walletsConfigured;
+	snprintf(out.total, sizeof(out.total), "--");
+	snprintf(out.nftValue, sizeof(out.nftValue), "--");
+	snprintf(out.change, sizeof(out.change), "--");
+
+	int64_t total = 0;
+	int64_t nft = 0;
+	int64_t pnl = 0;
+	bool haveTotal = false;
+	bool haveNft = false;
+	bool havePnl = false;
+	const char *lastErr = nullptr;
+
+	for (size_t i = 0; i < walletsAsked; i++) {
+		if (i > 0) delay(WALLET_GAP_MS);
+		Figures figures;
+		const char *walletErr = nullptr;
+		int walletCode = 0;
+		if (!fetchPortfolioOnce(wallets[i], figures, walletErr, walletCode)) {
+			lastErr = walletErr;
+			code = walletCode;
+			continue;
+		}
+		code = walletCode;
+		/*
+		 * Overflow is a failed pass, not a clamped total. Nothing renders a number this arithmetic
+		 * could not hold — see `addMicros`.
+		 */
+		if (figures.haveTotal && !addMicros(total, figures.totalMicros, &total)) {
+			err = "the total does not fit in this unit's arithmetic";
+			return false;
+		}
+		if (figures.haveNft && !addMicros(nft, figures.nftMicros, &nft)) {
+			err = "the total does not fit in this unit's arithmetic";
+			return false;
+		}
+		if (figures.havePnl && !addMicros(pnl, figures.pnlMicros, &pnl)) {
+			err = "the total does not fit in this unit's arithmetic";
+			return false;
+		}
+		haveTotal = haveTotal || figures.haveTotal;
+		haveNft = haveNft || figures.haveNft;
+		havePnl = havePnl || figures.havePnl;
+		out.covered++;
+	}
+
+	if (out.covered == 0) {
+		err = lastErr != nullptr ? lastErr : "no wallet answered";
+		return false;
+	}
+
+	if (haveTotal) formatUsdMicros(total, out.total, sizeof(out.total));
+	if (haveNft) formatUsdMicros(nft, out.nftValue, sizeof(out.nftValue));
+
+	/*
+	 * The percentage, derived rather than collected.
+	 *
+	 * `pnl_percentage` arrives per address and **must not be averaged**: `combinePortfolio` in
+	 * `service/src/aggregate.ts` refuses to, because averaging nine wallets' percentages weights a
+	 * $12 wallet the same as a $2,000 one. So the move is summed in dollars — which does add — and
+	 * the percentage comes from the move over what it moved from, exactly as `percentageOf` does it
+	 * there: `start = end - change`, `pct = change / start`.
+	 *
+	 * This is the one figure allowed through a double, and that is `percentageOf`'s own choice for
+	 * the same reason: it is a ratio for display, not a sum. The dollars it is computed from were
+	 * never floats. A portfolio that started at nothing has no percentage and renders "--" rather
+	 * than a fabricated zero.
+	 */
+	if (haveTotal && havePnl) {
+		const double moved = (double)pnl / 1000000.0;
+		const double finished = (double)total / 1000000.0;
+		const double started = finished - moved;
+		if (started != 0.0 && isfinite(started)) {
+			const double pct = (moved / started) * 100.0;
+			formatPercent(pct, out.change, sizeof(out.change));
+			out.haveChange = isfinite(pct);
+			out.changePositive = pct >= 0.0;
+		}
+	}
+
+	err = nullptr;
+	return true;
+}
+
+/*
  * The worker, asleep until `tick()` says so.
  *
  * `ulTaskNotifyTake(pdTRUE, portMAX_DELAY)` means this task consumes no CPU between fetches —
@@ -536,36 +1116,82 @@ void workerTask(void *) {
 	for (;;) {
 		ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 
-		Token staging[MAX_TOKENS];
-		memset(staging, 0, sizeof(staging));
-		size_t count = 0;
-		const char *err = nullptr;
-		int code = 0;
-		const bool ok = fetchOnce(staging, count, err, code);
-		const uint32_t finishedAt = millis();
-		/* ESP-IDF reports this in bytes, unlike vanilla FreeRTOS; see WORKER_STACK_BYTES. */
-		const uint32_t stackFree = (uint32_t)uxTaskGetStackHighWaterMark(nullptr);
-
-		/*
-		 * Publish. Nothing above this line touched shared state and nothing below it can block —
-		 * which is the whole reason the parse happens into `staging` first rather than into
-		 * `published` directly. A renderer that caught a half-replaced list would show one token's
-		 * symbol against another's price.
-		 */
+		uint8_t jobs = 0;
 		portENTER_CRITICAL(&publishLock);
-		fetching = false;
-		lastHttpCode = code;
-		workerStackFree = stackFree;
-		if (ok) {
-			memcpy(published, staging, sizeof(published));
-			publishedCount = count;
-			lastSuccessMs = finishedAt;
-			everSucceeded = true;
-			failReason = nullptr;
-		} else {
-			failReason = err != nullptr ? err : "the fetch failed";
-		}
+		jobs = pendingJobs;
+		pendingJobs = 0;
 		portEXIT_CRITICAL(&publishLock);
+
+		if (jobs & JOB_TRENDING) {
+			Token staging[MAX_TOKENS];
+			memset(staging, 0, sizeof(staging));
+			size_t count = 0;
+			const char *err = nullptr;
+			int code = 0;
+			const bool ok = fetchOnce(staging, count, err, code);
+			const uint32_t finishedAt = millis();
+			/* ESP-IDF reports this in bytes, unlike vanilla FreeRTOS; see WORKER_STACK_BYTES. */
+			const uint32_t stackFree = (uint32_t)uxTaskGetStackHighWaterMark(nullptr);
+
+			/*
+			 * Publish. Nothing above this line touched shared state and nothing below it can block —
+			 * which is the whole reason the parse happens into `staging` first rather than into
+			 * `published` directly. A renderer that caught a half-replaced list would show one token's
+			 * symbol against another's price.
+			 */
+			portENTER_CRITICAL(&publishLock);
+			fetching = false;
+			lastHttpCode = code;
+			workerStackFree = stackFree;
+			if (ok) {
+				memcpy(published, staging, sizeof(published));
+				publishedCount = count;
+				lastSuccessMs = finishedAt;
+				everSucceeded = true;
+				failReason = nullptr;
+			} else {
+				failReason = err != nullptr ? err : "the fetch failed";
+			}
+			portEXIT_CRITICAL(&publishLock);
+		}
+
+		if (jobs & JOB_PORTFOLIO) {
+			/*
+			 * The same staging-then-publish shape, and here it also covers the *label*: `covered` and
+			 * `configured` are copied across in the same critical section as the total they describe.
+			 * A renderer that caught a new total beside an old coverage count would be showing "6 of
+			 * 6" over a figure summed from two — which is this project's worst bug with extra steps.
+			 */
+			Portfolio staging;
+			const char *err = nullptr;
+			int code = 0;
+			const bool ok = fetchPortfolio(staging, err, code);
+			const uint32_t finishedAt = millis();
+			const uint32_t stackFree = (uint32_t)uxTaskGetStackHighWaterMark(nullptr);
+
+			portENTER_CRITICAL(&publishLock);
+			portfolioFetching = false;
+			lastHttpCode = code;
+			workerStackFree = stackFree;
+			if (ok) {
+				memcpy(&publishedPortfolio, &staging, sizeof(publishedPortfolio));
+				portfolioSuccessMs = finishedAt;
+				portfolioEver = true;
+				/*
+				 * A partial pass is a success wearing a label, not a failure.
+				 *
+				 * `Status::Failed` on this device means "what is on the glass is older than it
+				 * looks", and a total that just came back over two of three wallets is not old — it
+				 * is current and incomplete, which is a different sentence. The incompleteness is
+				 * carried by `covered` and `configured` and rendered next to the number itself, so
+				 * the label travels with the figure it qualifies rather than with the status.
+				 */
+				portfolioFailReason = nullptr;
+			} else {
+				portfolioFailReason = err != nullptr ? err : "the portfolio fetch failed";
+			}
+			portEXIT_CRITICAL(&publishLock);
+		}
 	}
 }
 
@@ -578,8 +1204,11 @@ void workerTask(void *) {
 void begin() {
 #if ANCHOR_FEED_LIVE
 	memset(published, 0, sizeof(published));
+	memset(&publishedPortfolio, 0, sizeof(publishedPortfolio));
 	loadCredentials();
+	loadWallets();
 	lastCredCheck = millis();
+	lastWalletCheck = millis();
 	/*
 	 * Seeded as though a join had just been attempted, because one has: `wifi_setup::begin()` runs
 	 * before this and starts an opportunistic station connect with these same credentials. Starting
@@ -645,24 +1274,65 @@ void tick(bool radioBusy) {
 
 	bool busy = false;
 	bool failing = false;
+	bool portfolioBusy = false;
+	bool portfolioFailing = false;
 	portENTER_CRITICAL(&publishLock);
 	busy = fetching;
 	failing = failReason != nullptr;
+	portfolioBusy = portfolioFetching;
+	portfolioFailing = portfolioFailReason != nullptr;
 	portEXIT_CRITICAL(&publishLock);
-	if (busy) {
-		return;
+
+	/*
+	 * Re-read the address list, on the same cadence and for the same reason as the credentials: a
+	 * unit that is re-pointed at a different set of addresses should notice without a power cycle.
+	 *
+	 * Guarded on neither fetch being in flight, because `wallets` is the one loop-task-owned array
+	 * the *worker* also reads — during a portfolio pass, one address at a time. Rewriting it under a
+	 * running fan-out would let a pass sum wallet A's figure and then wallet D's and call the result
+	 * three of three. The guard costs a poll interval of latency and buys a total that cannot be
+	 * assembled out of two different configurations.
+	 */
+	if (!busy && !portfolioBusy && now - lastWalletCheck >= WALLET_RECHECK_MS) {
+		lastWalletCheck = now;
+		loadWallets();
 	}
 
 	/* Back off less after a failure than after a success: a unit that just joined a network wants
 	 * its first screen, and a unit that is up to date does not want the radio. */
-	const uint32_t interval = failing ? RETRY_MS : POLL_MS;
-	if (lastAttemptMs != 0 && now - lastAttemptMs < interval) {
+	if (!busy && !portfolioBusy) {
+		const uint32_t interval = failing ? RETRY_MS : POLL_MS;
+		if (lastAttemptMs == 0 || now - lastAttemptMs >= interval) {
+			lastAttemptMs = now == 0 ? 1 : now;
+			portENTER_CRITICAL(&publishLock);
+			fetching = true;
+			pendingJobs |= JOB_TRENDING;
+			portEXIT_CRITICAL(&publishLock);
+			xTaskNotifyGive(worker);
+			return;
+		}
+	}
+
+	/*
+	 * One job at a time on one worker, and the trending fetch goes first when both are due.
+	 *
+	 * Not a priority call about which number matters more — the portfolio is the one this device is
+	 * for. It is that the two fetches share a task, and starting the slower one (a request per
+	 * address) first would make the faster one wait behind a fan-out. Both are on their own clocks
+	 * and neither is dropped: a job that is due while the other is running simply fires on the next
+	 * pass through `loop()`, which is milliseconds away.
+	 */
+	if (busy || portfolioBusy || walletsAsked == 0) {
 		return;
 	}
-	lastAttemptMs = now == 0 ? 1 : now;
-
+	const uint32_t portfolioInterval = portfolioFailing ? PORTFOLIO_RETRY_MS : PORTFOLIO_POLL_MS;
+	if (lastPortfolioAttemptMs != 0 && now - lastPortfolioAttemptMs < portfolioInterval) {
+		return;
+	}
+	lastPortfolioAttemptMs = now == 0 ? 1 : now;
 	portENTER_CRITICAL(&publishLock);
-	fetching = true;
+	portfolioFetching = true;
+	pendingJobs |= JOB_PORTFOLIO;
 	portEXIT_CRITICAL(&publishLock);
 	xTaskNotifyGive(worker);
 #endif
@@ -672,10 +1342,18 @@ Snapshot snapshot() {
 	Snapshot out;
 	memset(&out, 0, sizeof(out));
 	out.ageMs = UINT32_MAX;
+	out.portfolioAgeMs = UINT32_MAX;
+	/* A portfolio nobody has fetched still has to render as something, and "--" is the only honest
+	 * something. `$0.00` would be a reading. */
+	snprintf(out.portfolio.total, sizeof(out.portfolio.total), "--");
+	snprintf(out.portfolio.nftValue, sizeof(out.portfolio.nftValue), "--");
+	snprintf(out.portfolio.change, sizeof(out.portfolio.change), "--");
 
 #if !ANCHOR_FEED_LIVE
 	out.status = Status::Disabled;
 	out.reason = "no OpenSea key on this unit";
+	out.portfolioStatus = Status::Disabled;
+	out.portfolioReason = "no OpenSea key on this unit";
 	return out;
 #else
 	const uint32_t now = millis();
@@ -683,6 +1361,9 @@ Snapshot snapshot() {
 	bool busy = false;
 	const char *err = nullptr;
 	uint32_t success = 0;
+	bool portfolioBusy = false;
+	const char *portfolioErr = nullptr;
+	uint32_t portfolioSuccess = 0;
 	portENTER_CRITICAL(&publishLock);
 	memcpy(out.tokens, published, sizeof(out.tokens));
 	out.count = publishedCount;
@@ -692,10 +1373,52 @@ Snapshot snapshot() {
 	busy = fetching;
 	err = failReason;
 	success = lastSuccessMs;
+	if (portfolioEver) {
+		memcpy(&out.portfolio, &publishedPortfolio, sizeof(out.portfolio));
+	}
+	out.portfolioEverSucceeded = portfolioEver;
+	portfolioBusy = portfolioFetching;
+	portfolioErr = portfolioFailReason;
+	portfolioSuccess = portfolioSuccessMs;
 	portEXIT_CRITICAL(&publishLock);
 
 	if (out.everSucceeded) {
 		out.ageMs = now - success;
+	}
+	if (out.portfolioEverSucceeded) {
+		out.portfolioAgeMs = now - portfolioSuccess;
+	}
+
+	/*
+	 * How far the portfolio got, in the same order the chain stops — and `configured` is filled in
+	 * whatever the answer is, because "no addresses" and "three addresses and no answer" are two
+	 * different screens.
+	 *
+	 * `walletsAsked` is read here from the loop task, which is also the only writer: `snapshot()` is
+	 * called from `loop()` on this device, next to `tick()`.
+	 */
+	if (!out.portfolioEverSucceeded) {
+		out.portfolio.configured = walletsConfigured;
+	}
+	if (!haveCreds) {
+		out.portfolioStatus = Status::NoCredentials;
+		out.portfolioReason = "tap anywhere to set up wi-fi";
+	} else if (walletsAsked == 0) {
+		out.portfolioStatus = Status::NoWallets;
+		out.portfolioReason = "no addresses configured on this unit";
+	} else if (WiFi.status() != WL_CONNECTED) {
+		out.portfolioStatus = Status::Joining;
+		out.portfolioReason = "joining the saved network";
+	} else if (portfolioBusy) {
+		out.portfolioStatus = Status::Fetching;
+		out.portfolioReason = "reading every configured address";
+	} else if (portfolioErr != nullptr) {
+		out.portfolioStatus = Status::Failed;
+		out.portfolioReason = portfolioErr;
+	} else {
+		out.portfolioStatus = Status::Online;
+		out.portfolioReason =
+		    out.portfolioEverSucceeded ? "up to date" : "waiting for the first fetch";
 	}
 
 	/*

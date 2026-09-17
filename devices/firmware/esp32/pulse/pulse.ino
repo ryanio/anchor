@@ -43,6 +43,7 @@
 #include "pulse_touch.h"
 #include "../app/feed.h"
 #include "pulse_feed_view.h"
+#include "pulse_power.h"
 #include "pulse_ui.h"
 #include "pulse_wifi.h"
 
@@ -312,6 +313,8 @@ static_assert((int)feed::Status::Joining == (int)pulse_feed_view::Status::Joinin
 static_assert((int)feed::Status::Online == (int)pulse_feed_view::Status::Online, "feed enum drift");
 static_assert((int)feed::Status::Fetching == (int)pulse_feed_view::Status::Fetching, "feed enum drift");
 static_assert((int)feed::Status::Failed == (int)pulse_feed_view::Status::Failed, "feed enum drift");
+static_assert((int)feed::Status::NoWallets == (int)pulse_feed_view::Status::NoWallets,
+              "feed enum drift");
 
 /*
  * How long each trending token holds the screen.
@@ -333,9 +336,26 @@ static uint32_t last_feed_draw_ms = 0;
  * nothing else does, and a panel that stops counting looks like a panel that stopped.
  */
 static void refresh_feed(void) {
-  const feed::Snapshot snap = feed::snapshot();
+  /*
+   * One snapshot, and it outlives this function on purpose.
+   *
+   * `feed::snapshot()` copies everything out under one spinlock precisely so that the total, the
+   * coverage label that qualifies it and the age that dates it cannot come from three different
+   * moments. Calling it twice here — once for the portfolio and once for the tokens — would throw
+   * that away for no gain.
+   *
+   * **`static`, because `screen` keeps pointers into it.** `pulse_ui::Reading` holds `const char *`
+   * rather than buffers (see `pulse_ui.h` for why), so the composed screen points at these strings,
+   * and `screen` is a file-static that `refresh_age()` re-applies up to four seconds later when the
+   * touch readout expires. With this on the stack that second `update()` reads a frame that has been
+   * gone since the function returned — which would usually look like nothing at all, and
+   * occasionally like a garbled price. It costs ~600 bytes of `.bss` and takes the same amount off
+   * an 8 KB loop-task stack.
+   */
+  static feed::Snapshot snap;
+  snap = feed::snapshot();
 
-  pulse_feed_view::Token view_tokens[feed::MAX_TOKENS];
+  static pulse_feed_view::Token view_tokens[feed::MAX_TOKENS];
   for (size_t i = 0; i < snap.count && i < feed::MAX_TOKENS; i++) {
     view_tokens[i].symbol = snap.tokens[i].symbol;
     view_tokens[i].name = snap.tokens[i].name;
@@ -344,9 +364,33 @@ static void refresh_feed(void) {
     view_tokens[i].changePositive = snap.tokens[i].changePositive;
   }
 
-  screen = pulse_feed_view::compose((pulse_feed_view::Status)snap.status, snap.reason, view_tokens,
-                                    snap.count, millis() / ROTATE_MS, snap.ageMs,
-                                    snap.everSucceeded);
+  pulse_feed_view::Trending trending;
+  trending.status = (pulse_feed_view::Status)snap.status;
+  trending.reason = snap.reason;
+  trending.tokens = view_tokens;
+  trending.count = snap.count;
+  trending.ageMs = snap.ageMs;
+  trending.everSucceeded = snap.everSucceeded;
+
+  /*
+   * The portfolio, by pointer into `snap` — which lives until this function returns, and the screen
+   * it composes is redrawn from scratch on the next pass. The strings themselves were formatted in
+   * `feed.cpp` at fetch time; nothing here parses, rounds or re-decides anything about them.
+   */
+  pulse_feed_view::Portfolio portfolio;
+  portfolio.status = (pulse_feed_view::Status)snap.portfolioStatus;
+  portfolio.reason = snap.portfolioReason;
+  portfolio.total = snap.portfolio.total;
+  portfolio.nftValue = snap.portfolio.nftValue;
+  portfolio.change = snap.portfolio.change;
+  portfolio.changePositive = snap.portfolio.changePositive;
+  portfolio.haveChange = snap.portfolio.haveChange;
+  portfolio.covered = snap.portfolio.covered;
+  portfolio.configured = snap.portfolio.configured;
+  portfolio.ageMs = snap.portfolioAgeMs;
+  portfolio.everSucceeded = snap.portfolioEverSucceeded;
+
+  screen = pulse_feed_view::compose(trending, portfolio, millis() / ROTATE_MS);
   pulse_ui::update(screen);
 }
 
@@ -593,6 +637,20 @@ void setup() {
   pulse_ui::build(screen);
 
   /*
+   * The battery and the only way to switch this unit off.
+   *
+   * After `build()`, because the gesture attaches to a chip the screen owns. It is a hold rather
+   * than a tap, on a child object rather than the frame, so it cannot race Wi-Fi setup's own hold
+   * and a sleeve cannot reach it — and it opens a confirmation rather than acting, because a device
+   * that powers down in somebody's bag is worse than one nobody can switch off.
+   *
+   * `pulse_power` writes exactly two bits on the AXP2101, both read-modify-write, and reads
+   * everything else. See its header for which vendor driver each register number came from.
+   */
+  pulse_power::begin();
+  pulse_ui::attachPowerGesture(pulse_power::powerOff);
+
+  /*
    * Wi-Fi setup, which owns its own screen and takes over when it needs to.
    *
    * After `pulse_ui::build`, because `attachOpenGesture` needs a surface to attach to and the
@@ -633,6 +691,11 @@ void loop() {
    * see `app/feed.h`.
    */
   pulse_wifi::tick();
+
+  /* Polls the PMU on its own slow beat; the battery reading is the only thing on this panel that
+   * comes from the board rather than from the network. */
+  pulse_power::tick();
+  pulse_ui::setBattery(pulse_power::state());
 
   feed::tick();
   /*

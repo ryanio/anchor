@@ -36,11 +36,34 @@
  *   3. **There is a status, and a reason.** AGENTS.md is not negotiable about this — an empty list
  *      must say *why* it is empty — and a panel that can draw a token list can draw a sentence.
  *
- * Deliberately narrow, exactly as the Cardputer's is: public discovery data only, the same data
- * `devices/src/state/discovery.ts` reads host-side. Never a wallet, never a portfolio, never
- * anything needing more than a key scoped to public reads. This module owns fetching, parsing and
- * saying what state it is in; it owns no pixels, and deciding *when* a screen shows this belongs to
- * whoever draws it.
+ * This module owns fetching, parsing and saying what state it is in; it owns no pixels, and deciding
+ * *when* a screen shows this belongs to whoever draws it.
+ *
+ * ## It reads a portfolio too, and that is a correction
+ *
+ * This header used to end the paragraph above with "never a wallet, never a portfolio, never
+ * anything needing more than a key scoped to public reads" — and the last clause is the only one
+ * that was ever load-bearing. AGENTS.md now says so under "The Cardputer and the pulse display are
+ * wholly independent devices":
+ *
+ *     A portfolio is public data about an address, so an independent device can show one. ... An
+ *     address is configuration, not a secret: what it holds is on a public chain and a read-only
+ *     API key is enough to read it. ... What genuinely cannot go on these units is a credential
+ *     that can *act*.
+ *
+ * `service/src/config.ts` is the evidence: Anchor "holds no wallet credential by design (the PAT
+ * step was removed once it was measured to be unnecessary)", and `wallets` is a list of addresses
+ * somebody typed. Measured again from this checkout on 2026-09-17 with the key in `app/secrets.h`
+ * and a cache-busting query parameter: `/api/v2/account/{address}/portfolio` answers **200** with
+ * the key (`cf-cache-status: MISS`, so the origin judged it) and **401** without one — the control
+ * failing, which is what AGENTS.md asks for before a credential claim is believed.
+ *
+ * So the line this module holds is not "no portfolio". It is **no authority**: one read-only key,
+ * GETs only, and a list of addresses that is configuration in the same way the network is.
+ *
+ * `wallets` is a list host-side for a reason recorded in AGENTS.md — a wallet-scoped read means
+ * *every* wallet, and a total that silently covered one of nine is this project's worst shipped
+ * bug — so the device takes a list, reads all of it, and labels what it could not reach.
  *
  * Everything that comes back over the wire is marketplace content, which AGENTS.md treats as a
  * prompt-injection surface and this file treats as hostile bytes: see `copyBounded` in `feed.cpp`.
@@ -108,7 +131,64 @@ enum class Status : uint8_t {
 	/* The last attempt failed. `reason` says how far it got. Any data in the snapshot is the last
 	   good data and `ageMs` says how old — stale and labelled beats absent and unexplained. */
 	Failed,
+	/*
+	 * Portfolio only: a key, a network, and no addresses to read.
+	 *
+	 * Appended rather than slotted into the chain order above, and deliberately: `pulse.ino` mirrors
+	 * this enum by value in `pulse_feed_view::Status` because the desktop simulator cannot include
+	 * this header, and inserting a member would renumber every state after it — a unit that failed to
+	 * join would announce that it was fetching. The static asserts in `pulse.ino` are what hold the
+	 * two spellings together; adding a member at the end costs one more of them.
+	 */
+	NoWallets,
 };
+
+/*
+ * A portfolio, formatted, with how much of it is actually in the total.
+ *
+ * `covered` and `configured` are the whole reason this is a struct rather than one string. AGENTS.md:
+ * "A partial answer is labelled, never trimmed. One wallet failing leaves a total over the rest and
+ * an `incomplete` list naming the missing one, and the panel says '8 of 9 wallets'." A device that
+ * summed the survivors and drew the result the same way it draws a complete answer would be
+ * reproducing this project's worst shipped bug on a smaller screen.
+ *
+ * `configured` counts every address this unit was *told about*, including any past `MAX_WALLETS`
+ * that were never asked for. Truncating the list would otherwise be a silent trim wearing a
+ * different hat.
+ *
+ * The strings are formatted once, here, for the reason `Token` gives: a renderer handed a number is
+ * a renderer that has to grow an opinion about how a dollar rounds. A figure that did not arrive is
+ * "--" and never "$0.00" — a missing price has no reading, and `$0.00` is a reading.
+ */
+struct Portfolio {
+	/* Summed across every wallet that answered, as decimal arithmetic — never through a float. See
+	 * `addMicros` in `feed.cpp`, and `service/src/aggregate.ts`, which does the same job with BigInt
+	 * at a common scale for the same reason. */
+	char total[24];
+	/* The NFT half of that total. The API gives a *value*, not a count: there is no cheap count in
+	 * this response, and `docs/upstream.md` entry 15 is about exactly what is and is not breakable
+	 * out of these figures. A count would be a paginated list per address per chain. */
+	char nftValue[24];
+	/* The 24h move, as a percentage. Derived from the summed absolute move over what it moved from,
+	 * never averaged across wallets — see `percentageOf` in `service/src/aggregate.ts`. */
+	char change[16];
+	bool changePositive;
+	bool haveChange;
+	/* Wallets in the total, and wallets asked for. `covered < configured` is a partial answer and
+	 * whoever draws it must say so. */
+	size_t covered;
+	size_t configured;
+};
+
+/*
+ * How many addresses one unit will read.
+ *
+ * Twelve because the linked-wallet list that produced this project's worst bug had nine in it, and a
+ * ceiling under the real number would be the same bug with a new cause. Each one costs a request per
+ * poll through one rate limiter, so this is a budget as much as an array bound — and `configured`
+ * above is what keeps a longer list honest rather than quietly short.
+ */
+constexpr size_t MAX_WALLETS = 12;
 
 /*
  * A consistent view of everything a UI needs, copied out in one go.
@@ -146,6 +226,23 @@ struct Snapshot {
 	 * run.
 	 */
 	uint32_t workerStackFreeBytes;
+
+	/*
+	 * The portfolio, with its own status, its own reason and its own clock.
+	 *
+	 * Separate from the fields above rather than folded into them, because the two reads fail
+	 * independently: a unit with no addresses configured still shows trending, and a unit whose
+	 * portfolio is an hour old can have a fresh trending list beside it. One status covering both
+	 * would have to pick which failure to describe, and the answer a person needs is "which of the
+	 * two is unhappy" — the `eyebrow` slot in `pulse_ui::Status` exists for exactly that question.
+	 */
+	Portfolio portfolio;
+	Status portfolioStatus;
+	const char *portfolioReason;
+	/* Since the last *complete or partial* portfolio pass, or `UINT32_MAX` if there has never been
+	 * one. A pass that reached no wallet at all is a failure, not a reading, and does not set it. */
+	uint32_t portfolioAgeMs;
+	bool portfolioEverSucceeded;
 };
 
 /*
@@ -191,6 +288,62 @@ Snapshot snapshot();
  * `err` is filled with a compiled-in reason on failure and left alone on success.
  */
 size_t parseTrending(Stream &in, Token *out, size_t max, const char **err);
+
+/*
+ * One address's portfolio figures, in fixed-point micro-dollars.
+ *
+ * **Integers, not doubles, and that is the non-negotiable part.** These are summed across wallets,
+ * and AGENTS.md rule 3 of "A wallet-scoped read means every wallet" is that money sums as decimal
+ * strings and never through a float: "a total that disagrees with the pages it was summed from is
+ * indistinguishable from a broken widget". `service/src/aggregate.ts` does it with BigInt at a
+ * common scale; this device has no BigInt, so it does the same thing with a fixed scale of 1e6 and
+ * an overflow check. Six decimal places is three more than any figure the API has been seen to send
+ * and leaves room for about nine trillion dollars in an `int64_t`.
+ *
+ * `have*` rather than a sentinel, because a field that did not arrive and a field that is genuinely
+ * zero are different facts — the first renders "--" and the second renders "$0.00". `formatUsd` in
+ * `feed.cpp` already makes this argument about a token price; a portfolio total is where it bites.
+ */
+struct Figures {
+	bool haveTotal;
+	int64_t totalMicros;
+	bool haveNft;
+	int64_t nftMicros;
+	/* The absolute 24h move in dollars, which *adds* across wallets. The percentage does not — see
+	 * `combinePortfolio` in `service/src/aggregate.ts`, where averaging nine wallets' percentages
+	 * would weight a $12 wallet the same as a $2,000 one. */
+	bool havePnl;
+	int64_t pnlMicros;
+};
+
+/*
+ * The portfolio parser, as a pure function over a stream. Exposed for the same reason
+ * `parseTrending` is: a parser only ever run against the live API is a parser nobody has tested
+ * against the payloads that break it.
+ *
+ * Returns false and fills `err` with a compiled-in reason when the response is not a portfolio.
+ * A response that parses but carries no total is a failure too — there is nothing to add.
+ */
+bool parsePortfolio(Stream &in, Figures &out, const char **err);
+
+/*
+ * A decimal string as micro-dollars. True only if the whole string was a decimal number that fits.
+ *
+ * Exposed because it is where a wrong total would come from: "2191.42" must become 2191420000 and
+ * "9e99", "", "12.3.4" and a 30-digit number must all be refused rather than clamped. A clamped
+ * total is a plausible number that is not the number it claims to be.
+ */
+bool parseDecimalMicros(const char *text, int64_t *out);
+
+/*
+ * The other half, and the reason it is here rather than private: this is the device's entire opinion
+ * about how a dollar is written, and an opinion nobody can run is an opinion nobody has checked.
+ *
+ * Same rounding as `usd()` in `devices/src/panel.ts` — cents below a thousand dollars, none above —
+ * with thousands separators, which the host also uses and the Cardputer's trending formatter does
+ * not. `feed.cpp` says why the two differ rather than one being wrong.
+ */
+void formatUsdMicros(int64_t micros, char *out, size_t n);
 
 }  // namespace feed
 
