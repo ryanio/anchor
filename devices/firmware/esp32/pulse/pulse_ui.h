@@ -4,6 +4,7 @@
 #include <lvgl.h>
 
 #include "pulse_design.h"
+#include "pulse_power.h"
 
 /*
  * The ambient screen, as LVGL objects, with no Arduino in it.
@@ -74,6 +75,27 @@ struct Reading {
 	 * They default to the portfolio's, so a caller that only sets values is unchanged.
 	 */
 	const char *labels[4] = {"Total", "P&L", "NFTs", "Window"};
+	/*
+	 * Which of the four rows is the subject of the screen, and which is the second voice.
+	 *
+	 * The reading archetype now has a real hierarchy — 48px for the lead, 32px for the second, 22px
+	 * for the two that remain — and **which row deserves which weight is a question about the data**.
+	 * That is why it is here and not in `pulse_design.cpp`. A portfolio leads with its total and puts
+	 * its P&L second. A trending token leads with its price; if the screen it wants is really about
+	 * the *move*, it says `lead = 1` and the 24h figure takes the 48px, with the price under it. The
+	 * layout has no opinion, which is the same discipline that made the labels travel with their
+	 * values: a screen must never be able to give a number the emphasis of a different number.
+	 *
+	 * The two rows not named fall into the supporting slots in their own order. Out-of-range or equal
+	 * values are repaired rather than trusted — see `applyReading` — because a composer that gets
+	 * this wrong should produce a plain reading, not an empty slot.
+	 *
+	 * The defaults are the old behaviour read as a hierarchy: row 0 is the number, row 1 is its
+	 * direction. That is right for both of today's screens, so a caller that sets neither gets the
+	 * fix for free.
+	 */
+	uint8_t lead = 0;
+	uint8_t second = 1;
 };
 
 /*
@@ -145,6 +167,64 @@ void setFooter(const char *text);
  * Null before `build()` has run.
  */
 lv_obj_t *surface();
+
+/* ------------------------------------------------------------------------------------- power --- */
+
+/*
+ * How much charge is left, on the metadata line, on whichever screen is up.
+ *
+ * Call it as often as you like — it is a handful of label writes and LVGL invalidates only what
+ * changed. `pulse.ino` drives it from `pulse_power::state()`; nothing in this file talks to the bus.
+ *
+ * A `Battery` whose `pmu` is false hides the chip entirely, which also hides the only way to reach
+ * the power-off. That is deliberate: a unit whose PMU never answered cannot be powered off by this
+ * firmware, and an affordance that does nothing is worse than none.
+ */
+void setBattery(const pulse_power::Battery &battery);
+
+/*
+ * Make a long press on the battery chip offer to switch the unit off.
+ *
+ * ## Why here, and why this gesture
+ *
+ * Ryan, holding a unit: *"i cant figure out how to turn the esp32 off maybe holding both buttons for
+ * 5s?"* There was no answer, because nothing implemented one. This is the answer.
+ *
+ * It is a **hold on the battery chip**, not a tap and not a hold anywhere on the glass, and each half
+ * of that is load-bearing:
+ *
+ *   - **The whole glass is taken.** `pulse_wifi::attachOpenGesture` already puts a 1.4s hold on
+ *     `surface()` to open Wi-Fi setup. A second duration gesture on the same object would be a race
+ *     between two handlers counting the same repeats. The chip is a child that takes the touch
+ *     instead of the frame, so the two gestures never meet.
+ *   - **It has to be hard to trigger by accident.** A device that powers off in somebody's bag
+ *     because a sleeve touched the glass is worse than one that cannot be switched off at all. A
+ *     132x36 target in the bottom corner, held for 1.4 seconds, then a *second* deliberate press on a
+ *     confirm button that is not where the first one was — a brush produces none of those, and a
+ *     unit face-down on a table produces a press that never becomes a hold because it never lifts
+ *     and never lands on the button.
+ *   - **It is guessable, which the Wi-Fi hold is not.** The chip is the one thing on the panel that
+ *     is already about power, so it is where somebody looking for an off switch would press. That is
+ *     the most this can claim: it is not discoverable without being told, and neither is any other
+ *     gesture on a device with no labelled buttons. The confirmation screen is what makes exploring
+ *     safe.
+ *
+ * `on_confirm` is called only after the confirmation is accepted, and it is a function pointer so
+ * that this file draws the guard without knowing what the action is — the same seam `surface()`
+ * already keeps for touch. `pulse.ino` passes `pulse_power::powerOff`.
+ *
+ * Pass nullptr to leave the gesture unwired, which is what a unit whose PMU did not answer should do.
+ */
+using PowerOffFn = bool (*)();
+void attachPowerGesture(PowerOffFn on_confirm);
+
+/* Whether the confirmation is on screen. For a caller that wants to leave the panel alone while
+ * somebody is deciding — a rotation that changed the token under a "Power off?" prompt would be the
+ * screen moving under a finger. */
+bool powerConfirmShowing();
+
+/* Take the confirmation down without acting on it. Safe to call when it is not up. */
+void dismissPowerConfirm();
 
 }  // namespace pulse_ui
 

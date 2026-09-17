@@ -1,5 +1,6 @@
 #include "pulse_design.h"
 
+#include <stdio.h>
 #include <string.h>
 
 namespace pulse_design {
@@ -26,16 +27,68 @@ constexpr int32_t CARD_W = PANEL_W - 2 * CARD_INSET;
 constexpr int32_t CARD_H = PANEL_H - 2 * CARD_INSET;
 constexpr int32_t CARD_INNER_W = CARD_W - 2 * CARD_PAD; /* 304 */
 constexpr int32_t READING_TITLE_Y = space::lg;
-constexpr int32_t READING_ROW_0_Y = space::xxl + space::xl; /* 84 */
-constexpr int32_t READING_ROW_STEP = 78;
 constexpr int32_t READING_RULE_Y = 378;
-constexpr int32_t READING_FOOTER_Y = 394;
 /*
- * The label sits on the value's baseline rather than its top edge: a 22px face and a 40px face
- * aligned at the top look like the smaller one floated. 14px is the difference in cap height, near
- * enough.
+ * 389 and not 394, which is where it sat while it was the only thing on this line.
+ *
+ * The battery chip is 36px tall and bottoms out on the safe rectangle, so its centre line is at 410
+ * on the panel; a 16px footer at 394 centres at 415 and sat five pixels low against it. Invisible in
+ * the arithmetic and immediately obvious in the render, which is the whole reason `sim/lvgl.sh`
+ * exists.
  */
-constexpr int32_t READING_LABEL_DROP = 14;
+constexpr int32_t READING_FOOTER_Y = 389;
+
+/*
+ * The label column is the left third and the value column the right two thirds.
+ *
+ * That split is decided by the longest thing each column has to hold, not by taste — "Window" at
+ * 22px is about 72px wide, comfortably inside a third, while the value is the number that grows.
+ * Only slots 1-3 use it; the lead's label sits above its value and owns the full measure.
+ */
+constexpr int32_t READING_LABEL_W = CARD_INNER_W / 3;      /* 101 */
+constexpr int32_t READING_VALUE_W = CARD_INNER_W - READING_LABEL_W; /* 203 */
+constexpr int32_t READING_VALUE_X = CARD_PAD + READING_LABEL_W;
+
+/*
+ * The four slots, in rank order, as the two y-coordinates each one needs.
+ *
+ * These are not steps off the spacing scale and they are not arbitrary either: they are the panel
+ * divided by the weights it has to carry. A 48px lead, a 32px second voice, two 22px supporting rows
+ * and a footer is exactly the 424 of card available, and the gaps between them fall out of that
+ * rather than being chosen. Everything here moved once already after looking at a render — the first
+ * pass put the two supporting rows 40px apart, which read as two unrelated rows rather than a pair,
+ * and pulled them to 44 with a wider gap above the first.
+ *
+ * `label_y` is fixed and `value_y` is where the value sits *at its slot's largest face*. A value that
+ * has to step down a size is nudged down by `valueFont`'s `drop` so its baseline stays where the
+ * label beside it expects — a 22px label against a 32px value aligned at the top looks like the
+ * label floated, which is the thing `READING_LABEL_DROP` was fixing before there were slots.
+ */
+struct SlotMetrics {
+	int32_t label_y;
+	int32_t value_y;
+	/* The lead: label above the value, both left-aligned across the full measure. */
+	bool stacked;
+};
+constexpr SlotMetrics SLOT[4] = {
+    {76, 100, true},
+    {209, 202, false},
+    {287, 284, false},
+    {331, 328, false},
+};
+
+/* Where the two rules that separate the three weights sit. */
+constexpr int32_t SLOT_DIVIDER_Y[2] = {182, 264};
+
+/*
+ * The footer is left-aligned rather than centred, and that is not a preference either.
+ *
+ * The battery chip now sits at the bottom right of the panel, on the same metadata line. A centred
+ * age ran straight under it as soon as the string grew — "stale, 12m ago" is about 110px, which
+ * starting from the centre of a 304px measure reaches x=239 against a chip that begins at 204. So
+ * the line is now two things at two ends: how old on the left, how much charge on the right.
+ */
+constexpr int32_t READING_FOOTER_W = CARD_INNER_W - BATTERY_W - space::md; /* 160 */
 
 /* ------------------------------------------------------------------------- the status's metrics - */
 
@@ -154,24 +207,41 @@ bool has(const char *text)
  * because a number with its tail cut off still reads as a number. Stepping down one face keeps every
  * digit. The ellipsis stays as the last resort below this, for a string no face will hold.
  *
- * `drop` is what keeps the row's baseline where it was: the label beside it is positioned against a
- * 40px cap height, so a smaller value has to move down by the difference. About 0.73 of the size is
- * where a Montserrat baseline sits, which is close enough at these steps and was checked in a render
- * rather than trusted.
+ * ## Now it is per-slot, because the slots are different widths at different sizes
+ *
+ * The lead runs at 48px across the whole 304px measure, which is about eleven glyphs at Montserrat's
+ * ~27px advance; slots 1-3 run at 32px and 22px in a 203px column, which is eleven and sixteen. The
+ * thresholds below are those three counts, each one step conservative — the same character-count
+ * approximation `headlineFont` and `pulse_feed_view.cpp` already make, for the same reason: there
+ * are no font metrics worth calling here and an ellipsis is visible in the render when one is wrong.
+ *
+ * `drop` is what keeps a row's baseline where it was: the label beside it is positioned against the
+ * slot's largest cap height, so a smaller value has to move down by the difference. About 0.73 of
+ * the size is where a Montserrat baseline sits, which is close enough at these steps and was checked
+ * in a render rather than trusted. The lead's label is *above* its value, so a shorter face there
+ * changes nothing and the drop is zero.
  */
-const lv_font_t *valueFont(const char *text, int32_t &drop)
+const lv_font_t *valueFont(int slot, const char *text, int32_t &drop)
 {
 	const size_t length = text == nullptr ? 0 : strlen(text);
-	if (length <= 9) {
-		drop = 0;
-		return type::hero();
-	}
-	if (length <= 11) {
-		drop = 6;
+	drop = 0;
+	if (slot == 0) {
+		if (length <= 10) return type::display();
+		if (length <= 13) return type::hero();
 		return type::shout();
 	}
-	drop = 12;
-	return type::heading();
+	if (slot == 1) {
+		if (length <= 11) return type::shout();
+		if (length <= 15) {
+			drop = 6;
+			return type::heading();
+		}
+		drop = 9;
+		return type::body();
+	}
+	if (length <= 16) return type::subhead();
+	drop = 3;
+	return type::label();
 }
 
 const lv_font_t *headlineFont(const char *text)
@@ -345,48 +415,68 @@ ReadingView buildReading(lv_obj_t *parent)
 	lv_label_set_text(view.title, "");
 
 	/*
-	 * Label and value share a row's y but not its width: the label takes the left third and the value
-	 * the right two thirds. That split is decided by the longest thing each column has to hold, not by
-	 * taste — "Window" at 22px is about 72px wide, comfortably inside a third, while the value is the
-	 * number that grows: `$3,299` is 154px at 40px and a portfolio reaching `$148,214` is 203.
-	 *
-	 * They are separate objects rather than one two-part string so that a P&L value can carry a tone
-	 * while its label does not.
+	 * Label and value are separate objects rather than one two-part string so that a value can carry
+	 * a tone while its label does not — a P&L is green or pink, the word "P&L" never is.
 	 */
-	const int32_t label_w = CARD_INNER_W / 3;
-	const int32_t value_w = CARD_INNER_W - label_w;
-	for (int i = 0; i < 4; i++) {
-		const int32_t y = READING_ROW_0_Y + i * READING_ROW_STEP;
-		view.row_label[i] = makeLabel(view.card, type::subhead(), colour::ink_dim, CARD_PAD,
-		                              y + READING_LABEL_DROP, label_w, LV_TEXT_ALIGN_LEFT);
-		view.row_value[i] = makeLabel(view.card, type::hero(), colour::ink, CARD_PAD + label_w, y,
-		                              value_w, LV_TEXT_ALIGN_RIGHT);
-		lv_label_set_text(view.row_label[i], "");
-		lv_label_set_text(view.row_value[i], "");
+	for (int slot = 0; slot < 4; slot++) {
+		const SlotMetrics &metrics = SLOT[slot];
+		if (metrics.stacked) {
+			/*
+			 * The lead's label is an eyebrow: small, dim, letter-spaced, sitting above the number it
+			 * names. Same device as the status archetype's, and for the same reason — spacing is what
+			 * stops a short word in a small face from reading as a second, quieter headline.
+			 */
+			view.slot_label[slot] = makeLabel(view.card, type::label(), colour::ink_dim, CARD_PAD,
+			                                  metrics.label_y, CARD_INNER_W, LV_TEXT_ALIGN_LEFT);
+			lv_obj_set_style_text_letter_space(view.slot_label[slot], 3, LV_PART_MAIN);
+			view.slot_value[slot] = makeLabel(view.card, type::display(), colour::ink, CARD_PAD,
+			                                  metrics.value_y, CARD_INNER_W, LV_TEXT_ALIGN_LEFT);
+		} else {
+			const lv_font_t *label_font = slot == 1 ? type::subhead() : type::label();
+			const lv_font_t *value_font = slot == 1 ? type::shout() : type::subhead();
+			const uint32_t label_colour = slot == 1 ? colour::ink_dim : colour::ink_faint;
+			view.slot_label[slot] = makeLabel(view.card, label_font, label_colour, CARD_PAD,
+			                                  metrics.label_y, READING_LABEL_W, LV_TEXT_ALIGN_LEFT);
+			view.slot_value[slot] = makeLabel(view.card, value_font, colour::ink, READING_VALUE_X,
+			                                  metrics.value_y, READING_VALUE_W, LV_TEXT_ALIGN_RIGHT);
+		}
+		lv_label_set_text(view.slot_label[slot], "");
+		lv_label_set_text(view.slot_value[slot], "");
 	}
 
-	view.value_x = CARD_PAD + label_w;
-	view.value_w = value_w;
+	/*
+	 * Two rules, one under the lead and one under the second voice.
+	 *
+	 * They are the cheapest way to say "these three weights are three different kinds of thing" to
+	 * somebody who is reading the screen as shapes rather than words, which on an ambient display at
+	 * three metres is most of the time. `colour::edge` and not `ink_faint`: a rule is a border, and
+	 * the palette already has a role for that.
+	 */
+	for (int i = 0; i < 2; i++) {
+		view.divider[i] = makeRule(view.card, CARD_PAD, SLOT_DIVIDER_Y[i], CARD_INNER_W);
+	}
 
 	makeRule(view.card, CARD_PAD, READING_RULE_Y, CARD_INNER_W);
 	view.footer = makeLabel(view.card, type::caption(), colour::ink_faint, CARD_PAD,
-	                        READING_FOOTER_Y, CARD_INNER_W, LV_TEXT_ALIGN_CENTER);
+	                        READING_FOOTER_Y, READING_FOOTER_W, LV_TEXT_ALIGN_LEFT);
 	lv_label_set_text(view.footer, "");
 	return view;
 }
 
-void setReadingRow(const ReadingView &view, int row, const char *label, const char *value, Tone tone)
+void setReadingSlot(const ReadingView &view, int slot, const char *label, const char *value,
+                    Tone tone)
 {
-	if (view.card == nullptr || row < 0 || row >= 4) return;
-	lv_label_set_text(view.row_label[row], label == nullptr ? "" : label);
+	if (view.card == nullptr || slot < 0 || slot >= 4) return;
+	lv_label_set_text(view.slot_label[slot], label == nullptr ? "" : label);
 
 	int32_t drop = 0;
-	const lv_font_t *font = valueFont(value, drop);
-	lv_obj_set_pos(view.row_value[row], view.value_x,
-	               READING_ROW_0_Y + row * READING_ROW_STEP + drop);
-	lv_obj_set_style_text_font(view.row_value[row], font, LV_PART_MAIN);
-	lv_obj_set_style_text_color(view.row_value[row], hex(toneColour(tone)), LV_PART_MAIN);
-	lv_label_set_text(view.row_value[row], value == nullptr ? "" : value);
+	const lv_font_t *font = valueFont(slot, value, drop);
+	const SlotMetrics &metrics = SLOT[slot];
+	lv_obj_set_pos(view.slot_value[slot], metrics.stacked ? CARD_PAD : READING_VALUE_X,
+	               metrics.value_y + drop);
+	lv_obj_set_style_text_font(view.slot_value[slot], font, LV_PART_MAIN);
+	lv_obj_set_style_text_color(view.slot_value[slot], hex(toneColour(tone)), LV_PART_MAIN);
+	lv_label_set_text(view.slot_value[slot], value == nullptr ? "" : value);
 }
 
 /* --------------------------------------------------------------------------------- the status --- */
@@ -721,6 +811,155 @@ lv_obj_t *makeMagnifier()
 	lv_obj_add_flag(magnifier, LV_OBJ_FLAG_HIDDEN);
 	lv_obj_remove_flag(magnifier, LV_OBJ_FLAG_CLICKABLE);
 	return magnifier;
+}
+
+/* --------------------------------------------------------------------------------- the charge --- */
+
+namespace {
+
+/* The graphics inside the 132x36 chip. The shell is 34x18, which is the smallest a battery outline
+ * can be drawn at and still read as one from across a room, and the rest of the chip is the touch
+ * target and the number. */
+constexpr int32_t BATTERY_SHELL_W = 34;
+constexpr int32_t BATTERY_SHELL_H = 18;
+constexpr int32_t BATTERY_SHELL_Y = (BATTERY_H - BATTERY_SHELL_H) / 2; /* 9 */
+constexpr int32_t BATTERY_CAP_W = 3;
+constexpr int32_t BATTERY_CAP_H = 8;
+constexpr int32_t BATTERY_FILL_INSET = 3;
+constexpr int32_t BATTERY_FILL_W = BATTERY_SHELL_W - 2 * BATTERY_FILL_INSET; /* 28 */
+constexpr int32_t BATTERY_FILL_H = BATTERY_SHELL_H - 2 * BATTERY_FILL_INSET; /* 12 */
+constexpr int32_t BATTERY_TEXT_X = BATTERY_SHELL_W + BATTERY_CAP_W + space::sm; /* 45 */
+constexpr int32_t BATTERY_TEXT_W = BATTERY_W - BATTERY_TEXT_X;                  /* 87 */
+
+/*
+ * What colour the charge is, which is a meaning and not a level.
+ *
+ * Charging is `accent` — the palette's "something is happening" — and outranks the level, because a
+ * unit at 8% on a cable is not a problem and must not wear the colour of one. Below that it is the
+ * two thresholds anybody would expect, and above them it is `ink_dim`: the charge is metadata about
+ * the reading, not the reading, and a green battery on every screen would be a permanent piece of
+ * good news competing with the number the panel is actually for.
+ */
+Tone batteryTone(const BatteryCopy &copy)
+{
+	if (copy.charging) return Tone::Accent;
+	if (copy.percent < 0) return Tone::Quiet;
+	if (copy.percent <= 10) return Tone::Bad;
+	if (copy.percent <= 25) return Tone::Warn;
+	return Tone::Quiet;
+}
+
+}  // namespace
+
+BatteryView buildBattery(lv_obj_t *parent, int32_t x, int32_t y)
+{
+	BatteryView view;
+	view.chip = lv_obj_create(parent);
+	lv_obj_set_pos(view.chip, x, y);
+	lv_obj_set_size(view.chip, BATTERY_W, BATTERY_H);
+	lv_obj_set_style_bg_opa(view.chip, LV_OPA_TRANSP, LV_PART_MAIN);
+	lv_obj_set_style_border_width(view.chip, 0, LV_PART_MAIN);
+	lv_obj_set_style_radius(view.chip, radius::sm, LV_PART_MAIN);
+	lv_obj_set_style_pad_all(view.chip, 0, LV_PART_MAIN);
+	lv_obj_remove_flag(view.chip, LV_OBJ_FLAG_SCROLLABLE);
+	lv_obj_set_scrollbar_mode(view.chip, LV_SCROLLBAR_MODE_OFF);
+	/*
+	 * Clickable, unlike every other layer this file makes.
+	 *
+	 * `makePage` goes out of its way *not* to be a target, because the ambient screen's whole gesture
+	 * is that the panel is the button. This is the deliberate exception: a chip that swallows the
+	 * touches landing on it is exactly what keeps a hold on the battery from also being a hold
+	 * anywhere on the glass, which is what `pulse_wifi` already uses to open setup. Two duration
+	 * gestures on one surface would be a race; two duration gestures on two surfaces are two
+	 * gestures.
+	 */
+	lv_obj_add_flag(view.chip, LV_OBJ_FLAG_CLICKABLE);
+	/* A press has to be visible: it is the only feedback that a hold has started at all, and this one
+	 * is on a target somebody is holding for over a second. */
+	lv_obj_set_style_bg_color(view.chip, hex(colour::raised), LV_PART_MAIN | LV_STATE_PRESSED);
+	lv_obj_set_style_bg_opa(view.chip, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_PRESSED);
+
+	view.shell = lv_obj_create(view.chip);
+	lv_obj_set_pos(view.shell, 0, BATTERY_SHELL_Y);
+	lv_obj_set_size(view.shell, BATTERY_SHELL_W, BATTERY_SHELL_H);
+	lv_obj_set_style_bg_opa(view.shell, LV_OPA_TRANSP, LV_PART_MAIN);
+	lv_obj_set_style_border_color(view.shell, hex(colour::ink_faint), LV_PART_MAIN);
+	lv_obj_set_style_border_width(view.shell, 2, LV_PART_MAIN);
+	lv_obj_set_style_radius(view.shell, 4, LV_PART_MAIN);
+	lv_obj_set_style_pad_all(view.shell, 0, LV_PART_MAIN);
+	lv_obj_remove_flag(view.shell, LV_OBJ_FLAG_SCROLLABLE);
+	lv_obj_remove_flag(view.shell, LV_OBJ_FLAG_CLICKABLE);
+
+	view.cap = makeRule(view.chip, BATTERY_SHELL_W, BATTERY_SHELL_Y + (BATTERY_SHELL_H - BATTERY_CAP_H) / 2,
+	                    BATTERY_CAP_W, colour::ink_faint);
+	lv_obj_set_height(view.cap, BATTERY_CAP_H);
+	lv_obj_set_style_radius(view.cap, 1, LV_PART_MAIN);
+
+	/* A child of the chip and not of the shell, because the shell's 2px border would otherwise eat
+	 * two of the twelve pixels this has to show a level in. */
+	view.fill = makeRule(view.chip, BATTERY_FILL_INSET, BATTERY_SHELL_Y + BATTERY_FILL_INSET,
+	                     BATTERY_FILL_W, colour::ink_dim);
+	lv_obj_set_height(view.fill, BATTERY_FILL_H);
+	lv_obj_set_style_radius(view.fill, 2, LV_PART_MAIN);
+
+	view.text = makeLabel(view.chip, type::caption(), colour::ink_faint, BATTERY_TEXT_X, 0,
+	                      BATTERY_TEXT_W, LV_TEXT_ALIGN_RIGHT);
+	lv_obj_set_style_pad_top(view.text, (BATTERY_H - 19) / 2, LV_PART_MAIN);
+	lv_label_set_text(view.text, "");
+
+	lv_obj_add_flag(view.chip, LV_OBJ_FLAG_HIDDEN);
+	return view;
+}
+
+void applyBattery(const BatteryView &view, const BatteryCopy &copy)
+{
+	if (view.chip == nullptr) return;
+	showIf(view.chip, copy.show);
+	if (!copy.show) return;
+
+	const uint32_t tone = toneColour(batteryTone(copy));
+	lv_obj_set_style_bg_color(view.fill, hex(tone), LV_PART_MAIN);
+	lv_obj_set_style_text_color(view.text, hex(tone), LV_PART_MAIN);
+
+	/*
+	 * The level, clamped, and never rounded up to a bar that is not there.
+	 *
+	 * A cell at 2% gets one pixel rather than none, because a battery outline with nothing in it and
+	 * a battery outline with a sliver in it are different facts and the panel should be able to say
+	 * both. Above that it is integer arithmetic on 28 pixels, which is a little over three percent a
+	 * pixel and is as much resolution as this readout claims to have.
+	 */
+	int32_t fill = 0;
+	if (copy.percent > 0) {
+		fill = (BATTERY_FILL_W * (int32_t)copy.percent) / 100;
+		if (fill < 1) fill = 1;
+		if (fill > BATTERY_FILL_W) fill = BATTERY_FILL_W;
+	}
+	lv_obj_set_width(view.fill, fill);
+	showIf(view.fill, fill > 0);
+
+	/*
+	 * What the chip says in words, in the order of how much the reader can rely on it.
+	 *
+	 * A percentage from the PMU's own gauge is the good case. A percentage this firmware derived from
+	 * a voltage curve wears a `~`, because AGENTS.md's worst failure mode is a plausible number that
+	 * is not the number it claims to be and an interpolated state of charge is exactly that if it is
+	 * printed like a measurement. With no cell fitted there is no percentage to have and the chip
+	 * says what is actually true — the unit is running off the cable.
+	 */
+	char text[16];
+	if (copy.percent >= 0) {
+		snprintf(text, sizeof(text), "%s%s%d%%", copy.charging ? "chg " : "",
+		         copy.estimated ? "~" : "", (int)copy.percent);
+	} else if (copy.millivolts != 0) {
+		snprintf(text, sizeof(text), "%u.%02uV", (unsigned)(copy.millivolts / 1000u),
+		         (unsigned)((copy.millivolts % 1000u) / 10u));
+	} else if (copy.usb) {
+		snprintf(text, sizeof(text), "USB");
+	} else {
+		snprintf(text, sizeof(text), "--");
+	}
+	lv_label_set_text(view.text, text);
 }
 
 }  // namespace pulse_design

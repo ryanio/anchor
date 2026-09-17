@@ -14,6 +14,45 @@ becomes `## [0.1.0] - YYYY-MM-DD` at the moment the tag is pushed, and not befor
 
 ### Added
 
+**The ESP32 panel shows a portfolio, from addresses it is given rather than a credential it holds.**
+`devices/firmware/esp32/app/feed.{h,cpp}` now reads `/api/v2/account/{address}/portfolio` for every
+configured address with the same read-only key it already carried for trending tokens, and the
+ambient rotation leads with the result: total, 24h move, NFT value, and how many wallets are in the
+number. Addresses are a **list** — `ANCHOR_WALLETS` in `app/secrets.h` as the default a unit ships
+with, overridden by the `anchor-wallets` NVS namespace so a unit can be re-pointed without
+reflashing — because a wallet-scoped read means every wallet. Money is summed as fixed-point
+integers and never through a float; a figure that did not arrive renders "--" and never "$0.00".
+
+**A portfolio that covers some of its wallets says so.** Four of six addresses answering produces a
+total over four, a "Wallets 4 of 6" row and a footer reading "partial" — never a quietly smaller
+number drawn the way a complete one is. A list longer than the twelve addresses a unit will read is
+reported at its real length for the same reason. A portfolio with nothing to show gets the status
+archetype and a sentence: no key, no network, no addresses configured, still reading, or nothing came
+back. `sim/lvgl.sh --feed portfolio-partial` and its six siblings photograph each of them.
+
+**The ESP32 panel can be switched off, and says how much battery is left.**
+`devices/firmware/esp32/pulse/pulse_power.{h,cpp}` is the first firmware in this tree to speak to the
+AXP2101 power-management IC that `probe/` found at 0x34. It reads battery voltage, state of charge,
+whether a cell is fitted, whether USB is present and whether it is charging, and it commands a
+deliberate shutdown. Every register is cited in the source to one of two vendor drivers — M5Unified's
+`AXP2101_Class.cpp` and `lewisxhe/XPowersLib` — which agree on all of them; `docs/devices-esp32.md`
+has the table. It writes exactly two bits ever, both read-modify-written: the battery-voltage ADC
+enable (only when it is found clear) and the soft power-off. Charge current, termination voltage, the
+rail enables and the power-key configuration are read-only by design.
+
+The charge appears as a battery chip on the metadata line of every ambient screen, and **a 1.4-second
+hold on that chip offers to power the unit off** — a confirmation screen with a Cancel and a Power off
+button that cancels itself after ten seconds. A brush cannot produce it: it takes a hold on a
+132×36 target in one corner and then a second deliberate press somewhere else. Not verified on
+hardware; the boards are unplugged.
+
+**The ESP32 panel's reading screen has a hierarchy.** Its four rows were four identical 22 px labels
+against 40 px values, so a token's price and the literal word "trending" carried the same weight. They
+are now four slots in rank order — a 48 px lead under a letter-spaced eyebrow, a 32 px second voice,
+and two 22 px supporting rows — and **which row takes which slot is the composer's decision**
+(`pulse_ui::Reading::lead` and `::second`), because a portfolio and a trending token do not lead with
+the same fact.
+
 **The ESP32 panel has a design system, and every state that has no data now gets a screen built for
 saying so.** `devices/firmware/esp32/pulse/pulse_design.{h,cpp}` holds one palette addressed by role
 (`ink`, `ink_dim`, `accent`, `good`, `bad`, `warn`, …) with a `Tone` enum in front of it, a six-step

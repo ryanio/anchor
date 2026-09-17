@@ -59,7 +59,25 @@ sim/lvgl.sh --feed live           --saved "Home:x" --shot /tmp/h   # a reading
 sim/lvgl.sh --feed stale          --saved "Home:x" --shot /tmp/i   # a reading, labelled old
 ```
 
+The portfolio has its own states, and slot 0 of the rotation is where they land — so a short run
+photographs the portfolio and a `--gap 6000 --wait` walks on to the trending rows behind it:
+
+```bash
+sim/lvgl.sh --feed portfolio          --saved "Home:x" --shot /tmp/p   # every address read
+sim/lvgl.sh --feed portfolio-partial  --saved "Home:x" --shot /tmp/q   # 4 of 6, and it says so
+sim/lvgl.sh --feed portfolio-stale    --saved "Home:x" --shot /tmp/r   # a total, labelled old
+sim/lvgl.sh --feed portfolio-failed   --saved "Home:x" --shot /tmp/s   # nothing ever came back
+sim/lvgl.sh --feed portfolio-none     --saved "Home:x" --shot /tmp/t   # no addresses configured
+sim/lvgl.sh --feed portfolio-fetching --saved "Home:x" --shot /tmp/u
+sim/lvgl.sh --feed portfolio-only     --saved "Home:x" --shot /tmp/v   # portfolio up, trending down
+```
+
 `--saved` is what keeps Wi-Fi setup from opening over the state being photographed.
+
+The rotation is the portfolio first, then one slot per trending token, and **each half always owns at
+least one slot** — with no tokens, slot 1 is the trending status saying why, and with no portfolio,
+slot 0 is the portfolio status saying why. `--feed portfolio-only` is the pair that proves neither
+failure can be hidden by the other half working.
 
 This builds `pulse.ino`, `pulse_ui.cpp` and LVGL 9.2.2 for the desktop, runs the firmware's real
 `setup()` and `loop()` against shims for Arduino, `Arduino_GFX` and the heap, points the firmware's
@@ -69,6 +87,32 @@ after that a layout change rebuilds in about a second.
 
 It is the point of the exercise. A layout is a hundred small judgements and each one otherwise costs
 a compile, a flash, a walk to the desk and a squint — on a board somebody is using.
+
+## Battery and power off
+
+`pulse_power.{h,cpp}` talks to the AXP2101 at 0x34. The charge shows as a chip on the metadata line
+of every ambient screen, and a 1.4-second hold on that chip opens a confirmation that will switch the
+unit off. `docs/devices-esp32.md` has the register table and the source each number came from.
+
+```bash
+sim/lvgl.sh --saved "Home:x" --feed live --battery 78,3860             # a healthy unit
+sim/lvgl.sh --saved "Home:x" --feed live --battery 9,3550              # nearly flat, in red
+sim/lvgl.sh --saved "Home:x" --feed live --battery 42,3780,charging    # on a cable
+sim/lvgl.sh --saved "Home:x" --feed live --battery 0,0,none,usb        # no cell fitted
+sim/lvgl.sh --saved "Home:x" --feed live --power                       # no PMU: the chip is hidden
+
+# the gesture, then the button, then what the PMU was actually asked to do
+sim/lvgl.sh --saved "Home:x" --feed live --battery 42,3780 \
+  --hold 270,410,2600 --tap 269,308 --shot /tmp/power
+```
+
+The run prints `AXP2101 0x10 = 0x31, power off COMMANDED` when the shutdown bit was written, which is
+the only way to see it here — the desktop process carries on regardless.
+
+**`sim/include/Wire.h` replays registers, not silicon.** It answers at 0x34 only when a scenario says
+to, with the addresses `pulse_power.cpp` cites, so a run proves the decode, the ADC-enable path and
+the screen. It cannot tell you that writing bit 0 of 0x10 cuts power on this board. Nothing here has
+been on hardware.
 
 ## Wi-Fi setup, on the glass
 

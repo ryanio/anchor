@@ -34,11 +34,13 @@
 #include "Arduino_GFX_Library.h"
 #include "Preferences.h"
 #include "WiFi.h"
+#include "Wire.h"
 #include "esp_heap_caps.h"
 #include "sim_touch.h"
 
 #include "lvgl.h"
 
+#include "pulse_power.h"
 #include "pulse_ui.h"
 #include "pulse_wifi.h"
 
@@ -207,6 +209,45 @@ void parseNetworks(const char *spec) {
   WiFi.simSetNetworks(nets);
 }
 
+/*
+ * `--battery 78,3860,usb,charging` — what the scripted AXP2101 in `Wire.h` answers with.
+ *
+ * Every field after the percentage is optional and order does not matter among the words. `none`
+ * means no cell fitted, which is a real state for a unit on a bench cable and the one that shows
+ * whether the chip can say so without printing a zero.
+ */
+void parseBattery(const char *spec) {
+  SimPmu pmu;
+  pmu.present = true;
+  std::string text(spec);
+  size_t at = 0;
+  int field = 0;
+  while (at <= text.size()) {
+    const size_t comma = text.find(',', at);
+    const std::string one =
+        text.substr(at, comma == std::string::npos ? std::string::npos : comma - at);
+    if (one == "usb") {
+      pmu.usb = true;
+    } else if (one == "charging") {
+      pmu.usb = true;
+      pmu.charging = true;
+    } else if (one == "none") {
+      pmu.battery = false;
+    } else if (!one.empty()) {
+      const long value = strtol(one.c_str(), nullptr, 10);
+      if (field == 0) {
+        pmu.percent = (int)value;
+      } else {
+        pmu.millivolts = (uint16_t)value;
+      }
+      field++;
+    }
+    if (comma == std::string::npos) break;
+    at = comma + 1;
+  }
+  Wire.simSetPmu(pmu);
+}
+
 void usage() {
   printf(
       "anchor pulse LVGL simulator\n"
@@ -221,6 +262,9 @@ void usage() {
       "  --shot PREFIX       write PREFIX-NN.ppm before every step and once at the end\n"
       "  --quit-after MS     stop this long after setup() returned\n"
       "  --wifi              wire pulse_wifi in, as pulse.ino will (begin/tick/hold gesture)\n"
+      "  --power             wire pulse_power in, as pulse.ino will (begin/tick/hold gesture)\n"
+      "  --battery PCT[,MV][,usb][,charging][,none]  what the scripted AXP2101 answers; implies\n"
+      "                      --power. Registers only, never silicon — see sim/include/Wire.h\n"
       "  --networks \"A:-40,B:-70:open\"  what a scan finds; strongest first is not assumed\n"
       "  --saved SSID:PASS   a unit that already has a network in NVS\n"
       "  --nvs PATH          where that store lives (default sim-nvs-pulse-lvgl.txt)\n"
@@ -240,6 +284,7 @@ int main(int argc, char **argv) {
   bool have_saved = false;
   bool wifi_wired = false;
   bool open_wifi = false;
+  bool power_wired = false;
 
   for (int i = 1; i < argc; i++) {
     const bool more = i + 1 < argc;
@@ -277,6 +322,11 @@ int main(int argc, char **argv) {
       feed::simScenario(argv[++i]);
     } else if (strcmp(arg, "--wifi") == 0) {
       wifi_wired = true;
+    } else if (strcmp(arg, "--power") == 0) {
+      power_wired = true;
+    } else if (strcmp(arg, "--battery") == 0 && more) {
+      parseBattery(argv[++i]);
+      power_wired = true;
     } else if (strcmp(arg, "--open-wifi") == 0) {
       wifi_wired = true;
       open_wifi = true;
@@ -346,6 +396,23 @@ int main(int argc, char **argv) {
     if (open_wifi) pulse_wifi::open();
   }
 
+  /*
+   * The power module, wired here for exactly the reason `pulse_wifi` is: `pulse.ino` is owned by
+   * another task, so these are the lines that go into the sketch, executed from the harness instead.
+   * They are the whole of the wiring — `begin()` after the bus and after the screen exists, the
+   * gesture on the chip that screen drew, and a `tick()` plus a push of the state once per pass.
+   *
+   * Opt-in (`--power`) so that every existing scenario in `README.md` renders the frame it rendered
+   * yesterday, and because a unit whose PMU does not answer is a state worth being able to photograph
+   * too — it is what a board with a dead or absent AXP2101 looks like.
+   */
+  if (power_wired) {
+    pulse_power::begin();
+    pulse_ui::setBattery(pulse_power::state());
+    pulse_ui::attachPowerGesture(pulse_power::powerOff);
+    printf("sim: %s\n", pulse_power::describe());
+  }
+
   if (!quiet) {
     printf("--- boot banner ---\n%s-------------------\n", Serial.simText().c_str());
   }
@@ -378,6 +445,10 @@ int main(int argc, char **argv) {
 
     loop();
     if (wifi_wired) pulse_wifi::tick();
+    if (power_wired) {
+      pulse_power::tick();
+      pulse_ui::setBattery(pulse_power::state());
+    }
     /*
      * One millisecond per pass on top of whatever `loop()` slept.
      *
@@ -398,6 +469,17 @@ int main(int argc, char **argv) {
   }
 
   printf("sim: %u ms simulated, %d frames\n", (unsigned)(millis() - started), shot_index);
+  if (power_wired) {
+    /*
+     * Whether the shutdown bit was written, which is otherwise entirely invisible here: the desktop
+     * process keeps running, so a `powerOff()` that fired and a `powerOff()` that never ran produce
+     * the same frames. The common-configuration byte is printed with it, because the other seven bits
+     * surviving is the check that `powerOff()` read-modify-wrote rather than writing a bare 0x01.
+     */
+    const SimPmu &pmu = Wire.simPmu();
+    printf("sim: AXP2101 0x10 = 0x%02X, power off %s\n", (unsigned)pmu.common_config,
+           pmu.powered_off ? "COMMANDED" : "not commanded");
+  }
   if (wifi_wired) {
     /*
      * What the radio was asked to join, and what the unit ended up remembering.

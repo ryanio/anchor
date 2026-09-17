@@ -232,32 +232,65 @@ void paintGround(lv_obj_t *screen);
  */
 
 /*
- * **Reading** — one subject, four labelled values, a footer saying how old it is.
+ * **Reading** — one subject, one number that dominates, and three facts that support it.
  *
- * Laid out against coordinates rather than through a flex container, and that is still right: four
- * rows and a footer is not a layout problem, it is five y-coordinates, and the failure being guarded
- * against is a value running into its label — which is checked by looking at the render, not by
- * trusting a solver. The value column is right-aligned to a single edge so that four numbers of
- * different widths form a column.
+ * Laid out against coordinates rather than through a flex container, and that is still right: a
+ * title, four values and a footer is not a layout problem, it is a handful of y-coordinates, and the
+ * failure being guarded against is a value running into its label — which is checked by looking at
+ * the render, not by trusting a solver.
+ *
+ * ## Why this stopped being four identical rows
+ *
+ * It was four rows of 22px label and 40px value, all the same weight, and the agent that built this
+ * file flagged the consequence without fixing it: *"'Source / trending' still wears 40px type for
+ * the least important fact"*. On the trending screen that put a token's **price** and the literal
+ * word **"trending"** in the same face, the same colour and the same column — so a panel glanced at
+ * from across a room offered four equally loud things and no way to tell which one it was about.
+ * A hierarchy that says everything is important says nothing is.
+ *
+ * So the four rows are now four **slots in rank order**, and the scale does the work:
+ *
+ *   slot 0  the lead. Its label becomes a letter-spaced eyebrow *above* it and its value is set at
+ *           48px, left-aligned on the card's own margin — a statement, not a table row.
+ *   slot 1  the second voice. Still a label/value row, at 32px against a 22px label.
+ *   slot 2  a supporting fact, at 22px against an 18px label.
+ *   slot 3  the same, and last.
+ *
+ * 48 / 32 / 22 is a real ratio rather than three adjacent steps, which is what makes the lead read
+ * as the subject of the screen at a distance where the smaller rows are still only shapes.
+ *
+ * ## Slots are not rows, and that is the point
+ *
+ * **Which row leads is a question about the data, not about the layout.** A portfolio reading and a
+ * trending reading are the same archetype with different content, and the fact that matters most is
+ * not in the same position in both — a portfolio leads with its total, and a trending token may
+ * reasonably lead with its move rather than its price. So the composer says which row goes in which
+ * slot (`pulse_ui::Reading::lead` and `::second`) and this file lays out whatever it is handed. The
+ * alternative — an archetype that decides row 0 is always the important one — is the same mistake
+ * the labels made before they travelled with their values: a layout deciding what a number means.
+ *
+ * Slots 1-3 keep the right-aligned value column, so three numbers of different widths still form a
+ * column under one edge.
  */
 struct ReadingView {
 	lv_obj_t *page = nullptr;
 	lv_obj_t *card = nullptr;
 	lv_obj_t *title = nullptr;
-	lv_obj_t *row_label[4] = {nullptr, nullptr, nullptr, nullptr};
-	lv_obj_t *row_value[4] = {nullptr, nullptr, nullptr, nullptr};
+	/* Indexed by *slot* — visual rank — and not by the caller's row order. */
+	lv_obj_t *slot_label[4] = {nullptr, nullptr, nullptr, nullptr};
+	lv_obj_t *slot_value[4] = {nullptr, nullptr, nullptr, nullptr};
+	/* The two rules that separate the three weights. Nothing outside this file touches them; they are
+	 * held so a future screen can hide one. */
+	lv_obj_t *divider[2] = {nullptr, nullptr};
 	lv_obj_t *footer = nullptr;
-	/* Where the value column starts and how wide it is, so `setReadingRow` can re-place a value it
-	 * has just changed the size of without the metrics leaving this module. */
-	int32_t value_x = 0;
-	int32_t value_w = 0;
 };
 ReadingView buildReading(lv_obj_t *parent);
 
-/* Fill one row. Goes through here rather than through `lv_label_set_text` at the call site because
- * the value's *face* depends on its length — see `valueFont` — and a caller setting the text without
- * the font would silently reintroduce the truncated price this fixed. */
-void setReadingRow(const ReadingView &view, int row, const char *label, const char *value, Tone tone);
+/* Fill one slot. Goes through here rather than through `lv_label_set_text` at the call site because
+ * the value's *face* depends on both its rank and its length — see `valueFont` — and a caller
+ * setting the text without the font would silently reintroduce the truncated price this fixed. */
+void setReadingSlot(const ReadingView &view, int slot, const char *label, const char *value,
+                    Tone tone);
 
 /*
  * **Status** — one state, said plainly, with what to do about it.
@@ -355,6 +388,54 @@ InputView buildInput(lv_obj_t *parent, const char *placeholder);
 constexpr int32_t MAG_W = 112;
 constexpr int32_t MAG_H = 124;
 lv_obj_t *makeMagnifier();
+
+/* ---------------------------------------------------------------------------------- the charge - */
+
+/*
+ * **Battery** — how much is left, in the metadata line, next to how old the reading is.
+ *
+ * Drawn out of rectangles rather than set in a symbol face, deliberately. LVGL's Montserrat builds
+ * carry a battery glyph, and this panel has already been bitten twice by trusting a font's coverage:
+ * the interpunct came out as a placeholder box in `pulse_feed_view.cpp` and the passphrase mask fell
+ * back to an asterisk for the same reason. Four rectangles cannot be missing, scale exactly, and
+ * cost no flash at all — a font step would.
+ *
+ * It sits on the *frame*, above both archetypes, so there is one charge readout on this device and
+ * it does not move when the screen changes kind. That also makes it the obvious place to put the
+ * power-off gesture: the chip is the only thing on the glass that is already about power.
+ *
+ * The size is a touch target first and a readout second. 132x36 is about 11mm across on this 322 ppi
+ * glass, which is inside what a fingertip wants horizontally even though the panel has no room to
+ * give it the same vertically.
+ */
+constexpr int32_t BATTERY_W = 132;
+constexpr int32_t BATTERY_H = 36;
+
+struct BatteryView {
+	/* The whole chip, and the object a gesture attaches to. */
+	lv_obj_t *chip = nullptr;
+	lv_obj_t *shell = nullptr;
+	lv_obj_t *cap = nullptr;
+	lv_obj_t *fill = nullptr;
+	lv_obj_t *text = nullptr;
+};
+
+/* What the chip says. Mirrors `pulse_power::Battery` by value rather than by include, for the same
+ * reason `pulse_feed_view.h` mirrors `feed::Status`: the design system does not depend on a driver,
+ * and the simulator can render this without one. */
+struct BatteryCopy {
+	bool show = false;
+	int8_t percent = -1;
+	bool charging = false;
+	bool usb = false;
+	uint16_t millivolts = 0;
+	/* The percentage came from a voltage curve rather than the fuel gauge. Shown with a `~`, because
+	 * a number nobody can check is worse than a number that says it is approximate. */
+	bool estimated = false;
+};
+
+BatteryView buildBattery(lv_obj_t *parent, int32_t x, int32_t y);
+void applyBattery(const BatteryView &view, const BatteryCopy &copy);
 
 }  // namespace pulse_design
 

@@ -235,8 +235,33 @@ device already is for everything else — with the trade-off named, not by defau
 narrow as the reasoning above argues a native renderer should be: one module, one job, no palette, no
 layout beyond what typing a passphrase requires, and it hands the panel back to the protocol decoder
 the instant a host is on the cable. It does not reopen the question this section answers for
-everything else a pulse display might show; that decision — a standalone renderer for actual
-portfolio data with no host present — is still open, and is a separate, larger call.
+everything else a pulse display might show.
+
+**That larger call has since been made, and this paragraph used to say it was open.** A standalone
+renderer for actual portfolio data with no host present is what `pulse/` is: it holds its own
+palette, its own typeface and its own layout, and it fetches what it shows. `app/` is still the
+blitter and still the firmware that works on glass.
+
+**And an address is configuration, not a secret** — which is the part worth writing down here,
+because a portfolio on a handheld unit sounds like a credential question and is not one. AGENTS.md
+now says so under "The Cardputer and the pulse display are wholly independent devices", and the
+measurement behind it was taken from this checkout on 2026-09-17 with a cache-busting query
+parameter, the way this repo requires a credential claim to be made:
+
+| Call | With the API key | With no key |
+|---|---|---|
+| `GET /api/v2/account/{address}/portfolio?timeframe=DAY` | `200`, `cf-cache-status: MISS` | `401`, `cf-cache-status: BYPASS` |
+
+So the origin judged the key in both directions rather than Cloudflare answering for it, and a
+read-only key is the whole credential a portfolio needs. What stays off these units is anything that
+can *act*: a PAT carries whatever scopes it was created with, and invariant 5 applies to it.
+
+Two findings from that endpoint that the next person to call it would otherwise pay for again: every
+money field is a **string** in snake case (`total_value_usd`, `nft_value_usd`, `pnl_absolute`) where
+the host's model is camelCase, and `docs/upstream.md` entry 7 means the bare route can `500` for a
+large account — `timeframe=DAY` is sent partly as the documented workaround of "always send a
+parameter", and a `chains` filter is deliberately *not* sent because it would quietly narrow the
+total under a label reading "Total".
 
 ### The messages
 
@@ -424,6 +449,56 @@ as geometry, and nothing in a screenshot shows it because the simulator draws th
 drift is silent too — the Wi-Fi picker's three-button row stayed 109 px wide after `INSET` went from
 12 to 20, so the last button's right edge sat 5 px from the panel edge for as long as the number was
 written out by hand in two files. Derive the row from the safe width; do not retype it.
+
+### The AXP2101 is how this board is switched off, and the register map came from two vendor drivers
+
+The bus table above has named the power-management IC at 0x34 since `probe/` found it, and for a long
+time that was the whole relationship: no firmware here ever spoke to it. So a unit could not be
+deliberately switched off, could not say how much charge it had, and could not tell you whether the
+cable it was on was charging it. `pulse/pulse_power.{h,cpp}` is the driver, and this is what the next
+one will want to know.
+
+**Every register was read out of a vendor driver, never from memory.** Two independent ones, and they
+agree on all of it:
+
+- **M5Unified**, `src/utility/power/AXP2101_Class.cpp` — M5Stack's own driver for the AXP2101 on the
+  Cardputer ADV, which is already checked out in this repository under
+  `devices/firmware/cardputer/.pio/libdeps/`. A driver with hardware behind it, on this desk.
+- **XPowersLib** (`lewisxhe/XPowersLib`) — `src/REG/AXP2101Constants.h` for the addresses,
+  `src/XPowersAXP2101.hpp` for the bit meanings. The library Waveshare's own examples for this board
+  pull in.
+
+| Register | Field | What it is | Source |
+|---|---|---|---|
+| 0x03 | whole byte | chip id, `0x4A` on an AXP2101 | both, and `probe/` measured it here |
+| 0x00 | bit 5 | VBUS good | both |
+| 0x00 | bit 3 | battery present | both |
+| 0x01 | bits 6:5 | `01` charging, `10` discharging, `00` standby | both |
+| 0x10 | bit 0 | **soft power off** | both |
+| 0x30 | bit 0 | battery-voltage ADC channel enable | both |
+| 0x34/0x35 | 13 or 14 bits | battery terminal voltage, in mV, high byte first | XPowersLib masks 5 bits of the high byte, M5Unified 6 |
+| 0xA4 | whole byte | fuel gauge state of charge, 0-100 | both |
+
+The one disagreement is the battery-voltage mask, and the driver takes the narrower reading: inside
+the range a lithium cell can physically be in, the two are identical, and the wider mask can only add
+8192 mV to a value with a stray bit in a field the other driver calls reserved.
+
+**Reading this part is safe; writing to it is not.** Its LDOs feed the panel and the touch controller,
+so a wrong write is a dark board that a replug may not fix, and its charge registers are a cell
+charged past where it should be. `pulse_power.cpp` therefore writes exactly two bits ever — bit 0 of
+0x30, read-modify-written and skipped when it is already set, and bit 0 of 0x10 from `powerOff()`.
+Charge current (0x62), termination voltage (0x64), the rail enables (0x80, 0x90) and the power-key
+configuration (0x22) are deliberately untouched. Both writes are read-modify-writes: 0x10 in
+particular holds seven other configuration bits that a bare `0x01` would clear.
+
+**What nobody here has verified.** As of writing these boards are unplugged, so three claims are
+still on the vendors' word rather than on a measurement: that bit 0 of 0x10 actually cuts power on
+*this* board, that 0xA4 holds a sane state of charge on it, and which of its buttons brings it back on
+afterwards. The AXP2101 is woken by its PWRON key and by a VBUS insert; how Waveshare wires that is not
+established anywhere in this tree, which is why the confirmation screen says what shutting down costs
+and says nothing about how to undo it. The simulator can replay these registers
+(`sim/include/Wire.h`, `sim/lvgl.sh --battery`) and that exercises the decode and the screen above it;
+it cannot tell you anything at all about the silicon.
 
 ### The tearing line, and an oracle that was switched off
 
