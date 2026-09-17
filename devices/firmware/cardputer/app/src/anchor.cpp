@@ -63,10 +63,21 @@ constexpr uint32_t LINK_TIMEOUT_MS = 15000;
 constexpr uint32_t HELLO_MS = 2000;
 constexpr uint32_t POWER_MS = 5000;
 
-// How long to keep saying "waiting for host" before falling back to standalone.cpp's own trending
-// data. Long enough that a cable which is genuinely about to link — the ordinary case — is never
-// pre-empted by a screen change nobody asked for; see standalone.h for why this exists at all.
+// How long to keep saying "waiting for host" before this unit draws its own screen.
+//
+// Two numbers, because the two cases are not the same question. A link that *was* up and dropped is
+// probably coming back — a desktop restarting the adapter, a cable knocked at a desk — and changing
+// the screen out from under somebody for four seconds of that is a change nobody asked for. A unit
+// that has never heard a host since this view opened is a unit somebody picked up off a table, and
+// making them wait ten seconds to find out what it is was the old behaviour's real cost: the cable
+// is for flashing (AGENTS.md), so the case with no host in it is the ordinary one now and it should
+// not be the one that waits longest.
+//
+// Four seconds rather than none, because the device announces itself every two (HELLO_MS) and a
+// host answers the next one; anything shorter would flash the browse screen up on a unit that is
+// about to link after all.
 constexpr uint32_t STANDALONE_GRACE_MS = 10000;
+constexpr uint32_t STANDALONE_COLD_MS = 4000;
 // How long the identity screen holds before the first trending tiles show.
 constexpr uint32_t STANDALONE_INTRO_MS = 3000;
 
@@ -124,18 +135,24 @@ enum Token : uint8_t {
 	TOKEN_COUNT
 };
 
-const char *const TOKEN_NAMES[TOKEN_COUNT] = {"ground",  "raised",    "sunken",   "ink",
-                                              "inkDim",  "inkStrong", "accent",   "positive",
-                                              "negative", "warning",  "line"};
+const char *const TOKEN_NAMES[TOKEN_COUNT] = {"ground",   "raised",    "sunken", "ink",
+                                              "inkDim",   "inkStrong", "accent", "positive",
+                                              "negative", "warning",   "line"};
 
 // flint's own palette until the host sends one. Not a guess at Anchor's
 // colours: this view holds none of its own, and until a theme arrives it wears
 // the firmware it is running inside.
-uint16_t palette[TOKEN_COUNT] = {ui::BG,   ui::PANEL, ui::BG,   ui::FG,  ui::DIM, ui::FG,
-                                 ui::CORAL, ui::GOOD, ui::BAD,  ui::WARN, ui::RULE};
+uint16_t palette[TOKEN_COUNT] = {ui::BG,    ui::PANEL, ui::BG,  ui::FG,   ui::DIM, ui::FG,
+                                 ui::CORAL, ui::GOOD,  ui::BAD, ui::WARN, ui::RULE};
 
 struct Seg {
-	char text[26];
+	// Forty rather than the twenty-six a wire segment needs, because the browse strip draws a whole
+	// sentence through this: "asking OpenSea what is trending" is thirty-one characters and at
+	// twenty-six it read "asking OpenSea what is tr.", which is a status bar admitting it has no
+	// room for the status. Font0 is six pixels a character, so forty is the width of the panel and
+	// nothing shorter is a real limit. It costs no RAM at all: `Slot`'s union is sized by `rows`
+	// (twelve of them), and six of these are still well inside that.
+	char text[40];
 	uint16_t color;
 };
 
@@ -227,6 +244,9 @@ Slot slots[SLOTS];
 char inbox[cable::MAX_LINE + 1];
 
 bool linked = false;
+// Whether a host has ever spoken since this view opened, which is what separates "the link dropped"
+// from "there is no desktop here at all". See STANDALONE_GRACE_MS.
+bool everLinked = false;
 bool protocolOk = true;
 uint32_t lastHost = 0;
 uint32_t lastHello = 0;
@@ -237,11 +257,18 @@ bool sentCharging = false;
 // When unlinked started, so STANDALONE_GRACE_MS is measured from the right moment whether this is
 // a fresh boot with no cable at all or a cable that dropped after a real session.
 uint32_t unlinkedSince = 0;
-// Whether the last draw() was standalone.cpp's content rather than slots[] or the standby screen —
-// tracked separately from hadContent so switching between the three still gets the one full clear
-// each transition needs, and nothing else does.
-bool standaloneShown = false;
+// What the browse screen was last drawn from. Every one of these is compared rather than polled on
+// a timer, so the panel repaints when the thing on it changed and not once a second: a redraw
+// nobody can see a difference in is a flash bought for nothing. The reasons are compared by pointer
+// on purpose — they are compiled-in sentences from one table, never strings off the network, so
+// pointer equality is exactly sentence equality here.
 size_t lastStandaloneCount = 0;
+standalone::Status lastStandaloneStatus = standalone::Status::Disabled;
+const char *lastStandaloneReason = nullptr;
+size_t lastHolderCount = 0;
+size_t lastEventCount = 0;
+const char *lastHoldersReason = nullptr;
+const char *lastActivityReason = nullptr;
 
 // Three seconds naming what this is before the tiles start, for whoever just
 // picked the unit up off a table and has never seen Anchor before. Zero means
@@ -253,7 +280,6 @@ bool standaloneIntroShown = false;
 
 bool queryActive = false;
 char queryText[72];
-
 
 uint8_t savedBrightness = 0;
 
@@ -384,8 +410,8 @@ void drawTile(const Slot &s)
 		// currently is, is the useful part, so the reading leads and the label
 		// becomes its caption.
 		g.setFont(&fonts::Font2);
-		ui::clip(s.value, s.x + s.w / 2, s.y + 3,
-		         inner, s.emphasis == EM_ACTIVE ? palette[INK_STRONG] : palette[INK], fill,
+		ui::clip(s.value, s.x + s.w / 2, s.y + 3, inner,
+		         s.emphasis == EM_ACTIVE ? palette[INK_STRONG] : palette[INK], fill,
 		         textdatum_t::top_center);
 		g.setFont(&fonts::Font0);
 		ui::clip(s.label, s.x + s.w / 2, s.y + s.h - meterRoom - 11, inner, palette[INK_DIM], fill,
@@ -727,54 +753,381 @@ void drawStandaloneIntro()
 	ui::clip("Anchor", ui::W / 2, 14, ui::W - 12, palette[ACCENT], palette[GROUND],
 	         textdatum_t::top_center);
 	g.setFont(&fonts::Font2);
-	ui::clip("open source, no wallet on this screen", ui::W / 2, 50, ui::W - 12, palette[INK],
+	// Shorter than it was, because it did not fit. "open source, no wallet on this screen" is
+	// thirty-six characters and Font2 gives about thirty-six on a 228 pixel line, so `ui::clip`
+	// trimmed the last word and drew "on this scre." — a sentence about not holding a wallet,
+	// cut off mid-word, on the screen that is meant to reassure somebody holding a stranger's
+	// device. Visible in one screenshot and invisible in the source, which is the whole of
+	// AGENTS.md's "do not ship a visual change you have only reasoned about".
+	ui::clip("open source, no wallet here", ui::W / 2, 50, ui::W - 12, palette[INK],
 	         palette[GROUND], textdatum_t::top_center);
 	g.setFont(&fonts::Font0);
-	ui::clip("trending, live from OpenSea", ui::W / 2, 76, ui::W - 12, palette[INK_DIM],
+	ui::clip("trending tokens, live from OpenSea", ui::W / 2, 76, ui::W - 12, palette[INK_DIM],
 	         palette[GROUND], textdatum_t::top_center);
 	ui::clip("hack it: github.com/ryanio/anchor", ui::W / 2, 90, ui::W - 12, palette[LINE],
 	         palette[GROUND], textdatum_t::top_center);
 }
 
-// No host, past STANDALONE_GRACE_MS, with standalone.cpp actually having something to show — see
-// standalone.h for what this is and why it exists. The same 18px-strip-then-3x3-tiles layout the
-// host itself sends for this geometry, laid out here directly rather than borrowed from the wire
-// protocol: there is no host to send a PaintOp, so this is the one screen the device lays out for
-// itself.
-void drawStandaloneTokens()
+// ------------------------------------------------------------------- browse
+//
+// Browsing trending tokens with nothing plugged in, which is what this device is for.
+//
+// AGENTS.md settled it: "The Cardputer and the pulse display are wholly independent devices. The
+// cable is for flashing them." This mode was built host side first — the same three facets, the same
+// state shape, in `#browseDetail` in devices/src/panel.ts — and it only worked on a cable, which is
+// exactly the inconsistency that section was written about. So it lives here now, over
+// `standalone.cpp`'s own fetches, and the host path below stays only because the Stream Deck's
+// sibling code still reads it.
+//
+// Two things this deliberately keeps from the host:
+//
+//   1. **The facets, in that order.** Overview, then Holders, then Activity — decreasing certainty:
+//      what the thing is, then who holds it, then what just happened to it.
+//   2. **The refusal.** A facet never draws holders or activity belonging to a different token than
+//      the one open. `panel.ts`'s `#browseDepth` compares ids for this reason and so does
+//      `openFacetRows` below: rows under the wrong name are indistinguishable from rows that are
+//      simply wrong, and AGENTS.md puts that failure above every other one here.
+//
+// And one thing it cannot keep: the host's footer says "esc: back", and escape on this keyboard
+// never reaches a view. flint takes a bare backtick before any view sees it — the exit convention,
+// "no screen can hold anyone" (src/view.cpp) — so backing out of a facet is backspace here, with
+// fn and backtick as the escape this keyboard can actually type. The footer says what the device
+// has, not what the other end of a cable had.
+
+constexpr int BROWSE_STRIP_H = 18;
+constexpr const char *BROWSE_FACETS[] = {"Overview", "Holders", "Activity"};
+constexpr int BROWSE_FACET_COUNT = 3;
+
+// The row somebody is on, the facet they are in, and whether anything is open at all. `browseToken`
+// is a *copy*, taken when the row opened: the trending list refreshes underneath this every sixty
+// seconds and rows move, so an index would quietly come to mean a different token while its holders
+// were still on screen. The copy is re-resolved by address on every frame so its readings stay
+// live, and it keeps its own address so the depth check has something stable to compare against.
+int browseSel = 0;
+int browseFacet = 0;
+bool browseOpen = false;
+standalone::Token browseToken;
+
+// The body, held across frames rather than built on the stack, because `drawList` keeps its scroll
+// position in `Slot::top` and a slot rebuilt every frame is a list that snaps back to the top under
+// the reader's eyes on every repaint. Reset deliberately, in `browseReset`, when the thing being
+// looked at actually changes.
+Slot browseBody;
+
+void browseReset()
 {
-	constexpr int STRIP_H = 18;
-	constexpr int COLS = 3;
-	constexpr int ROWS = 3;
-	const int tileW = ui::W / COLS;
-	const int tileH = (ui::BODY_H - STRIP_H) / ROWS;
+	browseBody.top = 0;
+	browseBody.selected = -1;
+	browseBody.rowCount = 0;
+	browseBody.lineCount = 0;
+	browseBody.total = 0;
+	browseBody.first = 0;
+	browseBody.caption[0] = '\0';
+	browseBody.badge[0] = '\0';
+	browseBody.label[0] = '\0';
+	browseBody.iconGutter = false;
+}
 
-	ui::clearBody(palette[GROUND]);
+Row &pushRow(Slot &s)
+{
+	Row &r = s.rows[s.rowCount++];
+	memset(&r, 0, sizeof(r));
+	return r;
+}
 
-	M5GFX &g = ui::gfx();
-	g.fillRect(0, 0, ui::W, STRIP_H, palette[SUNKEN]);
-	g.setFont(&fonts::Font0);
-	ui::clip("trending · live from OpenSea, no host", 3, STRIP_H / 2, ui::W - 6, palette[INK_DIM],
-	         palette[SUNKEN], textdatum_t::middle_left);
+// Is this depth actually this token's? The whole safety property, in one line, on purpose.
+bool depthIsOurs()
+{
+	return standalone::sameAddress(standalone::detail().address, browseToken.address);
+}
 
-	const size_t max = (size_t)(COLS * ROWS);
-	const size_t count = standalone::tokenCount < max ? standalone::tokenCount : max;
-	for (size_t i = 0; i < count; i++) {
+// Why a facet has nothing in it. Never a blank list: a facet empty because the request has not gone
+// out yet, one empty because OpenSea refused the key, and one empty because the token genuinely has
+// no swaps are three different things and look identical as an empty rectangle.
+//
+// As the list's caption rather than as a row in it, which is a correction. A row's label is
+// twenty-four bytes — a width chosen for "1. 0xabcd..1234" — so "asking OpenSea who holds this"
+// reached the glass as "asking OpenSea who hold", a sentence about waiting that was itself cut off.
+// The caption is sixty-four and `drawList` centres it across the whole panel in the larger font,
+// which is the one place on this screen a sentence has room to be a sentence. The subject is not
+// lost by dropping the header row with it: the strip above says which token and which facet.
+void setReason(Slot &s, const standalone::State &facet)
+{
+	s.rowCount = 0;
+	takeText(s.caption, sizeof(s.caption), facet.reason);
+}
+
+// A facet's first row: which facet this is, what it is about, and how much of it there is. The same
+// row `panel.ts`'s `#facetHeader` draws, and it is what keeps the subject on screen inside the list
+// itself — a Holders list whose own first row says which token it belongs to cannot be misread as
+// another token's, whatever else is on the panel.
+void pushHeader(Slot &s, const char *value)
+{
+	Row &r = pushRow(s);
+	char text[32];
+	snprintf(text, sizeof(text), "%s %s", BROWSE_FACETS[browseFacet],
+	         browseToken.symbol[0] != '\0' ? browseToken.symbol : browseToken.name);
+	takeText(r.label, sizeof(r.label), text);
+	takeText(r.value, sizeof(r.value), value);
+	r.hasTone = true;
+	r.tone = palette[ACCENT];
+}
+
+void buildTrendingRows(Slot &s, const standalone::State &st)
+{
+	// The same row the host's browse list draws — label the symbol, value the price, tone the
+	// direction of the day. Not the change percentage: that is what Overview is one keypress away
+	// for, and a row carrying both is a row with no room for a name.
+	for (size_t i = 0; i < standalone::tokenCount && s.rowCount < ROWS_MAX; i++) {
 		const standalone::Token &t = standalone::tokens[i];
-		Slot s = {};
-		s.used = true;
-		s.kind = KIND_TILE;
-		s.x = (int16_t)((i % COLS) * tileW);
-		s.y = (int16_t)(STRIP_H + (int)(i / COLS) * tileH);
-		s.w = (int16_t)tileW;
-		s.h = (int16_t)tileH;
-		s.emphasis = EM_GROUND;
-		s.tone = t.changePositive ? palette[POSITIVE] : palette[NEGATIVE];
-		takeText(s.label, sizeof(s.label), t.symbol);
-		takeText(s.value, sizeof(s.value), t.price);
-		takeText(s.badge, sizeof(s.badge), t.change);
-		drawTile(s);
+		Row &r = pushRow(s);
+		takeText(r.label, sizeof(r.label), t.symbol[0] != '\0' ? t.symbol : t.name);
+		takeText(r.value, sizeof(r.value), t.price);
+		r.hasTone = true;
+		r.tone = t.changePositive ? palette[POSITIVE] : palette[NEGATIVE];
 	}
+	s.total = (int16_t)s.rowCount;
+	s.first = 0;
+	if (s.rowCount == 0) {
+		s.selected = -1;
+		// drawList centres this when there are no rows, which is the one place a whole sentence
+		// fits: six words about why the screen is empty, in the middle of the screen that is empty.
+		takeText(s.caption, sizeof(s.caption), st.reason);
+		return;
+	}
+	if (browseSel >= (int)s.rowCount) {
+		browseSel = (int)s.rowCount - 1;
+	}
+	s.selected = (int16_t)browseSel;
+}
+
+void buildOverview(Slot &s)
+{
+	s.kind = KIND_DETAIL;
+	char title[32];
+	if (browseToken.name[0] != '\0' && browseToken.symbol[0] != '\0') {
+		snprintf(title, sizeof(title), "%s (%s)", browseToken.name, browseToken.symbol);
+	} else {
+		snprintf(title, sizeof(title), "%s",
+		         browseToken.symbol[0] != '\0' ? browseToken.symbol : browseToken.name);
+	}
+	takeText(s.label, sizeof(s.label), title);
+	takeText(s.badge, sizeof(s.badge), BROWSE_FACETS[0]);
+	// The keys this device actually has, on the surface they act on. A Cardputer handed to somebody
+	// at a venue comes with no manual, and neither tab nor backspace is a gesture anyone guesses.
+	takeText(s.caption, sizeof(s.caption), "tab: Holders, Activity. del: back");
+
+	// The same four readings `tokenOverviewLines` draws host side, in the same order. A second
+	// opinion about what a token's summary is would be how one of the two quietly starts reporting a
+	// different volume from the other.
+	struct {
+		const char *label;
+		const char *value;
+		bool toned;
+	} rows[] = {
+	    {"Price", browseToken.price, false},
+	    {"24h", browseToken.change, true},
+	    {"Volume", browseToken.volume, false},
+	    {"Chain", browseToken.chain, false},
+	};
+	for (const auto &row : rows) {
+		if (s.lineCount >= LINES_MAX) {
+			break;
+		}
+		Line &l = s.lines[s.lineCount++];
+		memset(&l, 0, sizeof(l));
+		takeText(l.label, sizeof(l.label), row.label);
+		takeText(l.value, sizeof(l.value), row.value);
+		l.hasTone = row.toned;
+		l.tone = browseToken.changePositive ? palette[POSITIVE] : palette[NEGATIVE];
+	}
+	s.total = (int16_t)s.lineCount;
+}
+
+void buildHolders(Slot &s)
+{
+	const standalone::Detail &d = standalone::detail();
+	// The refusal, before a single row is read. `d` holds one item's worth of depth, and between
+	// opening a second token and its fetch landing it still holds the first token's.
+	if (!depthIsOurs()) {
+		setReason(s, {standalone::Status::Fetching, "asking OpenSea who holds this"});
+		return;
+	}
+	if (d.holderCount == 0) {
+		setReason(s, d.holders);
+		return;
+	}
+	pushHeader(s, d.totals[0] != '\0' ? d.totals : "--");
+	if (d.health[0] != '\0') {
+		// The API's own judgement of how concentrated the supply is, in its own word, rather than a
+		// number this device would have to explain. STRONG, HEALTHY, CONCERNING, BAD.
+		Row &r = pushRow(s);
+		takeText(r.label, sizeof(r.label), "Distribution");
+		takeText(r.value, sizeof(r.value), d.health);
+		r.hasTone = true;
+		r.tone = palette[INK_DIM];
+	}
+	for (size_t i = 0; i < d.holderCount && s.rowCount < ROWS_MAX; i++) {
+		Row &r = pushRow(s);
+		char label[28];
+		snprintf(label, sizeof(label), "%d. %s", (int)i + 1, d.holderRows[i].who);
+		takeText(r.label, sizeof(r.label), label);
+		takeText(r.value, sizeof(r.value), d.holderRows[i].share);
+	}
+}
+
+void buildActivity(Slot &s)
+{
+	const standalone::Detail &d = standalone::detail();
+	if (!depthIsOurs()) {
+		setReason(s, {standalone::Status::Fetching, "asking OpenSea what just traded"});
+		return;
+	}
+	if (d.eventCount == 0) {
+		setReason(s, d.activity);
+		return;
+	}
+	// "7 swaps", not "7". A bare number at the right hand end of a header row is a reading with no
+	// unit, and this column holds dollars on every other row of every other facet.
+	char count[12];
+	snprintf(count, sizeof(count), "%d swap%s", (int)d.eventCount, d.eventCount == 1 ? "" : "s");
+	pushHeader(s, count);
+	for (size_t i = 0; i < d.eventCount && s.rowCount < ROWS_MAX; i++) {
+		const standalone::Event &e = d.eventRows[i];
+		Row &r = pushRow(s);
+		char label[28];
+		snprintf(label, sizeof(label), "%s %s", e.side, e.counter);
+		takeText(r.label, sizeof(r.label), label);
+		takeText(r.value, sizeof(r.value), e.value);
+		r.hasTone = true;
+		r.tone = e.buy ? palette[POSITIVE] : palette[NEGATIVE];
+	}
+}
+
+// The strip over the browse body: what is being looked at, or why there is nothing to look at.
+//
+// Which of those it says is decided by what the body is about to draw, and the rule is that the
+// screen never says the same sentence twice. An empty list already carries its reason across the
+// middle of the panel, in the largest type on the screen, so a strip repeating it above is noise
+// where context should be. A list with rows in it has no room for a reason, so the strip takes it.
+// And with a token open the strip is that token — its symbol and the chain it is on — because the
+// facet's own header row is already carrying the facet's state.
+//
+// Forty characters of Font0 is the whole width, which is why the sentence never shares the strip
+// with anything.
+void drawBrowseStrip(const standalone::State &st, bool bodyHasRows)
+{
+	Slot s = {};
+	s.used = true;
+	s.kind = KIND_BAR;
+	s.x = 0;
+	s.y = 0;
+	s.w = ui::W;
+	s.h = BROWSE_STRIP_H;
+	Seg &first = s.segs[s.segCount++];
+	if (browseOpen) {
+		takeText(first.text, sizeof(first.text),
+		         browseToken.symbol[0] != '\0' ? browseToken.symbol : browseToken.name);
+		first.color = palette[ACCENT];
+		// Which of the three, always, including while a facet is still empty. A facet that says
+		// nothing but "asking OpenSea" is a facet whose name has to come from somewhere.
+		Seg &facet = s.segs[s.segCount++];
+		takeText(facet.text, sizeof(facet.text), BROWSE_FACETS[browseFacet]);
+		facet.color = palette[INK];
+		// The price rather than the chain, which Overview already carries as a reading. Somebody two
+		// facets deep in a holder list has left every number about the token itself behind, and the
+		// price is the one worth keeping in front of them.
+		Seg &price = s.segs[s.segCount++];
+		takeText(price.text, sizeof(price.text), browseToken.price);
+		price.color = palette[INK_DIM];
+	} else if (st.status == standalone::Status::Online) {
+		takeText(first.text, sizeof(first.text), "trending");
+		first.color = palette[ACCENT];
+		Seg &how = s.segs[s.segCount++];
+		takeText(how.text, sizeof(how.text), st.reason);
+		how.color = palette[INK_DIM];
+	} else if (bodyHasRows) {
+		takeText(first.text, sizeof(first.text), st.reason);
+		first.color = st.status == standalone::Status::Failed ? palette[WARNING] : palette[INK_DIM];
+	} else {
+		takeText(first.text, sizeof(first.text), "trending");
+		first.color = palette[ACCENT];
+	}
+	drawBar(s);
+}
+
+// Keep the open token's readings live without letting its identity move. The list is refetched
+// every sixty seconds and a row can change position or fall off it entirely; the address is what
+// this is matched on, and a token that has left the list keeps the readings it had when it was
+// opened rather than picking up whichever token inherited its row.
+void refreshBrowseToken()
+{
+	for (size_t i = 0; i < standalone::tokenCount; i++) {
+		if (standalone::sameAddress(standalone::tokens[i].address, browseToken.address)) {
+			browseToken = standalone::tokens[i];
+			return;
+		}
+	}
+}
+
+void drawBrowse()
+{
+	const standalone::State st = standalone::state();
+
+	Slot &s = browseBody;
+	s.used = true;
+	s.x = 0;
+	s.y = BROWSE_STRIP_H;
+	s.w = ui::W;
+	s.h = (int16_t)(ui::BODY_H - BROWSE_STRIP_H);
+	s.rowCount = 0;
+	s.lineCount = 0;
+	s.segCount = 0;
+	s.caption[0] = '\0';
+	s.badge[0] = '\0';
+	s.label[0] = '\0';
+	s.iconGutter = false;
+	s.total = 0;
+	s.first = 0;
+
+	if (!browseOpen) {
+		s.kind = KIND_LIST;
+		buildTrendingRows(s, st);
+		// The body is built before the strip is drawn, because what the strip should say depends on
+		// whether the body found anything to say for itself.
+		drawBrowseStrip(st, s.rowCount > 0);
+		drawList(s);
+		return;
+	}
+
+	refreshBrowseToken();
+	drawBrowseStrip(st, true);
+	if (browseFacet == 0) {
+		buildOverview(s);
+		drawDetail(s);
+		return;
+	}
+	s.kind = KIND_LIST;
+	// No cursor on a facet. Nothing in a holder list opens, and a cursor is a promise that it does —
+	// the host draws these with no `selected` for the same reason. Up and down still move the
+	// window, which `drawList` clamps for us.
+	s.selected = -1;
+	if (browseFacet == 1) {
+		buildHolders(s);
+	} else {
+		buildActivity(s);
+	}
+	s.total = (int16_t)s.rowCount;
+	s.first = 0;
+	drawList(s);
+}
+
+// True when this unit is drawing its own screen rather than a desktop's. Past the grace period with
+// no host, which is the only thing the cable is still consulted about.
+bool browsing()
+{
+	const uint32_t grace = everLinked ? STANDALONE_GRACE_MS : STANDALONE_COLD_MS;
+	return !linked && (millis() - unlinkedSince > grace);
 }
 
 // The link has gone: cable out, host asleep, the desktop tool stopped. What is
@@ -834,22 +1187,22 @@ void draw()
 	}
 	if (!any) {
 		hadContent = false;
-		const bool standaloneReady =
-		    !linked && (millis() - unlinkedSince > STANDALONE_GRACE_MS) && standalone::hasData();
-		if (standaloneReady) {
+		if (browsing()) {
+			// No longer gated on there being data. The browse screen explains itself now — no key,
+			// no network, joining, fetching, failed, each with its own sentence — and a unit with
+			// nothing to show has more need of that screen than a unit with eight tokens on it.
+			// Gating on `hasData()` is what used to leave the standby screen up saying "waiting for
+			// host" on a unit that was never going to get one.
 			if (standaloneIntroUntil != 0 && millis() < standaloneIntroUntil) {
 				drawStandaloneIntro();
 			} else {
-				drawStandaloneTokens();
+				drawBrowse();
 			}
-			standaloneShown = true;
 			return;
 		}
-		standaloneShown = false;
 		drawStandby(linked ? "host connected, no frame yet" : "waiting for host");
 		return;
 	}
-	standaloneShown = false;
 
 	// An overlay paints outside any slot's own rect, and the first frame after standby has nothing
 	// on the glass yet — both need the whole panel cleared. Everything else is a tick that changed
@@ -1196,6 +1549,7 @@ void handle(const char *text)
 	const bool wasLinked = linked;
 	lastHost = millis();
 	linked = true;
+	everLinked = true;
 	if (!wasLinked) {
 		view::repaint();
 	}
@@ -1255,13 +1609,20 @@ void enter()
 	queryActive = false;
 	queryText[0] = '\0';
 	linked = false;
+	everLinked = false;
 	protocolOk = true;
 	lastHost = millis();
 	lastHello = 0;
 	unlinkedSince = millis();
-	standaloneShown = false;
 	standaloneIntroUntil = 0;
 	standaloneIntroShown = false;
+	// Back at the trending list, on its first row. Somebody who left this view and came back is
+	// starting again; a facet of a token they opened five minutes ago is not where they left off,
+	// it is a screen they have to work out.
+	browseOpen = false;
+	browseSel = 0;
+	browseFacet = 0;
+	browseReset();
 	sentLevel = -1;
 	savedBrightness = ui::gfx().getBrightness();
 	// The host clears its own per slot cache when a device says hello and
@@ -1310,15 +1671,35 @@ void tick()
 	// changed — not on the ticks in between, which is the same discipline draw()'s dirty-slot
 	// tracking already holds the cable-fed path to, for the same reason: a redraw nobody can see a
 	// difference in is a flash bought for nothing.
-	if (!linked && now - unlinkedSince > STANDALONE_GRACE_MS) {
-		standalone::tick();
-		if (standalone::tokenCount != lastStandaloneCount) {
-			lastStandaloneCount = standalone::tokenCount;
-			view::repaint();
-		}
-		if (!standaloneIntroShown && standalone::hasData()) {
+	if (browsing()) {
+		// The intro is the first thing a stranger sees, so it runs the moment this unit starts
+		// drawing its own screen rather than waiting for data to arrive. It used to wait for
+		// `hasData()`, which meant a unit with no key or no network never showed it at all — the one
+		// case where somebody most needs to be told what they are holding.
+		if (!standaloneIntroShown) {
 			standaloneIntroShown = true;
 			standaloneIntroUntil = now + STANDALONE_INTRO_MS;
+			view::repaint();
+		}
+		standalone::tick();
+		// A repaint when something actually changed, and not on the clock ticks in between: the same
+		// discipline draw()'s dirty-slot tracking holds the cable-fed path to. The status is in that
+		// list because it is drawn — a screen that said "joining the saved network" after it had
+		// joined would be a worse lie than a blank one.
+		const standalone::State st = standalone::state();
+		if (standalone::tokenCount != lastStandaloneCount || st.status != lastStandaloneStatus ||
+		    st.reason != lastStandaloneReason ||
+		    standalone::detail().holderCount != lastHolderCount ||
+		    standalone::detail().eventCount != lastEventCount ||
+		    standalone::detail().holders.reason != lastHoldersReason ||
+		    standalone::detail().activity.reason != lastActivityReason) {
+			lastStandaloneCount = standalone::tokenCount;
+			lastStandaloneStatus = st.status;
+			lastStandaloneReason = st.reason;
+			lastHolderCount = standalone::detail().holderCount;
+			lastEventCount = standalone::detail().eventCount;
+			lastHoldersReason = standalone::detail().holders.reason;
+			lastActivityReason = standalone::detail().activity.reason;
 			view::repaint();
 		}
 		// Nothing else asks for a repaint on a plain clock tick, so the intro's own end needs its own
@@ -1331,8 +1712,86 @@ void tick()
 	}
 }
 
+// Browsing, with nobody to send a keystroke to.
+//
+// The mapping mirrors `handle`'s in devices/src/panel.ts as closely as this keyboard allows: enter
+// opens the selected row and, on an open one, backs out of it; tab and the left and right arrows
+// step the facet and wrap; up and down move. What it cannot mirror is escape — see the note above
+// `browseReset` — so backspace backs out, and fn with the backtick (the only escape this keyboard
+// can type without leaving the view) does the same.
+bool browseKey(const view::Key &k)
+{
+	const int rows = (int)standalone::tokenCount;
+
+	if (k.enter) {
+		if (browseOpen) {
+			browseOpen = false;
+			standalone::closeDetail();
+		} else if (rows > 0 && browseSel < rows) {
+			browseToken = standalone::tokens[browseSel];
+			// Asked for here, fetched in `standalone::tick()` once the key is back up: a fetch
+			// started under a held key is a fetch that eats the next keypress, which is flint's own
+			// rule and the reason this only ever records the intent.
+			standalone::openDetail((size_t)browseSel);
+			browseOpen = true;
+			browseFacet = 0;
+		}
+		browseReset();
+		view::repaint();
+		return true;
+	}
+
+	if (k.del || (k.fn && k.ch == '`')) {
+		if (!browseOpen) {
+			return false;  // nothing open: let flint have it, so the unit is never stuck here
+		}
+		browseOpen = false;
+		standalone::closeDetail();
+		browseReset();
+		view::repaint();
+		return true;
+	}
+
+	if (browseOpen && (k.tab || k.left || k.right)) {
+		const int step = (k.tab && k.shift) || k.left ? -1 : 1;
+		browseFacet = (browseFacet + step + BROWSE_FACET_COUNT) % BROWSE_FACET_COUNT;
+		browseReset();
+		view::repaint();
+		return true;
+	}
+
+	if (k.up || k.down) {
+		const int step = k.up ? -1 : 1;
+		if (browseOpen) {
+			// A facet has no cursor, so the arrows move the window itself. `drawList` clamps it to
+			// the rows that exist, which is the same clamp it applies to a host-fed list.
+			browseBody.top = (int16_t)(browseBody.top + step);
+			if (browseBody.top < 0) {
+				browseBody.top = 0;
+			}
+		} else if (rows > 0) {
+			browseSel = (browseSel + step + rows) % rows;
+		}
+		view::repaint();
+		return true;
+	}
+	return false;
+}
+
 bool key(const view::Key &k)
 {
+	// With no host there is nothing to send a keystroke to, and every key means something here
+	// instead. Checked before the cable path rather than after, because a unit at a venue is in this
+	// state permanently and the cable path's first act is to write JSON at a port nobody is reading.
+	if (browsing()) {
+		if (browseKey(k)) {
+			return true;
+		}
+		// Anything the browse mode does not use is not forwarded either. A key press that reaches
+		// nothing is better than one that reaches a serial line with no listener on it.
+		return false;
+	}
+
 	// Fn and slash sends the character rather than the arrow, which is how the
 	// filter box opens. Every other key with an arrow printed on it is an
 	// arrow here, because that is what it is in every other flint view.

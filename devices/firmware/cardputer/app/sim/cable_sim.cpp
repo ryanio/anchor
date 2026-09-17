@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include <Arduino.h>
@@ -27,6 +28,24 @@
 // can be read from a terminal with no unit attached.
 
 namespace {
+
+// Whether there is a host at all.
+//
+// AGENTS.md now says the cable is for flashing and nothing else, and the screen this device draws
+// for itself — the browse mode in anchor.cpp — only appears once the link has been quiet long
+// enough to be gone. Which means the one screen this firmware exists to draw was the one screen the
+// simulator could not reach: the capture below keeps pinging forever, so a simulated unit is
+// permanently plugged in.
+//
+//   ANCHOR_SIM_NO_HOST=1 .pio/build/sim-anchor/program --keys "1"
+//
+// answers nothing at all, which is what an unplugged unit reads. An environment variable rather
+// than a flag because `simArgs` belongs to flint, and flint is somebody else's repository.
+bool noHost()
+{
+	static const bool value = getenv("ANCHOR_SIM_NO_HOST") != nullptr;
+	return value;
+}
 
 const char SESSION[] = R"NDJSON(
 {"t":"hello","proto":1}
@@ -76,7 +95,7 @@ void drain()
 
 bool readLine(char *out, size_t n)
 {
-	if (!running || out == nullptr || n == 0) {
+	if (!running || out == nullptr || n == 0 || noHost()) {
 		return false;
 	}
 	const uint32_t now = millis();
