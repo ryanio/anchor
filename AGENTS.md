@@ -1,7 +1,7 @@
 # Working agreement
 
-> This is the single source of truth for how this repo is built. `CLAUDE.md` points here so
-> Claude Code, Codex, Cursor and Hermes all read the same rules rather than drifting copies.
+> This is the single source of truth for how this repo is built. Claude Code, Codex, Cursor and
+> Hermes all read this file, so there is one set of rules rather than drifting copies.
 
 This file is the operating brief for an agent working in this repository. Hermes loads it
 automatically from the working directory. Humans should read it too — it is the short version of how
@@ -313,13 +313,13 @@ matched, then grep the result.
 
 ## Rules files
 
-`AGENTS.md` is the single source of truth. `CLAUDE.md` is a pointer to it and must stay that way —
-never put rules in both, because the copies will drift and no one will notice which is stale.
+`AGENTS.md` is the single source of truth, and it is the only rules file in the repo. Never add a
+second one, in the root or a subdirectory: two copies drift and no one notices which is stale.
 
-Tools disagree about the filename: Claude Code reads `CLAUDE.md`, Codex and Cursor read `AGENTS.md`,
-and Hermes reads both at a project root but only the **first match** in a subdirectory
-(`AGENTS.override.md` → `AGENTS.md` → `agents.md` → `CLAUDE.md` → ...). A subdirectory holding both
-would have its `CLAUDE.md` silently ignored — one more reason there is only ever one real file.
+Every tool here reads it directly. Claude Code falls back to `AGENTS.md` when a folder has no
+`CLAUDE.md` (2.1.277 and later), Codex and Cursor read it by default, and Hermes takes the first
+match in a subdirectory (`AGENTS.override.md` → `AGENTS.md` → `agents.md` → ...). One file satisfies
+all of them.
 
 ## Generating images and video
 

@@ -242,7 +242,7 @@ uint32_t lastRequest = 0;
 // made to fail is not evidence.
 constexpr const char *TRENDING_URL = "https://api.opensea.io/api/v2/tokens/trending?limit=8";
 
-// Trending tokens do not move faster than a radio budget is worth spending, and flint's CLAUDE.md
+// Trending tokens do not move faster than a radio budget is worth spending, and flint's AGENTS.md
 // poll-window rule is not negotiable. A failure backs off less than a success, because a unit that
 // just joined a network wants its first screen.
 constexpr uint32_t POLL_MS = 60000;
@@ -335,7 +335,7 @@ JsonVariantConst either(JsonObjectConst entry, const char *snake, const char *ca
 // This is a stall in the draw loop for as long as the request takes: DNS, a TLS handshake and a read
 // on one core, which on this board is up to a couple of seconds. flint's own `net::getJson` is the
 // same shape and says so ("Both calls block ... Call them from a view's tick, not from a key
-// handler"), and flint's CLAUDE.md gives the mitigation this file follows: "A blocking fetch eats
+// handler"), and flint's AGENTS.md gives the mitigation this file follows: "A blocking fetch eats
 // the keypress on top of it. Anything filling itself in the background waits for the reader to go
 // still first." `tick()` below holds that line.
 //
@@ -679,7 +679,7 @@ bool sameAddress(const char *a, const char *b)
 void tick()
 {
 #ifdef OPENSEA_API_KEY
-	// The reader comes first. flint's CLAUDE.md: "A blocking fetch eats the keypress on top of it.
+	// The reader comes first. flint's AGENTS.md: "A blocking fetch eats the keypress on top of it.
 	// Anything filling itself in the background waits for the reader to go still first." Every
 	// request below stalls this loop for the length of a TLS handshake, so none of them starts while
 	// a key is down — which also means the frame that says "asking OpenSea" is on the glass before
