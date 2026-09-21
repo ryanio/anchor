@@ -14,10 +14,18 @@ not been observed. Check each back label against the
 ## Prerequisites
 
 Use the Node version in [`.node-version`](../.node-version), plus `git`, Python 3 with `venv`, `make`,
-a C and C++ compiler, `ar`, SDL2, and ImageMagick. On macOS, the system packages are:
+a C and C++ compiler, `ar`, SDL2, and ImageMagick. On macOS, install the Xcode Command Line Tools for
+the system compiler, `make`, and `ar`, then install the remaining packages:
 
 ```bash
-brew install sdl2 imagemagick
+xcode-select --install
+brew install python sdl2 imagemagick
+```
+
+On Ubuntu, install the packages used by the firmware CI job:
+
+```bash
+sudo apt-get install build-essential libsdl2-dev imagemagick python3-venv
 ```
 
 Download Arduino CLI 1.5.1 from the
@@ -46,7 +54,7 @@ node scripts/device.ts doctor all
 Local runs may provide the exact versions on `PATH`, or set `ANCHOR_ARDUINO_CLI` and `ANCHOR_PIO` to
 their binaries. Bootstrap then installs the pinned direct board packages and libraries, vendor
 source, and Cardputer flint submodule. The board packages resolve their compiler support tools as
-transitive dependencies. All mutable project state stays under `.cache/device/`:
+transitive dependencies. Device toolchain state and board output stay under `.cache/device/`:
 
 - `arduino/` holds Arduino data, downloads, and the user library directory.
 - `platformio/` holds the PlatformIO virtual environment, packages, and cache.
@@ -82,9 +90,11 @@ runs both programs headlessly and requires each to produce its expected smoke ou
 The normal build preserves local firmware behavior. If there is no untracked `secrets.h`, the
 OpenSea network reader compiles to its explicit disabled state. In CI, `CI=true` also runs a second,
 temporary compile with an obvious nonsecret placeholder. That compile must show that the real HTTP
-reader and ArduinoJson inputs were compiled. The temporary header and its output directory are
-removed even when the check fails, so CI does not leave a flashable image containing the placeholder.
-No real credential is needed for build or simulation.
+reader and ArduinoJson inputs were compiled, and the linked image must contain the placeholder. The
+temporary header and its output directory are removed even when the check fails, so CI does not leave
+a flashable image containing the placeholder. No real credential is needed for build or simulation.
+`CI=true` refuses local firmware `secrets.h` files, because those would take precedence over the
+temporary header. Use a clean checkout for this check when your development tree has credentials.
 
 CI caches only downloaded dependencies. Board images and simulator results are rebuilt on every run.
 The cache key includes `devices/toolchain.json`, so changing a pin forces bootstrap to validate a new

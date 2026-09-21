@@ -174,8 +174,8 @@ jobs:
         run: node scripts/device.ts doctor all
 
       # CI also performs an isolated second compile with nonsecret placeholders. The device command
-      # requires evidence that the active HTTP sources and libraries compiled, then deletes that
-      # sentinel image so it cannot be mistaken for firmware to flash.
+      # requires compile evidence plus the placeholder in the linked image, then deletes that image
+      # so it cannot be mistaken for firmware to flash.
       - name: Build physical firmware targets and active network paths
         env:
           CI: 'true'

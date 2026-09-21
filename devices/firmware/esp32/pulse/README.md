@@ -56,28 +56,28 @@ Every state the ambient screen can be in has a `--feed` scenario, because a stat
 photograph is a state nobody has designed:
 
 ```bash
-sim/lvgl.sh --feed no-credentials --saved "Home:x" --shot /tmp/a   # nothing typed in yet
-sim/lvgl.sh --feed joining        --saved "Home:x" --shot /tmp/b
-sim/lvgl.sh --feed fetching       --saved "Home:x" --shot /tmp/c
-sim/lvgl.sh --feed failed         --saved "Home:x" --shot /tmp/d   # never worked
-sim/lvgl.sh --feed lost           --saved "Home:x" --shot /tmp/e   # worked, then stopped
-sim/lvgl.sh --feed waiting        --saved "Home:x" --shot /tmp/f
-sim/lvgl.sh --feed disabled       --saved "Home:x" --shot /tmp/g   # built with no API key
-sim/lvgl.sh --feed live           --saved "Home:x" --shot /tmp/h   # a reading
-sim/lvgl.sh --feed stale          --saved "Home:x" --shot /tmp/i   # a reading, labelled old
+devices/firmware/esp32/sim/lvgl.sh --feed no-credentials --saved "Home:x" --shot /tmp/a
+devices/firmware/esp32/sim/lvgl.sh --feed joining --saved "Home:x" --shot /tmp/b
+devices/firmware/esp32/sim/lvgl.sh --feed fetching --saved "Home:x" --shot /tmp/c
+devices/firmware/esp32/sim/lvgl.sh --feed failed --saved "Home:x" --shot /tmp/d
+devices/firmware/esp32/sim/lvgl.sh --feed lost --saved "Home:x" --shot /tmp/e
+devices/firmware/esp32/sim/lvgl.sh --feed waiting --saved "Home:x" --shot /tmp/f
+devices/firmware/esp32/sim/lvgl.sh --feed disabled --saved "Home:x" --shot /tmp/g
+devices/firmware/esp32/sim/lvgl.sh --feed live --saved "Home:x" --shot /tmp/h
+devices/firmware/esp32/sim/lvgl.sh --feed stale --saved "Home:x" --shot /tmp/i
 ```
 
 The portfolio has its own states, and slot 0 of the rotation is where they land — so a short run
 photographs the portfolio and a `--gap 6000 --wait` walks on to the trending rows behind it:
 
 ```bash
-sim/lvgl.sh --feed portfolio          --saved "Home:x" --shot /tmp/p   # every address read
-sim/lvgl.sh --feed portfolio-partial  --saved "Home:x" --shot /tmp/q   # 4 of 6, and it says so
-sim/lvgl.sh --feed portfolio-stale    --saved "Home:x" --shot /tmp/r   # a total, labelled old
-sim/lvgl.sh --feed portfolio-failed   --saved "Home:x" --shot /tmp/s   # nothing ever came back
-sim/lvgl.sh --feed portfolio-none     --saved "Home:x" --shot /tmp/t   # no addresses configured
-sim/lvgl.sh --feed portfolio-fetching --saved "Home:x" --shot /tmp/u
-sim/lvgl.sh --feed portfolio-only     --saved "Home:x" --shot /tmp/v   # portfolio up, trending down
+devices/firmware/esp32/sim/lvgl.sh --feed portfolio --saved "Home:x" --shot /tmp/p
+devices/firmware/esp32/sim/lvgl.sh --feed portfolio-partial --saved "Home:x" --shot /tmp/q
+devices/firmware/esp32/sim/lvgl.sh --feed portfolio-stale --saved "Home:x" --shot /tmp/r
+devices/firmware/esp32/sim/lvgl.sh --feed portfolio-failed --saved "Home:x" --shot /tmp/s
+devices/firmware/esp32/sim/lvgl.sh --feed portfolio-none --saved "Home:x" --shot /tmp/t
+devices/firmware/esp32/sim/lvgl.sh --feed portfolio-fetching --saved "Home:x" --shot /tmp/u
+devices/firmware/esp32/sim/lvgl.sh --feed portfolio-only --saved "Home:x" --shot /tmp/v
 ```
 
 `--saved` is what keeps Wi-Fi setup from opening over the state being photographed.
@@ -103,14 +103,14 @@ of every ambient screen, and a 1.4-second hold on that chip opens a confirmation
 unit off. `docs/devices-esp32.md` has the register table and the source each number came from.
 
 ```bash
-sim/lvgl.sh --saved "Home:x" --feed live --battery 78,3860             # a healthy unit
-sim/lvgl.sh --saved "Home:x" --feed live --battery 9,3550              # nearly flat, in red
-sim/lvgl.sh --saved "Home:x" --feed live --battery 42,3780,charging    # on a cable
-sim/lvgl.sh --saved "Home:x" --feed live --battery 0,0,none,usb        # no cell fitted
-sim/lvgl.sh --saved "Home:x" --feed live --power                       # no PMU: the chip is hidden
+devices/firmware/esp32/sim/lvgl.sh --saved "Home:x" --feed live --battery 78,3860
+devices/firmware/esp32/sim/lvgl.sh --saved "Home:x" --feed live --battery 9,3550
+devices/firmware/esp32/sim/lvgl.sh --saved "Home:x" --feed live --battery 42,3780,charging
+devices/firmware/esp32/sim/lvgl.sh --saved "Home:x" --feed live --battery 0,0,none,usb
+devices/firmware/esp32/sim/lvgl.sh --saved "Home:x" --feed live --power
 
 # the gesture, then the button, then what the PMU was actually asked to do
-sim/lvgl.sh --saved "Home:x" --feed live --battery 42,3780 \
+devices/firmware/esp32/sim/lvgl.sh --saved "Home:x" --feed live --battery 42,3780 \
   --hold 270,410,2600 --tap 269,308 --shot /tmp/power
 ```
 
@@ -119,8 +119,8 @@ the only way to see it here — the desktop process carries on regardless.
 
 **`sim/include/Wire.h` replays registers, not silicon.** It answers at 0x34 only when a scenario says
 to, with the addresses `pulse_power.cpp` cites, so a run proves the decode, the ADC-enable path and
-the screen. It cannot tell you that writing bit 0 of 0x10 cuts power on this board. Nothing here has
-been on hardware.
+the screen. It cannot tell you that writing bit 0 of 0x10 cuts power on this board. Confirm that PMU
+write on the physical unit.
 
 ## Wi-Fi setup, on the glass
 
@@ -131,14 +131,14 @@ puts it back — so the ambient readout never has to know it exists.
 
 ```bash
 # a fresh unit: nothing saved, so setup opens by itself after two seconds
-sim/lvgl.sh --wifi --networks "Offsite:-42,Guest:-71,Cafe:-63:open" --shot /tmp/wifi
+devices/firmware/esp32/sim/lvgl.sh --wifi --networks "Offsite:-42,Guest:-71,Cafe:-63:open" --shot /tmp/wifi
 # type a passphrase and join (coordinates are the list row, then keys, then the keyboard's OK)
-sim/lvgl.sh --wifi --networks "Guest:-59" --lead 3600 --gap 700 \
+devices/firmware/esp32/sim/lvgl.sh --wifi --networks "Guest:-59" --lead 3600 --gap 700 \
   --taps "180,99 97,289 106,228 70,289 298,228 271,228 134,228 161,228 97,289 334,411" --wait
 # the failure screen, without standing next to a router
-sim/lvgl.sh --wifi --join-fail --networks "Guest:-59" ...
+devices/firmware/esp32/sim/lvgl.sh --wifi --join-fail --networks "Guest:-59" --shot /tmp/wifi-failed
 # a provisioned unit: no setup screen, and a 1.7 s hold on the readout is the way back in
-sim/lvgl.sh --wifi --saved "Guest:seaports" --networks "Guest:-59" --hold "184,200,1700"
+devices/firmware/esp32/sim/lvgl.sh --wifi --saved "Guest:seaports" --networks "Guest:-59" --hold "184,200,1700"
 ```
 
 The harness prints every `WiFi.begin()` the firmware made and what NVS ended up holding, which is how
