@@ -2,12 +2,12 @@
 
 **The app is here. The platform is a submodule.**
 
-Anchor drives an M5Stack Cardputer through **flint** (`ryanio/cardputer`), Ryan's Cardputer ADV
-firmware: a view contract, an exit convention every screen obeys, a status bar, a keyboard layer
-that has met the ADV's TCA8418 controller, and a simulator that runs the real view code against
-M5GFX's SDL panel at the real 240x135. flint is vendored in [`flint/`](flint) and pinned to a
-commit. Anchor's own half — the view, the host link, the simulator's replay of that link, and the
-menu art — is [`app/`](app), and it is built *against* flint rather than added to it.
+Anchor runs on the M5Stack Cardputer ADV through **flint** (`ryanio/cardputer`), Ryan's Cardputer
+firmware. The unit can fetch and render public OpenSea discovery data on its own. The USB link is a
+compatibility path and is not required away from a desktop. flint supplies the view contract, status
+bar, keyboard layer, network setup, and a simulator at the real 240x135 geometry. It is vendored in
+[`flint/`](flint) and pinned to a commit. Anchor's view, on-device data reader, optional host link,
+simulator fixtures, and menu art live in [`app/`](app).
 
 This is a change of mind, and the reasoning is in
 [`docs/devices-cardputer.md`](../../../docs/devices-cardputer.md#where-firmware-lives). The short
@@ -17,8 +17,9 @@ reading flint should not find Anchor's wire protocol in it.
 ```
 devices/firmware/cardputer/
 ├── platformio.ini      the two Anchor builds, and the guard below
-├── app/src/anchor.cpp  the view: draws a rectangle a desktop sent, sends key names back
-├── app/src/cable.*     the host link on a unit: newline delimited JSON over USB C
+├── app/src/anchor.cpp  the view and its local navigation
+├── app/src/standalone.*  the on-device OpenSea reader
+├── app/src/cable.*     the optional host link over USB C
 ├── app/src/art.h       generated, the menu icon flint's atlas no longer carries
 ├── app/sim/cable_sim.cpp   the same link in the simulator, replaying a real capture
 ├── tools/require-flint.py  says "submodule" when the submodule is not there
@@ -41,53 +42,36 @@ The pin is a commit, not a branch, so a fresh clone builds the flint that this a
 against. `git submodule update --remote` moves it forward deliberately; nothing moves it by
 accident.
 
-> **While `feat/app-packs` is unpushed**, the pinned commit exists only in a local flint checkout,
-> and `--init` against GitHub will not find it. Push that branch in `ryanio/cardputer` first, or
-> point the submodule at a local clone with
-> `git config submodule.devices/firmware/cardputer/flint.url /path/to/cardputer`.
+## Building and simulating
 
-## Building and flashing
-
-Run these from `devices/firmware/cardputer/`, not from a flint checkout — this directory is the
-PlatformIO project now.
+Use the repository-level device command from the repository root. It installs the pinned PlatformIO
+packages and flint submodule under the repository, then builds the Cardputer ADV target.
 
 ```bash
-pio run -e cardputer-adv-anchor              # compile the Anchor panel alone
-pio run -e cardputer-adv-anchor -t upload    # flash it over USB C
-pio device monitor                           # what the unit says
-
-pio run -e sim-anchor -t exec                # the same thing on the desktop, no hardware
+node scripts/device.ts bootstrap cardputer
+node scripts/device.ts doctor cardputer
+node scripts/device.ts build cardputer
+node scripts/device.ts sim cardputer
 ```
 
-`pio run -t upload` finds the port itself. If it does not, the unit is at `/dev/ttyACM*` and holding
-G0 while plugging in forces download mode. USB CDC on boot is already set; without it the serial
-port disappears, which reads as a dead device.
+These commands compile and simulate. They do not flash hardware. See
+[`docs/device-development.md`](../../../docs/device-development.md) for the shared workflow and cache
+locations.
 
-**Only the Anchor app is in an Anchor build**, and that is a build fact rather than a menu setting.
-`platformio.ini` drops `flint/src/views/` from the source filter, so flint's own apps are not
-compiled, not linked, and not reachable by any key. The `FLINT_PROFILE_VIEWS='"Anchor"'` flag says
-the same thing a second time at the registry. Measured on the ADV target: 18.0% RAM and 33.5% of the
-app slot, against flint's full firmware at 20.5% and 37.7%.
-
-`FLINT_PROFILE_NETWORK=0` means the spine joins no network and runs no boot probe. Anchor's data
-comes down the cable from a desktop, because the service behind it binds `127.0.0.1`; a radio
-nothing uses would be attack surface with no upside.
+The Anchor profile includes Anchor, Maze, Calm, and the network Setup view. Anchor reads public
+OpenSea data directly when a read-only API key is present in the local secrets header. Without one,
+the reader compiles to an explicit disabled state. Secrets remain local and are never passed on the
+command line or committed.
 
 ## Looking at it without hardware
 
-The simulator is flint's, running this app's view against M5GFX's own panel driver at the real
-geometry, with the host link replaying a capture instead of reading a port.
+The simulator is flint's. It runs Anchor's real view against M5GFX's SDL panel driver at the real
+geometry. Captured fixtures stand in for network and optional host input, so it needs no hardware or
+credential.
 
 ```bash
-pio run -e sim-anchor -t exec        # a window you can type into
-
-# or as a test harness: a PPM before each scripted key
-.pio/build/sim-anchor/program --keys "azuki" --shot /tmp/anchor --quit-after 6000
-magick /tmp/anchor-03.ppm -scale 300% /tmp/anchor-03.png
+node scripts/device.ts sim cardputer
 ```
-
-The first shot fires at 700ms and one every 420ms after, and the replayed host sends its first frame
-at about 600ms — so `--shot` with no `--keys` photographs the waiting screen and nothing else.
 
 ## Driving it from here
 
@@ -130,12 +114,9 @@ ours to fix. That exclusion is the only line the submodule adds to the root conf
 
 ## What is not verified
 
-**No Cardputer has run this.** The view compiles for the ADV target and is checked in the simulator,
-which is the real `view`, `ui` and `store` code against M5GFX's own panel driver at the real
-geometry — so the layout, the truncation, the palette and the key mapping are seen rather than
-reasoned about. What the simulator cannot tell you is whether the TCA8418 keyboard reports what this
-expects, whether USB CDC keeps up with a repaint, or what the panel looks like in a room. Those wait
-for hardware.
+CI compiles the ADV target and checks the real `view`, `ui`, and `store` code in the simulator. The
+simulator cannot measure the physical keyboard, USB throughput, radio behavior, battery life, or the
+panel's appearance in a room. Those require a Cardputer ADV.
 
 | Half | Where |
 |---|---|

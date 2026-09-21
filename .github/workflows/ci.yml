@@ -8,9 +8,9 @@ on:
 permissions:
   contents: read
 
-# One job, named steps. Five separate jobs each paid ~12s of runner boot and checkout for ~10s of
-# actual work, and the setup was duplicated five ways. Steps still attribute failures clearly in the
-# UI, and the whole thing finishes faster than the old jobs took to start.
+# The application workspaces share one short job and one install. Firmware stays in a second job
+# because its board toolchains and simulator dependencies are larger, cached separately, and useful
+# to diagnose independently from application lint and tests.
 jobs:
   ci:
     name: lint, test, build
@@ -18,8 +18,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # The Cardputer app builds against flint, which is a submodule. Without this the firmware
-          # step fails on a missing directory rather than on anything it is meant to catch.
+          # The script tests generate Cardputer configuration from the pinned flint input.
           submodules: true
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -60,10 +59,6 @@ jobs:
           npx --prefix executor tsc --noEmit --project executor
           npm test --prefix executor
 
-      # System dependencies, not npm ones: devices paint key faces by rasterising SVG. Two packages,
-      # not one — ImageMagick 6 does not rasterise SVG itself, it shells out to `rsvg-convert`, so
-      # imagemagick alone passes a version check and fails every render. CI found that the first
-      # time it ran these tests, which is what the previous commit was for.
       # System dependencies, not npm ones: devices paint key faces by rasterising SVG.
       #
       # Three packages, and the third is the one that bites. ImageMagick 6 does not rasterise SVG
@@ -90,6 +85,7 @@ jobs:
 
       - name: Devices — typecheck and test
         run: |
+          c++ --version
           npx --prefix devices tsc --noEmit --project devices
           npm test --prefix devices
 
@@ -98,17 +94,92 @@ jobs:
       - name: Widget — test
         run: npm test --prefix widget
 
-      # The Cardputer app lives here and builds against flint, so nothing else in this repo would
-      # notice it breaking. The simulator target is the cheap one: `platform = native`, so it needs
-      # SDL and a host compiler rather than the ESP32 toolchain, and it exercises the app pack
-      # wiring — the build flags that select one app out of flint's ten — which is the part most
-      # likely to rot when either side moves.
-      - name: Cardputer app builds against flint
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y libsdl2-dev
-          pipx install platformio || pip install --user platformio
-          pio run -e sim-anchor -d devices/firmware/cardputer
-
       - name: Site builds
         run: node site/build.ts
+
+  # Firmware has a separate toolchain and a much larger cache than the TypeScript workspaces. Keep
+  # it isolated so a board compiler download cannot hide or delay a lint failure, while every pull
+  # request still has to compile both physical targets and run both desktop simulators.
+  firmware:
+    name: firmware boards and simulators
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: true
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: '.node-version'
+
+      - name: Bootstrap repository
+        run: npm ci
+
+      - name: Install simulator system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y build-essential libsdl2-dev imagemagick python3-venv
+          command -v c++
+
+      # The manifest pins the CLIs and direct firmware dependencies. Their package managers resolve
+      # compiler support packages transitively. The cache key changes with the manifest, while a
+      # partial restore keeps large downloads reusable. Bootstrap validates restored state before use.
+      - name: Restore firmware toolchains
+        uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: |
+            .cache/device/arduino
+            .cache/device/platformio
+            .cache/device/vendor
+          key: ${{ runner.os }}-anchor-firmware-${{ hashFiles('devices/toolchain.json') }}
+          restore-keys: |
+            ${{ runner.os }}-anchor-firmware-
+
+      - name: Install pinned firmware CLIs
+        run: |
+          export PLATFORMIO_CORE_DIR="$GITHUB_WORKSPACE/.cache/device/platformio"
+          export PLATFORMIO_BUILD_DIR="$GITHUB_WORKSPACE/.cache/device/build/platformio"
+          export PLATFORMIO_LIBDEPS_DIR="$GITHUB_WORKSPACE/.cache/device/platformio/libdeps"
+          export PLATFORMIO_SETTING_ENABLE_TELEMETRY=no
+          arduino_version=$(jq -r '.tools.arduinoCli.version' devices/toolchain.json)
+          arduino_sha=$(jq -r '.tools.arduinoCli.linuxX64Sha256' devices/toolchain.json)
+          platformio_version=$(jq -r '.tools.platformioCore' devices/toolchain.json)
+          mkdir -p .cache/device/bin .cache/device/platformio
+
+          arduino=.cache/device/bin/arduino-cli
+          if ! "$arduino" version 2>/dev/null | grep -Fq "$arduino_version"; then
+            archive="$RUNNER_TEMP/arduino-cli.tar.gz"
+            curl --fail --location --silent --show-error \
+              "https://github.com/arduino/arduino-cli/releases/download/v$arduino_version/arduino-cli_${arduino_version}_Linux_64bit.tar.gz" \
+              --output "$archive"
+            echo "$arduino_sha  $archive" | sha256sum --check --strict
+            tar -xzf "$archive" -C .cache/device/bin arduino-cli
+          fi
+
+          pio=.cache/device/platformio/venv/bin/pio
+          if ! "$pio" --version 2>/dev/null | grep -Fq "$platformio_version"; then
+            python3 -m venv --clear .cache/device/platformio/venv
+            .cache/device/platformio/venv/bin/pip install --disable-pip-version-check \
+              "platformio==$platformio_version"
+          fi
+
+          echo "$GITHUB_WORKSPACE/.cache/device/bin" >> "$GITHUB_PATH"
+          echo "$GITHUB_WORKSPACE/.cache/device/platformio/venv/bin" >> "$GITHUB_PATH"
+          "$arduino" version
+          "$pio" --version
+
+      - name: Bootstrap pinned firmware toolchains
+        run: node scripts/device.ts bootstrap all
+
+      - name: Verify firmware toolchains
+        run: node scripts/device.ts doctor all
+
+      # CI also performs an isolated second compile with nonsecret placeholders. The device command
+      # requires evidence that the active HTTP sources and libraries compiled, then deletes that
+      # sentinel image so it cannot be mistaken for firmware to flash.
+      - name: Build physical firmware targets and active network paths
+        env:
+          CI: 'true'
+        run: node scripts/device.ts build all
+
+      - name: Run firmware simulator smoke tests
+        run: node scripts/device.ts sim all

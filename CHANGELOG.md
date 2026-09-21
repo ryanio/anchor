@@ -14,6 +14,14 @@ becomes `## [0.1.0] - YYYY-MM-DD` at the moment the tag is pushed, and not befor
 
 ### Added
 
+Device development now has a shared command for setup checks, pinned dependencies, physical
+firmware builds, and simulator smoke tests. `devices/toolchain.json` records the toolchain;
+`docs/device-development.md` explains the workflow. CI compiles the Cardputer ADV and Waveshare
+`pulse/` firmware, including a separate compile check of their active network readers with nonsecret
+placeholders. The hardware inventory records the three Cardputer ADVs and three Waveshare AMOLED
+units intended for onsite use, with reported battery presence and unverified per-unit details kept
+separate. `docs/device-roadmap.md` records the planned framework and app work.
+
 The ESP32 LVGL simulator builds on macOS without colliding with the system `PASS_MAX` macro.
 
 Cardputer token detail caching, display guards, and selection restoration now compare both chain

@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "tools": {
+    "nodeMajor": 26,
+    "arduinoCli": {
+      "version": "1.5.1",
+      "linuxX64Sha256": "28a8e119c498a25607821c36cb2dc49e8463941b261a0d99091baa7bc692dd2b"
+    },
+    "platformioCore": "6.2.0",
+    "nativeArduinoCtags": {
+      "repository": "https://github.com/arduino/ctags.git",
+      "commit": "abc8fca7499f44c725122881cd380a88c37abe0e",
+      "version": "5.8-arduino11"
+    }
+  },
+  "cardputer": {
+    "submodule": {
+      "path": "devices/firmware/cardputer/flint",
+      "commit": "a9629cc62594e06ef782ce4fb6b811e03259c1fb"
+    },
+    "project": "devices/firmware/cardputer",
+    "boardEnvironment": "cardputer-adv-anchor",
+    "simEnvironment": "sim-anchor",
+    "platforms": {
+      "board": "espressif32@6.12.0",
+      "sim": "native@1.2.1"
+    },
+    "libraries": [
+      "m5stack/M5Cardputer@1.1.1",
+      "m5stack/M5Unified@0.2.22",
+      "m5stack/M5GFX@0.2.29",
+      "z3t0/IRremote@4.7.1",
+      "bblanchon/ArduinoJson@7.2.0"
+    ]
+  },
+  "esp32": {
+    "sketch": "devices/firmware/esp32/pulse",
+    "fqbn": "esp32:esp32:esp32s3:USBMode=hwcdc,CDCOnBoot=cdc,FlashSize=16M,PartitionScheme=app3M_fat9M_16MB,PSRAM=opi,DebugLevel=none",
+    "boardManagerUrl": "https://espressif.github.io/arduino-esp32/package_esp32_index.json",
+    "core": "esp32:esp32@3.3.11",
+    "libraries": ["ArduinoJson@7.2.0", "lvgl@9.2.2"],
+    "gfxVendor": {
+      "repository": "https://github.com/waveshareteam/ESP32-S3-Touch-AMOLED-1.8.git",
+      "commit": "78e13f852929c2ab4f9d5e0ad1c50ea378dbf2b4",
+      "path": "examples/arduino-v2/libraries/GFX_Library_for_Arduino",
+      "version": "1.6.4"
+    }
+  }
+}

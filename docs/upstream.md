@@ -24,7 +24,22 @@ new; nobody wants the same list twice. Move it down here once it has been sent.
 
 ## Unreported
 
-*Nothing pending.* Add new findings here as its own `## N.` entry, continuing the numbering.
+## 18. Arduino's ctags helper has no native Apple Silicon release
+
+Arduino CLI 1.5.1 installs `ctags@5.8-arduino11` as an x86_64 macOS executable. On the development
+Mac running macOS 27 on arm64, the ESP32 firmware build stopped with `bad CPU type in executable`.
+The CLI and ESP32 compiler themselves ran successfully. Arduino documents this class of helper
+compatibility failure in its [macOS support article](https://support.arduino.cc/hc/en-us/articles/7765785712156-Error-bad-CPU-type-in-executable-on-macOS).
+
+The device bootstrap builds Arduino's own ctags source at
+[`abc8fca7499f44c725122881cd380a88c37abe0e`](https://github.com/arduino/ctags/tree/abc8fca7499f44c725122881cd380a88c37abe0e)
+for the local architecture. The build uses an isolated tool directory and passes
+`runtime.tools.ctags.path` to Arduino CLI. It does not replace the downloaded helper or any system
+tool. A complete `pulse/` firmware compile passed with this override after failing without it.
+
+When Arduino supplies a working native helper, remove the source-build fallback in
+`scripts/device-ctags.ts` and its build-property override. Keep a setup check that actually executes
+the selected helper. This entry has not been reported upstream by this project.
 
 ## Open
 

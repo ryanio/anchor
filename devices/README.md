@@ -3,6 +3,10 @@
 Anchor on physical hardware. The Stream Deck is the first device; ESP32 displays and Cardputers
 are the reason the layer exists at all.
 
+See [the physical device inventory](../docs/device-hardware.md) for the intended onsite fleet and
+the observations still needed for each unit. The [independent app roadmap](../docs/device-roadmap.md)
+records the platform boundaries and build order.
+
 **Opt-in.** Nothing here is installed unless you own a device. This workspace keeps its own
 `package.json` and its only runtime dependency lives here, so `npm ci` at the repo root does not
 pull a USB HID binding onto a machine with nothing plugged in.

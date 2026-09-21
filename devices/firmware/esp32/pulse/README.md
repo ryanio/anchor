@@ -1,16 +1,15 @@
-# `pulse/` — the LVGL firmware
+# `pulse/`: the LVGL firmware
 
-The second firmware for the Waveshare ESP32-S3-Touch-AMOLED-1.8 (V2), and the first that draws its
-own screen.
+This is the independent firmware for the Waveshare ESP32-S3-Touch-AMOLED-1.8 (V2). It draws its own
+screen, joins Wi-Fi on the device, and reads public portfolio and discovery data for configured
+addresses without a desktop process.
 
-`../app/` is the one that works today: the desktop renders an Anchor surface and this board blits
-pixels, which is the bargain `docs/devices-esp32.md` argues for at length — the firmware owns no
-font, no palette and no layout. It also cannot show anything at all with nothing on the cable, and
-these units have to work in the field. That case is named in the doc and left open as "a separate,
-larger call". This is that call, made.
+The driver is based on one measured V2 unit. Other intended units still need their back-label
+revision checked against [`docs/device-hardware.md`](../../../../docs/device-hardware.md) before
+flashing.
 
-**`app/` is not touched by any of this and stays the firmware that ships** until LVGL is proven on
-glass. Nothing here has been flashed.
+`../app/` is the older host-fed blitter. It remains for historical hardware work, but new development
+and CI target `pulse/`.
 
 ## The design system
 
@@ -38,7 +37,16 @@ empty label/value pairs beneath it — which is 250 px of dead panel and was rep
 
 ## Run it without hardware
 
+Run these from the repository root so the isolated toolchain paths resolve correctly.
+
 ```bash
+node scripts/device.ts bootstrap esp32
+node scripts/device.ts doctor esp32
+node scripts/device.ts sim esp32
+
+# direct scenarios after bootstrap
+export ANCHOR_GFX_DIR="$PWD/.cache/device/vendor/waveshare/examples/arduino-v2/libraries/GFX_Library_for_Arduino/src"
+export ANCHOR_LVGL_DIR="$PWD/.cache/device/arduino/user/libraries/lvgl"
 devices/firmware/esp32/sim/lvgl.sh --shot /tmp/pulse --quit-after 4000
 devices/firmware/esp32/sim/lvgl.sh --taps "184,120 300,300" --shot /tmp/pulse
 devices/firmware/esp32/sim/lvgl.sh --no-psram --shot /tmp/pulse   # the fallback draw buffer
@@ -156,18 +164,20 @@ Four lines wire it into `pulse.ino`; until they are there, `--wifi` is the only 
 ## Compile for the board
 
 ```bash
-arduino-cli compile --fqbn "esp32:esp32:esp32s3:USBMode=hwcdc,CDCOnBoot=cdc,FlashSize=16M,PartitionScheme=app3M_fat9M_16MB,PSRAM=opi,DebugLevel=none" devices/firmware/esp32/pulse
+node scripts/device.ts build esp32
 ```
 
-## Flash it (nobody has)
+This uses the pinned Arduino CLI, ESP32 core, LVGL, ArduinoJson, and Waveshare display library
+recorded in [`devices/toolchain.json`](../../../toolchain.json). It compiles only. See
+[`docs/device-development.md`](../../../../docs/device-development.md) for the shared workflow and
+cache locations.
 
-```bash
-arduino-cli upload -p /dev/ttyACM0 --fqbn "esp32:esp32:esp32s3:USBMode=hwcdc,CDCOnBoot=cdc,FlashSize=16M,PartitionScheme=app3M_fat9M_16MB,PSRAM=opi,DebugLevel=none" devices/firmware/esp32/pulse
-```
+## Flashing
 
-`/dev/serial/by-id/` is the stable path when two ESP32-S3s are on the desk — every one of them
-enumerates through the same Espressif descriptor, so a port index is a coin flip. See the section in
-`docs/devices-esp32.md` about the 6,601 restarts that fact produced.
+The repository device command does not upload. Flashing remains a manual hardware operation after
+the unit's revision and stable USB path have been confirmed. See
+[`docs/device-hardware.md`](../../../../docs/device-hardware.md) before selecting a unit and
+[`docs/devices-esp32.md`](../../../../docs/devices-esp32.md) for the board-specific observations.
 
 ## Measured
 
@@ -206,10 +216,8 @@ enumerates through the same Espressif descriptor, so a port index is a coin flip
 - **`lv_conf.h` is genuinely being read.** Proven by compiling a sketch whose `lv_conf.h` was a bare
   `#error` and watching the build stop on it — the control was made to fail before it was trusted.
 
-## Not measured, and not to be claimed
+## What simulation and CI do not measure
 
-- **Nothing here has been on the glass.** Not one pixel. Every statement above comes from a compiler
-  or a desktop simulator.
 - **Colour fidelity, and therefore the byte-order conclusion.** The flush hands `Arduino_GFX` native
   `uint16_t` RGB565 with no swap, because `Arduino_ESP32QSPI::writePixels` does the high-byte-first
   packing itself (`MSB_32_16_16_SET`) and `../app/app.ino` already depends on exactly that. Read
@@ -225,7 +233,7 @@ enumerates through the same Espressif descriptor, so a port index is a coin flip
   stream-through access pattern. If the screen feels slow, move the draw buffer to
   `MALLOC_CAP_INTERNAL` first — 70 kB is plausible there.
 
-## The first five minutes with hardware
+## Hardware verification
 
 In this order, because each answers the next one's question:
 
