@@ -14,6 +14,8 @@ becomes `## [0.1.0] - YYYY-MM-DD` at the moment the tag is pushed, and not befor
 
 ### Added
 
+The ESP32 LVGL simulator builds on macOS without colliding with the system `PASS_MAX` macro.
+
 Cardputer token detail caching, display guards, and selection restoration now compare both chain
 and address. The same contract address on two chains can no longer reuse the other chain's details.
 A host C++ regression checks the shared firmware comparison, including EVM checksum casing and

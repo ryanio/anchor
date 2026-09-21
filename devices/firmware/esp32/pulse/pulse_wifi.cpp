@@ -85,7 +85,7 @@ constexpr int OPEN_HOLD_REPEATS = 10;
 /* ---------------------------------------------------------------------------------- state ----- */
 
 constexpr size_t SSID_MAX = 32;   /* 802.11 says 32 octets */
-constexpr size_t PASS_MAX = 63;   /* WPA2-PSK passphrase maximum */
+constexpr size_t WIFI_PASS_MAX = 63;   /* WPA2-PSK passphrase maximum */
 constexpr size_t PASS_MIN = 8;    /* and its minimum, which is worth saying before a join, not after */
 constexpr int MAX_NETWORKS = 32;  /* what the list keeps; it scrolls, so this is memory, not a view */
 
@@ -117,7 +117,7 @@ struct Network {
  */
 struct Attempt {
 	char ssid[SSID_MAX + 1];
-	char pass[PASS_MAX + 1];
+	char pass[WIFI_PASS_MAX + 1];
 	bool open;
 };
 
@@ -129,7 +129,7 @@ uint32_t booted_at = 0;
 Preferences prefs;
 bool have_saved = false;
 char saved_ssid[SSID_MAX + 1] = {0};
-char saved_pass[PASS_MAX + 1] = {0};
+char saved_pass[WIFI_PASS_MAX + 1] = {0};
 uint32_t last_retry_at = 0;
 
 Network networks[MAX_NETWORKS];
@@ -475,7 +475,7 @@ void startTyping(const char *ssid, bool for_ssid, bool open)
 	 */
 	lv_textarea_set_text(typing.field, "");
 	lv_textarea_set_password_mode(typing.field, !for_ssid);
-	lv_textarea_set_max_length(typing.field, for_ssid ? (uint32_t)SSID_MAX : (uint32_t)PASS_MAX);
+	lv_textarea_set_max_length(typing.field, for_ssid ? (uint32_t)SSID_MAX : (uint32_t)WIFI_PASS_MAX);
 	lv_label_set_text(typing.reveal_label, LV_SYMBOL_EYE_OPEN);
 	lv_keyboard_set_mode(typing.keyboard, LV_KEYBOARD_MODE_TEXT_LOWER);
 
