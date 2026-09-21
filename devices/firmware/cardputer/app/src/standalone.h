@@ -3,6 +3,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "token_identity.h"
+
 // What this unit shows when nothing is plugged into it, fetched by this unit.
 //
 // AGENTS.md settled what this file is for: "The Cardputer and the pulse display are wholly
@@ -23,12 +25,6 @@
 // saying what state it is in; it owns no pixels, and `anchor.cpp` owns every decision about drawing.
 namespace standalone {
 
-// Addresses are the widest untrusted string here and the one a URL is built from. An EVM address is
-// 42 characters; a Solana mint is base58 and measured at 43 and 44 in the live trending response
-// (`6GmAFSYs4gk3FDao5FzzySQpPZaWsa4rUJHacpMpUNgx`, 2026-09-17). 48 holds either with room, and
-// `sameAddress` never compares past it.
-constexpr size_t ADDRESS_MAX = 48;
-
 struct Token {
 	char symbol[12];
 	char name[24];
@@ -43,7 +39,7 @@ struct Token {
 	// trending list answered with `robinhood` first and `solana` second while this project's primary
 	// chain is Ethereum, and the chain is a path segment of the holders and activity URLs — a row
 	// whose chain was assumed would ask the wrong server about the right token.
-	char chain[16];
+	char chain[CHAIN_MAX];
 	char address[ADDRESS_MAX];
 	bool changePositive;
 };
@@ -108,15 +104,14 @@ struct State {
 
 // The depth behind the one item that is open.
 //
-// `address` is the whole safety property. `discoveryDetail` on the host holds one item's worth of
-// holders and activity, and between opening a second item and its fetch landing it still holds the
-// first item's — so `panel.ts`'s `#browseDepth` refuses to draw depth whose id is not the open id.
-// The same refusal has to exist here, and it is spelled `sameAddress(detail().address, ...)`. A
-// holder list under the wrong token's name is the failure AGENTS.md rates above every other: a
-// plausible answer that is not an answer to the question asked.
+// `chain` plus `address` is the whole safety property. `discoveryDetail` on the host holds one
+// item's worth of holders and activity, and between opening a second item and its fetch landing it
+// still holds the first item's — so `panel.ts`'s `#browseDepth` refuses to draw depth whose identity
+// is not the open identity. A holder list under the wrong token's name is the failure AGENTS.md
+// rates above every other: a plausible answer that is not an answer to the question asked.
 struct Detail {
 	char address[ADDRESS_MAX];
-	char chain[16];
+	char chain[CHAIN_MAX];
 	// Formatted once at fetch time: "83,128 holders" is not something a draw loop should be deciding
 	// how to punctuate.
 	char totals[24];
@@ -129,6 +124,18 @@ struct Detail {
 	Event eventRows[MAX_EVENTS];
 	size_t eventCount;
 };
+
+// These typed forms are the comparison used by the real fetcher, simulator, and renderer. Keeping
+// them here makes it impossible for one caller to remember the address while forgetting the chain.
+inline bool sameTokenIdentity(const Token &a, const Token &b)
+{
+	return sameTokenIdentity(a.chain, a.address, b.chain, b.address);
+}
+
+inline bool detailIsForToken(const Detail &detail, const Token &token)
+{
+	return sameTokenIdentity(detail.chain, detail.address, token.chain, token.address);
+}
 
 // Zero until the first successful fetch lands.
 extern Token tokens[MAX_TOKENS];
@@ -150,15 +157,7 @@ void openDetail(size_t index);
 // Nothing is open. Keeps the fetched depth, so backing out and opening the same row again is free.
 void closeDetail();
 
-// The depth for whatever was last opened. Always check `address` against the item being drawn.
+// The depth for whatever was last opened. Always check its full identity against the item drawn.
 const Detail &detail();
-
-// Two addresses naming the same thing, bounded by ADDRESS_MAX.
-//
-// Case insensitive for `0x` hex, because the same EVM address arrives checksummed in one response
-// and lower case in another. Case *sensitive* for everything else, because a Solana mint is base58
-// and `A` and `a` are two different characters in it — folding case there would let two different
-// mints compare equal, which is the exact confusion this function exists to prevent.
-bool sameAddress(const char *a, const char *b);
 
 }  // namespace standalone

@@ -663,19 +663,6 @@ bool trendingDue()
 
 }  // namespace
 
-bool sameAddress(const char *a, const char *b)
-{
-	if (a == nullptr || b == nullptr) {
-		return false;
-	}
-	if (a[0] == '\0' || b[0] == '\0') {
-		return false;
-	}
-	const bool hex =
-	    a[0] == '0' && (a[1] == 'x' || a[1] == 'X') && b[0] == '0' && (b[1] == 'x' || b[1] == 'X');
-	return hex ? strncasecmp(a, b, ADDRESS_MAX) == 0 : strncmp(a, b, ADDRESS_MAX) == 0;
-}
-
 void tick()
 {
 #ifdef OPENSEA_API_KEY
@@ -759,7 +746,7 @@ void openDetail(size_t index)
 	const Token &t = tokens[index];
 	// Already open and already fetched: stepping Tab through three facets is not three requests, and
 	// backing out to the list and opening the same row again is free.
-	if (sameAddress(detailStore.address, t.address)) {
+	if (detailIsForToken(detailStore, t)) {
 		return;
 	}
 
@@ -787,8 +774,8 @@ void openDetail(size_t index)
 
 void closeDetail()
 {
-	// Deliberately keeps everything that was fetched. `detail().address` is what a drawer checks
-	// against, so depth held for a row nobody has open is depth that costs nothing and saves a
+	// Deliberately keeps everything that was fetched. A drawer checks the detail's chain and address
+	// together, so depth held for a row nobody has open is depth that costs nothing and saves a
 	// request if they open it again.
 }
 

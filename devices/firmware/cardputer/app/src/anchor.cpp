@@ -801,8 +801,8 @@ constexpr int BROWSE_FACET_COUNT = 3;
 // The row somebody is on, the facet they are in, and whether anything is open at all. `browseToken`
 // is a *copy*, taken when the row opened: the trending list refreshes underneath this every sixty
 // seconds and rows move, so an index would quietly come to mean a different token while its holders
-// were still on screen. The copy is re-resolved by address on every frame so its readings stay
-// live, and it keeps its own address so the depth check has something stable to compare against.
+// were still on screen. The copy is re-resolved by chain and address on every frame so its readings
+// stay live, and it keeps that identity so the depth check has something stable to compare against.
 int browseSel = 0;
 int browseFacet = 0;
 bool browseOpen = false;
@@ -838,7 +838,7 @@ Row &pushRow(Slot &s)
 // Is this depth actually this token's? The whole safety property, in one line, on purpose.
 bool depthIsOurs()
 {
-	return standalone::sameAddress(standalone::detail().address, browseToken.address);
+	return standalone::detailIsForToken(standalone::detail(), browseToken);
 }
 
 // Why a facet has nothing in it. Never a blank list: a facet empty because the request has not gone
@@ -1057,13 +1057,13 @@ void drawBrowseStrip(const standalone::State &st, bool bodyHasRows)
 }
 
 // Keep the open token's readings live without letting its identity move. The list is refetched
-// every sixty seconds and a row can change position or fall off it entirely; the address is what
-// this is matched on, and a token that has left the list keeps the readings it had when it was
-// opened rather than picking up whichever token inherited its row.
+// every sixty seconds and a row can change position or fall off it entirely; chain and address are
+// matched together, and a token that has left the list keeps the readings it had when it was opened
+// rather than picking up whichever token inherited its row.
 void refreshBrowseToken()
 {
 	for (size_t i = 0; i < standalone::tokenCount; i++) {
-		if (standalone::sameAddress(standalone::tokens[i].address, browseToken.address)) {
+		if (standalone::sameTokenIdentity(standalone::tokens[i], browseToken)) {
 			browseToken = standalone::tokens[i];
 			return;
 		}

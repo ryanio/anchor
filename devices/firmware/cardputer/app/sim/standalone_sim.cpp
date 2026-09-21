@@ -201,16 +201,6 @@ bool forcedIs(const char *name)
 
 }  // namespace
 
-bool sameAddress(const char *a, const char *b)
-{
-	if (a == nullptr || b == nullptr || a[0] == '\0' || b[0] == '\0') {
-		return false;
-	}
-	const bool hex =
-	    a[0] == '0' && (a[1] == 'x' || a[1] == 'X') && b[0] == '0' && (b[1] == 'x' || b[1] == 'X');
-	return hex ? strncasecmp(a, b, ADDRESS_MAX) == 0 : strncmp(a, b, ADDRESS_MAX) == 0;
-}
-
 void tick()
 {
 	if (openedAt == 0) {
@@ -248,7 +238,7 @@ void openDetail(size_t index)
 	if (index >= tokenCount) {
 		return;
 	}
-	if (sameAddress(detailStore.address, tokens[index].address)) {
+	if (detailIsForToken(detailStore, tokens[index])) {
 		return;
 	}
 	memset(&detailStore, 0, sizeof(detailStore));

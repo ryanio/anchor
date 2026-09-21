@@ -14,6 +14,11 @@ becomes `## [0.1.0] - YYYY-MM-DD` at the moment the tag is pushed, and not befor
 
 ### Added
 
+Cardputer token detail caching, display guards, and selection restoration now compare both chain
+and address. The same contract address on two chains can no longer reuse the other chain's details.
+A host C++ regression checks the shared firmware comparison, including EVM checksum casing and
+case-sensitive Solana addresses.
+
 **The ESP32 panel shows a portfolio, from addresses it is given rather than a credential it holds.**
 `devices/firmware/esp32/app/feed.{h,cpp}` now reads `/api/v2/account/{address}/portfolio` for every
 configured address with the same read-only key it already carried for trending tokens, and the
