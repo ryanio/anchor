@@ -90,6 +90,10 @@ describe("failure behavior", () => {
     const runner = new ProcessRunner();
     assert.throws(() => runner.run(process.execPath, ["-e", "process.exit(7)"], { quiet: true }), /status 7/);
     assert.throws(
+      () => runner.run(process.execPath, ["-e", "process.kill(process.pid, 'SIGTERM')"], { quiet: true }),
+      /terminated by SIGTERM/,
+    );
+    assert.throws(
       () => runner.run("anchor-device-command-that-does-not-exist", [], { quiet: true }),
       /Missing prerequisite/,
     );

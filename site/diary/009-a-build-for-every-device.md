@@ -28,6 +28,10 @@ The macOS setup exposed its own problems. A Wi-Fi constant collided with a syste
 Arduino's Intel-only ctags helper could not run on this Apple Silicon machine. These are development
 environment failures that a Linux-only build would leave for the next contributor to discover.
 
+The Linux smoke test then found a different failure: Cardputer wrote its frame and crashed during
+shutdown. A debugger caught the worker thread destroying the display while SDL's main thread was
+still running. The fix belongs in Flint's simulator, so Anchor takes the corrected platform revision.
+
 The next work is the app foundation: background requests that leave input responsive, saved-network
 switching, shared data rules, and components fitted to each screen. The roadmap keeps those ahead of
 more apps. Simulator results cover layout and logic; the physical fleet still needs checks for

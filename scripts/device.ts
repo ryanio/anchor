@@ -162,6 +162,7 @@ export class ProcessRunner implements CommandRunner {
       }
       throw result.error;
     }
+    if (result.signal) throw new Error(`${command} terminated by ${result.signal}`);
     if (result.status !== 0) throw new Error(`${command} exited with status ${result.status}`);
     return output;
   }

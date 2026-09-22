@@ -24,6 +24,10 @@ separate. `docs/device-roadmap.md` records the planned framework and app work.
 
 The ESP32 LVGL simulator builds on macOS without colliding with the system `PASS_MAX` macro.
 
+The Cardputer simulator shuts down through SDL instead of exiting from its app worker. This fixes
+a Linux crash after timed screenshot runs. The device command also identifies termination signals
+when a compiler or simulator crashes.
+
 Cardputer token detail caching, display guards, and selection restoration now compare both chain
 and address. The same contract address on two chains can no longer reuse the other chain's details.
 A host C++ regression checks the shared firmware comparison, including EVM checksum casing and
