@@ -37,6 +37,7 @@ origin evaluation. Ryan's username resolves to one canonical public address. Tha
 configuration, but it does not establish a complete linked-wallet list.
 
 Three Cardputer ADVs and three Waveshare AMOLED units are the onsite target. The inventory records
-Ryan's battery and screen observations. Builds and simulations do not establish their untethered
+Ryan's battery and screen observations. Two connected units received private demo builds with verified
+uploads and their saved settings preserved. Builds and simulations do not establish their untethered
 behavior: hotspot connection, touch, responsiveness during real TLS timeouts, and
 battery runtime still need testing on the physical units. Multiplayer remains upcoming work.

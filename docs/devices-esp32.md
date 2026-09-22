@@ -37,6 +37,17 @@ assertions exercise navigation; host C++ tests exercise the request coordinator.
 panel addressing, touch settling on glass, TLS stack headroom, radio behavior, or battery runtime.
 Those observations belong in the hardware inventory after testing.
 
+## Boot diagnostics on 2026-09-22
+
+The flashed `0716006` demo build reached its startup banner on the identified Waveshare unit. It
+reported the CO5300 panel up, a 70,656-byte draw buffer in internal RAM, 206,016 bytes of internal
+heap free with a 155,636-byte largest block, and 8,249,424 bytes of PSRAM free. The LVGL pool reported
+127,404 total bytes and 107,904 free. These are boot readings, before a live TLS workload was verified.
+
+The tearing-activity probe counted 18 transitions in 150 ms; its historical banner comment expects
+34 to 36. That difference needs comparison with the visible panel before changing the driver. A
+startup banner and memory readings do not establish touch quality, frame rate, or network operation.
+
 ## Historical host transport design
 
 The sections below record the earlier USB/LAN display experiment. They do not describe the supported

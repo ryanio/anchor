@@ -38,6 +38,22 @@ serial identity before uploading. These units still need physical fleet labels. 
 partition tables byte-match their respective new builds. The identification commands performed normal
 resets, but did not write firmware or read wallet data or network credentials.
 
+## Firmware update on 2026-09-22
+
+The two identified units received private demo builds from Anchor `0716006`, using Flint `9873ac9`
+for the Cardputer. Both images contained the owner-selected read-only API key, injected through a
+temporary private header that was removed after compilation. No credential or keyed image is published.
+The ESP32 build configures the single public demo address below.
+
+Both OTA metadata records selected app0. After rechecking each chip identity, esptool wrote only
+that application's partition at `0x10000` and verified the data hash on the device. NVS, filesystems,
+bootloader, partition tables, and OTA selection were left intact. The Cardputer image was 1,193,328
+bytes and the ESP32 image was 1,735,600 bytes. Both application startup banners were observed after
+a controlled reboot. Cardputer reported a saved-network join attempt; ESP32 reported its panel up.
+No panic appeared in either eight-second capture. Screen appearance, input, Wi-Fi browsing, and
+unplugged operation still require physical observations. The ESP32 boot memory and panel telemetry
+are recorded in [its driver document](devices-esp32.md#boot-diagnostics-on-2026-09-22).
+
 ## Vendor specifications
 
 These describe the linked products. They do not prove the revision or condition of each unit.
@@ -89,3 +105,7 @@ returned 401 with `cf-cache-status: BYPASS` without a key, then 200 with `MISS` 
 Username resolution and that address's portfolio also returned 200 with `MISS`. Unique query
 parameters bypassed warmed responses. This proves those public reads from the development machine;
 it does not prove handheld Wi-Fi, TLS, or provisioning. No credential belongs in this inventory.
+
+On 2026-09-22, the exact owner-selected demo key also passed a separate SDK probe: the unauthenticated
+request returned 401 with `BYPASS`, and the keyed request returned 200 with `MISS`. Both requests used
+unique query parameters. This verified the key used for the two private firmware builds.
