@@ -7,6 +7,8 @@ import { fileURLToPath } from "node:url";
 import {
   assertNoLocalSecrets,
   assertSentinelBinary,
+  cardputerLibraryInstallArgs,
+  cardputerPlatformInstallArgs,
   concreteTargets,
   esp32CompileArgs,
   forEachTarget,
@@ -50,7 +52,45 @@ describe("tool isolation", () => {
     assert.match(config, /platform = espressif32@6\.12\.0/);
     assert.match(config, /platform = native@1\.2\.1/);
     for (const library of manifest.cardputer.libraries) assert.ok(config.includes(library), library);
+    assert.ok(config.indexOf("m5stack/M5GFX@") < config.indexOf("m5stack/M5Unified@"));
+    assert.ok(config.indexOf("m5stack/M5Unified@") < config.indexOf("m5stack/M5Cardputer@"));
     assert.equal(config.includes("project_dir ="), false, "project location comes from pio run -d");
+    assert.equal(generated.endsWith("/anchor-cardputer-project/platformio.ini"), true);
+  });
+
+  test("installs platform dependencies before the exact Cardputer library closure", () => {
+    const config = "/work/anchor/.cache/device/platformio/anchor-cardputer-project/platformio.ini";
+    assert.deepEqual(cardputerPlatformInstallArgs(config, "cardputer-adv-anchor", "espressif32@6.12.0"), [
+      "pkg",
+      "install",
+      "-d",
+      "/work/anchor/.cache/device/platformio/anchor-cardputer-project",
+      "--no-save",
+      "-e",
+      "cardputer-adv-anchor",
+      "-p",
+      "espressif32@6.12.0",
+    ]);
+    assert.deepEqual(
+      cardputerLibraryInstallArgs(config, "cardputer-adv-anchor", [
+        "m5stack/M5Cardputer@1.1.1",
+        "m5stack/M5Unified@0.2.22",
+      ]),
+      [
+        "pkg",
+        "install",
+        "-d",
+        "/work/anchor/.cache/device/platformio/anchor-cardputer-project",
+        "--no-save",
+        "-e",
+        "cardputer-adv-anchor",
+        "--skip-dependencies",
+        "-l",
+        "m5stack/M5Cardputer@1.1.1",
+        "-l",
+        "m5stack/M5Unified@0.2.22",
+      ],
+    );
   });
 });
 

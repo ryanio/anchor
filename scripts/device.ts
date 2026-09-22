@@ -263,7 +263,22 @@ export function platformioConfig(root: string, paths: DevicePaths, manifest: Too
   if (!config.includes(`extra_configs = ${flintConfig}`)) {
     throw new Error("Could not generate the pinned Cardputer PlatformIO configuration");
   }
-  const boardLibraries = manifest.cardputer.libraries.join("\n\t");
+  // Resolve the pinned dependency closure before M5Cardputer. Its broad transitive ranges otherwise
+  // make PlatformIO install newer M5Unified and M5GFX copies before it reaches our direct pins.
+  const dependencyOrder = ["M5GFX", "M5Unified", "IRremote", "M5Cardputer"];
+  const boardLibraries = manifest.cardputer.libraries
+    .map((library, originalIndex) => ({
+      library,
+      order: dependencyOrder.findIndex((name) => library.includes(`/${name}@`)),
+      originalIndex,
+    }))
+    .sort((left, right) => {
+      const leftOrder = left.order < 0 ? dependencyOrder.length : left.order;
+      const rightOrder = right.order < 0 ? dependencyOrder.length : right.order;
+      return leftOrder - rightOrder || left.originalIndex - right.originalIndex;
+    })
+    .map(({ library }) => library)
+    .join("\n\t");
   const simLibraries = manifest.cardputer.libraries
     .filter((lib) => lib.includes("M5GFX") || lib.includes("ArduinoJson"))
     .join("\n\t");
@@ -293,9 +308,36 @@ export function platformioConfig(root: string, paths: DevicePaths, manifest: Too
   ) {
     throw new Error("Could not add exact packages to the Cardputer PlatformIO environments");
   }
-  const generated = join(paths.platformio, "anchor-cardputer.ini");
+  const generated = join(paths.platformio, "anchor-cardputer-project", "platformio.ini");
+  mkdirSync(dirname(generated), { recursive: true });
   if (!existsSync(generated) || readFileSync(generated, "utf8") !== config) writeFileSync(generated, config);
   return generated;
+}
+
+export function cardputerPlatformInstallArgs(
+  config: string,
+  environment: string,
+  platform: string,
+): string[] {
+  return ["pkg", "install", "-d", dirname(config), "--no-save", "-e", environment, "-p", platform];
+}
+
+export function cardputerLibraryInstallArgs(
+  config: string,
+  environment: string,
+  libraries: string[],
+): string[] {
+  return [
+    "pkg",
+    "install",
+    "-d",
+    dirname(config),
+    "--no-save",
+    "-e",
+    environment,
+    "--skip-dependencies",
+    ...libraries.flatMap((library) => ["-l", library]),
+  ];
 }
 
 function bootstrapFlint(root: string, manifest: Toolchain, runner: CommandRunner): void {
@@ -358,37 +400,33 @@ function bootstrapCardputer(
   runner: CommandRunner,
 ): void {
   bootstrapFlint(root, manifest, runner);
-  platformioConfig(root, paths, manifest);
+  const config = platformioConfig(root, paths, manifest);
   const { pio } = tools(root);
-  const project = join(root, manifest.cardputer.project);
-  const common = ["pkg", "install", "-d", project, "--no-save"];
   runner.run(
     pio,
-    [
-      ...common,
-      "-e",
+    cardputerPlatformInstallArgs(
+      config,
       manifest.cardputer.boardEnvironment,
-      "-p",
       manifest.cardputer.platforms.board,
-      ...manifest.cardputer.libraries.flatMap((lib) => ["-l", lib]),
-    ],
+    ),
+    { env: platformioEnvironment(paths) },
+  );
+  runner.run(
+    pio,
+    cardputerLibraryInstallArgs(config, manifest.cardputer.boardEnvironment, manifest.cardputer.libraries),
     { env: platformioEnvironment(paths) },
   );
   const simLibraries = manifest.cardputer.libraries.filter(
-    (lib) => lib.includes("M5GFX") || lib.includes("ArduinoJson"),
+    (library) => library.includes("M5GFX") || library.includes("ArduinoJson"),
   );
   runner.run(
     pio,
-    [
-      ...common,
-      "-e",
-      manifest.cardputer.simEnvironment,
-      "-p",
-      manifest.cardputer.platforms.sim,
-      ...simLibraries.flatMap((lib) => ["-l", lib]),
-    ],
+    cardputerPlatformInstallArgs(config, manifest.cardputer.simEnvironment, manifest.cardputer.platforms.sim),
     { env: platformioEnvironment(paths) },
   );
+  runner.run(pio, cardputerLibraryInstallArgs(config, manifest.cardputer.simEnvironment, simLibraries), {
+    env: platformioEnvironment(paths),
+  });
 }
 
 function bootstrapEsp32(root: string, paths: DevicePaths, manifest: Toolchain, runner: CommandRunner): void {

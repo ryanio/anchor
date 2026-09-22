@@ -101,7 +101,8 @@ void render()
 		lv_label_set_text(chooser.title, "Explore");
 		lv_label_set_text(chooser.subtitle, listStatus);
 		for (size_t i = 0; i < count; ++i) {
-			snprintf(text, sizeof(text), "%s  %s\n%s | %s", rows[i].symbol, rows[i].price,
+			// Bound every array field explicitly, including under GCC's fortified snprintf checks.
+			snprintf(text, sizeof(text), "%.11s  %.15s\n%.15s | %.9s", rows[i].symbol, rows[i].price,
 			         rows[i].chain, rows[i].change);
 			line(i, text, Tone::Ink, true);
 		}

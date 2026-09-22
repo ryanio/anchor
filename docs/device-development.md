@@ -75,6 +75,12 @@ Nothing depends on a global Arduino library directory or PlatformIO package cach
 the exact CLI and installed package versions and exits nonzero when any prerequisite is absent or has
 drifted.
 
+Cardputer bootstrap installs the platform and its compiler dependencies first, then installs the
+complete pinned library set from a generated `platformio.ini` without resolving library dependencies
+again. M5Cardputer's broad ranges could otherwise install newer M5Unified and M5GFX versions before
+their direct pins were processed. Keep the manifest's library dependency set complete when changing
+pins. A fresh library install followed by a real build checks that no newer copies are introduced.
+
 Build both physical targets and run both simulator smoke tests with:
 
 ```bash
@@ -108,6 +114,7 @@ inside one target selects that target; shared firmware, toolchain pins, device s
 configuration select both. Documentation and known independent workspaces skip compilation.
 Unknown paths or an unavailable Git comparison select both targets. Each cache key includes
 `devices/toolchain.json`, so bootstrap validates the pinned dependency set after a pin changes.
+Each selected target runs its simulator before the slower physical builds to report failures sooner.
 
 These commands never upload to hardware. A simulator checks layout, state transitions, and host-side
 logic. It cannot measure panel addressing, color order, touch coordinates, radio behavior, battery

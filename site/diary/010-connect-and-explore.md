@@ -23,6 +23,9 @@ The foundation also has one development workflow for checking tools, installing 
 building both boards, and running their simulators. Firmware CI runs the boards in parallel, selects
 the affected target, and skips compilation for documentation. Builds with obvious placeholders prove the API
 readers were compiled without using a real credential.
+A cold CI cache exposed another setup bug: broad M5 dependency ranges installed newer libraries
+before their direct pins were processed. Bootstrap now installs the complete pinned library set;
+platform compiler dependencies still resolve normally. Simulators run before the slower board builds.
 
 The checks found problems a successful compile could not. The new touch browser initially collapsed
 its rows into a narrow column. A rendered frame exposed the layout, and tap-through checks now

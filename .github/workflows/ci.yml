@@ -234,6 +234,11 @@ jobs:
         if: steps.firmware-changes.outputs.run == 'true'
         run: node scripts/device.ts doctor ${{ matrix.target }}
 
+      # Catch native compiler and interaction failures before spending minutes on the board builds.
+      - name: Run firmware simulator smoke tests
+        if: steps.firmware-changes.outputs.run == 'true'
+        run: node scripts/device.ts sim ${{ matrix.target }}
+
       # CI also performs an isolated second compile with nonsecret placeholders. The device command
       # requires compile evidence plus the placeholder in the linked image, then deletes that image
       # so it cannot be mistaken for firmware to flash.
@@ -242,7 +247,3 @@ jobs:
         env:
           CI: 'true'
         run: node scripts/device.ts build ${{ matrix.target }}
-
-      - name: Run firmware simulator smoke tests
-        if: steps.firmware-changes.outputs.run == 'true'
-        run: node scripts/device.ts sim ${{ matrix.target }}

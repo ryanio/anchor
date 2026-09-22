@@ -34,6 +34,10 @@ Firmware CI checks changed paths before installing board toolchains. Each board 
 and its own dependency cache. Target-specific edits compile that board; shared inputs select both.
 Documentation and known independent workspace changes skip compilation. Unknown inputs or an
 unavailable Git comparison run the full check. Both firmware variants still check active API readers.
+Cardputer bootstrap installs the full pinned library set without independently resolving their broad
+dependency ranges. A cold-cache CI run exposed newer M5 libraries being downloaded before the version
+check rejected them. Platform compiler dependencies remain enabled. Simulators now run before the
+physical builds so native compiler and interaction failures report earlier.
 
 Device development now has a shared command for setup checks, pinned dependencies, physical
 firmware builds, and simulator smoke tests. `devices/toolchain.json` records the toolchain;
