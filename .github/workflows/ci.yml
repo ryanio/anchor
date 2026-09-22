@@ -98,23 +98,55 @@ jobs:
         run: node site/build.ts
 
   # Firmware has a separate toolchain and a much larger cache than the TypeScript workspaces. Keep
-  # it isolated so a board compiler download cannot hide or delay a lint failure, while every pull
-  # request still has to compile both physical targets and run both desktop simulators.
+  # it isolated so a board compiler download cannot hide or delay a lint failure. The job itself
+  # always reports a result, while its expensive steps run only when an input to the firmware build
+  # changed.
   firmware:
     name: firmware boards and simulators
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          submodules: true
+          # Exact event SHAs keep overlapping push runs independent. Full history makes both the PR
+          # base and push predecessor available; an absent new-branch base fails safe to a build.
+          fetch-depth: 0
+
+      - name: Select firmware work for this change
+        id: firmware-changes
+        env:
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: |
+          decision=true
+          if classified=$(node scripts/firmware-changes.mjs "$BASE_SHA" "$HEAD_SHA"); then
+            case "$classified" in
+              true|false) decision=$classified ;;
+              *) echo "::warning::firmware path classifier returned an invalid result; building" ;;
+            esac
+          else
+            echo "::warning::firmware path classifier failed; building"
+          fi
+          echo "run=$decision" >> "$GITHUB_OUTPUT"
+
+      - name: No firmware inputs changed
+        if: steps.firmware-changes.outputs.run != 'true'
+        run: echo "Firmware build skipped because only independent paths changed."
+
+      - name: Check out firmware submodules
+        if: steps.firmware-changes.outputs.run == 'true'
+        run: git submodule update --init --recursive
+
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        if: steps.firmware-changes.outputs.run == 'true'
         with:
           node-version-file: '.node-version'
 
       - name: Bootstrap repository
+        if: steps.firmware-changes.outputs.run == 'true'
         run: npm ci
 
       - name: Install simulator system dependencies
+        if: steps.firmware-changes.outputs.run == 'true'
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y build-essential libsdl2-dev imagemagick python3-venv
@@ -124,6 +156,7 @@ jobs:
       # compiler support packages transitively. The cache key changes with the manifest, while a
       # partial restore keeps large downloads reusable. Bootstrap validates restored state before use.
       - name: Restore firmware toolchains
+        if: steps.firmware-changes.outputs.run == 'true'
         uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
         with:
           path: |
@@ -135,6 +168,7 @@ jobs:
             ${{ runner.os }}-anchor-firmware-
 
       - name: Install pinned firmware CLIs
+        if: steps.firmware-changes.outputs.run == 'true'
         run: |
           export PLATFORMIO_CORE_DIR="$GITHUB_WORKSPACE/.cache/device/platformio"
           export PLATFORMIO_BUILD_DIR="$GITHUB_WORKSPACE/.cache/device/build/platformio"
@@ -168,18 +202,22 @@ jobs:
           "$pio" --version
 
       - name: Bootstrap pinned firmware toolchains
+        if: steps.firmware-changes.outputs.run == 'true'
         run: node scripts/device.ts bootstrap all
 
       - name: Verify firmware toolchains
+        if: steps.firmware-changes.outputs.run == 'true'
         run: node scripts/device.ts doctor all
 
       # CI also performs an isolated second compile with nonsecret placeholders. The device command
       # requires compile evidence plus the placeholder in the linked image, then deletes that image
       # so it cannot be mistaken for firmware to flash.
       - name: Build physical firmware targets and active network paths
+        if: steps.firmware-changes.outputs.run == 'true'
         env:
           CI: 'true'
         run: node scripts/device.ts build all
 
       - name: Run firmware simulator smoke tests
+        if: steps.firmware-changes.outputs.run == 'true'
         run: node scripts/device.ts sim all

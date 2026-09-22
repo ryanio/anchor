@@ -96,7 +96,10 @@ a flashable image containing the placeholder. No real credential is needed for b
 `CI=true` refuses local firmware `secrets.h` files, because those would take precedence over the
 temporary header. Use a clean checkout for this check when your development tree has credentials.
 
-CI caches only downloaded dependencies. Board images and simulator results are rebuilt on every run.
+CI caches only downloaded dependencies. Board images and simulator results are rebuilt when firmware
+inputs change. Documentation and known independent workspaces skip the firmware job's expensive
+steps. Firmware sources, submodules, toolchain pins, device scripts, and build configuration select
+the full check. Unknown paths or an unavailable Git comparison also select the full check.
 The cache key includes `devices/toolchain.json`, so changing a pin forces bootstrap to validate a new
 dependency set.
 

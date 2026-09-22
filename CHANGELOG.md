@@ -14,6 +14,11 @@ becomes `## [0.1.0] - YYYY-MM-DD` at the moment the tag is pushed, and not befor
 
 ### Added
 
+Firmware CI now checks changed paths before installing board toolchains. Documentation and known
+independent workspace changes skip compilation; firmware, dependency, and build-tool changes still
+compile both boards and run both simulators. Unknown inputs or an unavailable Git comparison run
+the full check.
+
 Device development now has a shared command for setup checks, pinned dependencies, physical
 firmware builds, and simulator smoke tests. `devices/toolchain.json` records the toolchain;
 `docs/device-development.md` explains the workflow. CI compiles the Cardputer ADV and Waveshare
