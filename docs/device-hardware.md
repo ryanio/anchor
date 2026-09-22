@@ -14,6 +14,16 @@ proposed identifiers only. The devices have not been physically labelled or matc
 Two attached devices have appeared with USB ID `303a:1001`, Espressif USB JTAG/serial. That ID does
 not distinguish a Cardputer from a Waveshare display, so neither device is assigned to a slot yet.
 
+## Current screen observations
+
+On 2026-09-21, Ryan reported the following for the two devices plugged into this computer:
+
+- The Cardputer shows the Anchor menu item, with Settings and Calm to its right.
+- The ESP32 shows a Wi-Fi network list.
+
+These observations confirm the displayed screens only. They do not identify the firmware revision,
+map either unit to a USB port or inventory slot, or verify input, Wi-Fi association, or internet access.
+
 ## Vendor specifications
 
 These describe the linked products. They do not prove the revision or condition of each unit.
