@@ -92,7 +92,7 @@ mkdir -p "$build"
 # build uses: `lv_conf_internal.h` tests `__has_include("lv_conf.h")` and the sketch directory is on
 # the include path. Same file, same defines, same fonts on both targets — which is the only reason a
 # screenshot from this harness says anything about the board.
-includes=(-I"$here/include" -I"$sketch" -I"$lvgl")
+includes=(-DANCHOR_SIMULATOR=1 -I"$here/include" -I"$sketch" -I"$lvgl")
 
 # LVGL is somebody else's code and is compiled without `-Werror` and without `-Wall`: a warning in it
 # is not a warning anyone here is going to act on, and treating it as an error would mean this
@@ -131,8 +131,8 @@ fi
 # over the sketch and the shims is cheaper than a build system and honest about what the inputs are.
 needs_build=1
 if [ -x "$binary" ]; then
-	newer="$(find "$here/src" "$here/include" "$sketch" -type f -newer "$binary" -print -quit 2>/dev/null || true)"
-	if [ -z "$newer" ] && [ ! "$lvgl_archive" -nt "$binary" ]; then needs_build=0; fi
+	newer="$(find "$here/src" "$here/include" "$sketch" "$firmware/app" "$firmware/../common" -type f -newer "$binary" -print -quit 2>/dev/null || true)"
+	if [ -z "$newer" ] && [ ! "$lvgl_archive" -nt "$binary" ] && [ ! "${BASH_SOURCE[0]}" -nt "$binary" ]; then needs_build=0; fi
 fi
 
 if [ "$needs_build" = "1" ]; then
@@ -153,6 +153,7 @@ if [ "$needs_build" = "1" ]; then
 		"$here/src/feed_sim.cpp" \
 		"$sketch/pulse_design.cpp" \
 		"$sketch/pulse_feed_view.cpp" \
+		"$sketch/pulse_explore.cpp" \
 		"$sketch/pulse_power.cpp" \
 		"$sketch/pulse_ui.cpp" \
 		"$sketch/pulse_wifi.cpp" \

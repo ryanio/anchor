@@ -3,8 +3,9 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #include <HTTPClient.h>
-#include <M5Cardputer.h>
 #include <WiFiClientSecure.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 
 #include <math.h>
 #include <stdlib.h>
@@ -194,20 +195,10 @@ bool everSucceeded = false;
 uint32_t lastAttempt = 0;
 bool listFailed = false;
 const char *listReason = nullptr;
-
-// Set one whole tick before the request it describes, and that is the point rather than an
-// accident.
-//
-// Every fetch here stalls the loop (see `request`), so a status published at the moment the stall
-// starts is a status that reaches the glass when the stall *ends* — the screen would say "asking
-// OpenSea" for zero frames and then show the answer. Arming first, returning, and letting
-// `view::loop` draw the frame (it calls `tick()` and then `drawActive()` in the same pass, src/
-// view.cpp) means the sentence is on the panel for the whole of the pause it is explaining. What
-// would falsify it: a tick that both arms and fetches would show no fetching state at all.
-bool armed = false;
-// Which of the two the armed frame is explaining. The trending list must not say "asking OpenSea
-// what is trending" while the request actually about to go out is one token's holders.
-bool armedForDetail = false;
+bool listFetching = false;
+bool detailOpen = false;
+bool viewActive = false;
+uint32_t networkRevision = 0;
 
 // When the last depth request went out. What is still *owed* is not tracked separately: a facet
 // whose status is `Fetching` is the request that has not happened yet, which is one fact in one
@@ -215,6 +206,38 @@ bool armedForDetail = false;
 uint32_t lastRequest = 0;
 
 #ifdef OPENSEA_API_KEY
+
+enum class RequestKind : uint8_t { Trending, Holders, Activity };
+
+struct RequestJob {
+	RequestKind kind;
+	anchor_request::Gate::Ticket ticket;
+	uint32_t networkRevision;
+	char chain[CHAIN_MAX];
+	char address[ADDRESS_MAX];
+};
+
+struct RequestResult {
+	RequestKind kind;
+	bool ok;
+	const char *reason;
+	uint32_t networkRevision;
+	Token tokenRows[MAX_TOKENS];
+	size_t count;
+	Detail detail;
+};
+
+// One slot includes both a running request and an unread completion. The worker owns its immutable
+// job copy and all staging memory. Only tick() applies a consumed result to tokens/detailStore.
+portMUX_TYPE publicationLock = portMUX_INITIALIZER_UNLOCKED;
+RequestPublication<RequestResult> publication;
+RequestJob pendingJob{};
+TaskHandle_t worker = nullptr;
+bool workerUnavailable = false;
+
+constexpr uint32_t WORKER_STACK_BYTES = 12288;
+constexpr UBaseType_t WORKER_PRIORITY = 1;
+constexpr BaseType_t WORKER_CORE = 0;
 
 // ------------------------------------------------------------------ the endpoints
 
@@ -255,6 +278,11 @@ constexpr uint32_t DETAIL_GAP_MS = 400;
 constexpr uint32_t CONNECT_TIMEOUT_MS = 8000;
 constexpr uint32_t READ_TIMEOUT_MS = 8000;
 constexpr uint8_t HANDSHAKE_TIMEOUT_S = 15;
+// The per-read timeout above is insufficient against a peer that sends one byte before each expiry.
+// This is an absolute budget for consuming and parsing the body after GET has returned. HTTPClient
+// does not expose a portable DNS cancellation hook, so DNS and TLS remain bounded by their library
+// phase timeouts rather than by one claimed whole-request deadline.
+constexpr uint32_t BODY_BUDGET_MS = 10000;
 
 // A ceiling on what this unit will read. The filters below mean most of a payload is walked and
 // discarded as it streams rather than allocated, but the fields a filter *keeps* are allocated, and
@@ -330,27 +358,56 @@ JsonVariantConst either(JsonObjectConst entry, const char *snake, const char *ca
 
 // ------------------------------------------------------------------ one request
 
-// Everything blocking in this module happens inside here, and every caller is `tick()`.
-//
-// This is a stall in the draw loop for as long as the request takes: DNS, a TLS handshake and a read
-// on one core, which on this board is up to a couple of seconds. flint's own `net::getJson` is the
-// same shape and says so ("Both calls block ... Call them from a view's tick, not from a key
-// handler"), and flint's AGENTS.md gives the mitigation this file follows: "A blocking fetch eats
-// the keypress on top of it. Anything filling itself in the background waits for the reader to go
-// still first." `tick()` below holds that line.
-//
-// The sibling device does better — `esp32/app/feed.cpp` runs the identical fetch on a pinned
-// FreeRTOS task because a stalled loop there is a frozen 368x448 panel and a dropped frame. This
-// board could do the same and does not yet; what it has instead is a screen that says "asking
-// OpenSea" *before* the stall starts, so the pause is explained rather than mysterious. That is the
-// honest state of it, not a claim that this is as good.
-bool request(const char *url, JsonDocument &filter, JsonDocument &doc, const char *&err)
+bool requestWanted(anchor_request::Gate::Ticket ticket)
 {
-	if (!net::online()) {
-		err = "the network dropped mid fetch";
-		return false;
+	bool wanted = false;
+	portENTER_CRITICAL(&publicationLock);
+	wanted = publication.current(ticket);
+	portEXIT_CRITICAL(&publicationLock);
+	return wanted;
+}
+
+// A Stream view that refuses a body after its absolute budget or as soon as the loop task cancels
+// interest. It never closes the socket: TLS and HTTP objects are worker-owned and unwind on the same
+// worker that created them.
+class BoundedBodyStream : public Stream {
+public:
+	BoundedBodyStream(Stream &source, anchor_request::Gate::Ticket ticket)
+	    : source(source), ticket(ticket), started(millis())
+	{
+		setTimeout(READ_TIMEOUT_MS);
 	}
 
+	int available() override { return allowed() ? source.available() : 0; }
+	int read() override { return allowed() ? source.read() : -1; }
+	int peek() override { return allowed() ? source.peek() : -1; }
+	void flush() override { source.flush(); }
+	size_t write(uint8_t byte) override
+	{
+		(void)byte;
+		return 0;
+	}
+	bool expired() const { return millis() - started >= BODY_BUDGET_MS; }
+	bool cancelled() const { return !requestWanted(ticket); }
+
+private:
+	Stream &source;
+	anchor_request::Gate::Ticket ticket;
+	uint32_t started;
+
+	bool allowed() const { return !expired() && !cancelled(); }
+};
+
+// Everything blocking in this module happens here on the persistent worker task. Connect, handshake
+// and read retain their phase timeouts, the body has an absolute budget, and cancellation is checked
+// before and after GET plus on every body read.
+bool request(const char *url, JsonDocument &filter, JsonDocument &doc,
+             anchor_request::Gate::Ticket ticket, const char *&err)
+{
+	if (!requestWanted(ticket)) {
+		err = "the request was cancelled";
+		return false;
+	}
 	WiFiClientSecure client;
 	client.setCACert(net::caBundle());
 	client.setHandshakeTimeout(HANDSHAKE_TIMEOUT_S);
@@ -373,6 +430,11 @@ bool request(const char *url, JsonDocument &filter, JsonDocument &doc, const cha
 	http.addHeader("X-API-KEY", OPENSEA_API_KEY);
 
 	const int code = http.GET();
+	if (!requestWanted(ticket)) {
+		err = "the request was cancelled";
+		http.end();
+		return false;
+	}
 	if (code != HTTP_CODE_OK) {
 		Serial.printf("standalone: HTTP %d\n", code);
 		err = reasonForHttp(code);
@@ -391,10 +453,19 @@ bool request(const char *url, JsonDocument &filter, JsonDocument &doc, const cha
 	// A nesting limit, because the input is hostile until proven otherwise. The deepest thing any
 	// filter here reaches is list -> row -> object -> value, so 6 is generous, and a payload built to
 	// blow the stack is rejected as TooDeep rather than parsed.
+	BoundedBodyStream body(http.getStream(), ticket);
 	const DeserializationError parsed =
-	    deserializeJson(doc, http.getStream(), DeserializationOption::Filter(filter),
+	    deserializeJson(doc, body, DeserializationOption::Filter(filter),
 	                    DeserializationOption::NestingLimit(6));
 	http.end();
+	if (body.cancelled()) {
+		err = "the request was cancelled";
+		return false;
+	}
+	if (body.expired()) {
+		err = "the response took too long to read";
+		return false;
+	}
 	if (parsed) {
 		// `DeserializationError::c_str()` is a compiled-in string table, never response bytes.
 		Serial.printf("standalone: parse failed, %s\n", parsed.c_str());
@@ -406,7 +477,7 @@ bool request(const char *url, JsonDocument &filter, JsonDocument &doc, const cha
 
 // ------------------------------------------------------------------ trending
 
-bool fetchTrending()
+bool fetchTrending(const RequestJob &job, RequestResult &result)
 {
 	// Keep only the seven fields this device reads. A trending row carries fifteen (measured
 	// 2026-09-17: address, chain, name, symbol, image_url, usd_price, decimals, opensea_url,
@@ -428,33 +499,32 @@ bool fetchTrending()
 
 	JsonDocument doc;
 	const char *err = nullptr;
-	if (!request(TRENDING_URL, filter, doc, err)) {
-		listReason = err;
-		listFailed = true;
+	if (!request(TRENDING_URL, filter, doc, job.ticket, err)) {
+		result.reason = err;
 		return false;
 	}
 
 	JsonArrayConst list = doc["tokens"].as<JsonArrayConst>();
 	if (list.isNull()) {
-		listReason = "no token list in the response";
-		listFailed = true;
+		result.reason = "no token list in the response";
 		return false;
 	}
 
 	// Parsed into a staging table and copied over in one go, so a draw that lands mid parse sees the
 	// previous list whole rather than one token's symbol against another's price.
-	Token staging[MAX_TOKENS];
-	memset(staging, 0, sizeof(staging));
+	memset(result.tokenRows, 0, sizeof(result.tokenRows));
 	size_t count = 0;
 	for (JsonObjectConst entry : list) {
 		if (count >= MAX_TOKENS) {
 			break;
 		}
-		Token &t = staging[count];
+		Token &t = result.tokenRows[count];
 		copyBounded(t.symbol, sizeof(t.symbol), entry["symbol"] | "");
 		copyBounded(t.name, sizeof(t.name), entry["name"] | "");
-		copyBounded(t.address, sizeof(t.address), entry["address"] | "");
-		copyBounded(t.chain, sizeof(t.chain), entry["chain"] | "");
+		if (!copyTokenIdentity(t.chain, sizeof(t.chain), entry["chain"] | "") ||
+		    !copyTokenIdentity(t.address, sizeof(t.address), entry["address"] | "")) {
+			continue;
+		}
 		// A row with no way to name it is not a row. The same judgement `readTrendingTokens` makes
 		// when it drops a row with no address, and drawing a blank line with a price beside it is
 		// worse than showing seven tokens instead of eight.
@@ -470,16 +540,10 @@ bool fetchTrending()
 		count++;
 	}
 	if (count == 0) {
-		listReason = "the trending list came back empty";
-		listFailed = true;
+		result.reason = "the trending list came back empty";
 		return false;
 	}
-
-	memcpy(tokens, staging, sizeof(tokens));
-	tokenCount = count;
-	everSucceeded = true;
-	listFailed = false;
-	listReason = nullptr;
+	result.count = count;
 	return true;
 }
 
@@ -490,11 +554,11 @@ bool fetchTrending()
 //    total_count, distribution: { total_holders, top_one_percent_concentration, health_score,
 //    health_label }, next }`. `owner_display_name` was null on every holder in the sample, so the
 // shortened address is the ordinary case here rather than a fallback nobody hits.
-void fetchHolders(const char *chain, const char *address)
+bool fetchHolders(const RequestJob &job, RequestResult &result)
 {
 	char url[160];
 	snprintf(url, sizeof(url), "https://api.opensea.io/api/v2/chain/%s/token/%s/holders?limit=%u",
-	         chain, address, (unsigned)MAX_HOLDERS);
+	         job.chain, job.address, (unsigned)MAX_HOLDERS);
 
 	JsonDocument filter;
 	JsonObject row = filter["holders"][0].to<JsonObject>();
@@ -513,10 +577,11 @@ void fetchHolders(const char *chain, const char *address)
 
 	JsonDocument doc;
 	const char *err = nullptr;
-	if (!request(url, filter, doc, err)) {
-		detailStore.holders = {Status::Failed, err};
-		return;
+	if (!request(url, filter, doc, job.ticket, err)) {
+		result.reason = err;
+		return false;
 	}
+	Detail &staging = result.detail;
 
 	JsonArrayConst list = doc["holders"].as<JsonArrayConst>();
 	size_t count = 0;
@@ -524,7 +589,7 @@ void fetchHolders(const char *chain, const char *address)
 		if (count >= MAX_HOLDERS) {
 			break;
 		}
-		Holder &h = detailStore.holderRows[count];
+		Holder &h = staging.holderRows[count];
 		memset(&h, 0, sizeof(h));
 		const char *name = entry["owner_display_name"] | entry["ownerDisplayName"] | "";
 		const char *owner = entry["owner_address"] | entry["ownerAddress"] | "";
@@ -543,20 +608,21 @@ void fetchHolders(const char *chain, const char *address)
 		formatBigUsd(numberOf(either(entry, "usd_value", "usdValue")), h.value, sizeof(h.value));
 		count++;
 	}
-	detailStore.holderCount = count;
+	staging.holderCount = count;
 
 	const double total = numberOf(either(doc.as<JsonObjectConst>(), "total_count", "totalCount"));
 	if (isfinite(total)) {
-		snprintf(detailStore.totals, sizeof(detailStore.totals), "%.0f holders", total);
+		snprintf(staging.totals, sizeof(staging.totals), "%.0f holders", total);
 	} else {
-		snprintf(detailStore.totals, sizeof(detailStore.totals), "--");
+		snprintf(staging.totals, sizeof(staging.totals), "--");
 	}
 	JsonObjectConst distribution = doc["distribution"].as<JsonObjectConst>();
-	copyBounded(detailStore.health, sizeof(detailStore.health),
+	copyBounded(staging.health, sizeof(staging.health),
 	            distribution["health_label"] | distribution["healthLabel"] | "");
 
-	detailStore.holders = count == 0 ? State{Status::Online, "no holders came back for this token"}
-	                                 : State{Status::Online, "up to date"};
+	staging.holders = count == 0 ? State{Status::Online, "no holders came back for this token"}
+	                             : State{Status::Online, "up to date"};
+	return true;
 }
 
 // /api/v2/chain/{chain}/token/{address}/activity, measured 2026-09-17:
@@ -571,11 +637,11 @@ void fetchHolders(const char *chain, const char *address)
 // instead: whether that token was bought or sold, and what against. The dollar figure is
 // `from_token.amount_usd`, which is the side `readTokenActivity` reads, and the two sides of a swap
 // were within a tenth of a percent of each other in every sampled event.
-void fetchActivity(const char *chain, const char *address)
+bool fetchActivity(const RequestJob &job, RequestResult &result)
 {
 	char url[160];
 	snprintf(url, sizeof(url), "https://api.opensea.io/api/v2/chain/%s/token/%s/activity?limit=%u",
-	         chain, address, (unsigned)MAX_EVENTS);
+	         job.chain, job.address, (unsigned)MAX_EVENTS);
 
 	JsonDocument filter;
 	JsonObject row = filter["swap_events"][0].to<JsonObject>();
@@ -590,10 +656,11 @@ void fetchActivity(const char *chain, const char *address)
 
 	JsonDocument doc;
 	const char *err = nullptr;
-	if (!request(url, filter, doc, err)) {
-		detailStore.activity = {Status::Failed, err};
-		return;
+	if (!request(url, filter, doc, job.ticket, err)) {
+		result.reason = err;
+		return false;
 	}
+	Detail &staging = result.detail;
 
 	JsonArrayConst list = doc["swap_events"].as<JsonArrayConst>();
 	if (list.isNull()) {
@@ -609,19 +676,21 @@ void fetchActivity(const char *chain, const char *address)
 		JsonObjectConst to = entry["to_token"].isNull() ? entry["toToken"] : entry["to_token"];
 		char fromAddress[ADDRESS_MAX];
 		char toAddress[ADDRESS_MAX];
-		copyBounded(fromAddress, sizeof(fromAddress), from["address"] | "");
-		copyBounded(toAddress, sizeof(toAddress), to["address"] | "");
+		if (!copyTokenIdentity(fromAddress, sizeof(fromAddress), from["address"] | "") ||
+		    !copyTokenIdentity(toAddress, sizeof(toAddress), to["address"] | "")) {
+			continue;
+		}
 
-		Event &e = detailStore.eventRows[count];
+		Event &e = staging.eventRows[count];
 		memset(&e, 0, sizeof(e));
 		// Which side the opened token is on decides the word. An event naming it on neither side is
 		// not an event about it, so it is dropped: a swap between two other tokens listed under this
 		// token's name is the same class of lie as a holder list under the wrong name.
-		if (sameAddress(toAddress, address)) {
+		if (sameAddress(toAddress, job.address)) {
 			e.buy = true;
 			snprintf(e.side, sizeof(e.side), "BUY");
 			shortAddress(fromAddress, e.counter, sizeof(e.counter));
-		} else if (sameAddress(fromAddress, address)) {
+		} else if (sameAddress(fromAddress, job.address)) {
 			e.buy = false;
 			snprintf(e.side, sizeof(e.side), "SELL");
 			shortAddress(toAddress, e.counter, sizeof(e.counter));
@@ -631,15 +700,16 @@ void fetchActivity(const char *chain, const char *address)
 		formatBigUsd(numberOf(either(from, "amount_usd", "amountUsd")), e.value, sizeof(e.value));
 		count++;
 	}
-	detailStore.eventCount = count;
-	detailStore.activity = count == 0 ? State{Status::Online, "no swaps came back for this token"}
-	                                  : State{Status::Online, "up to date"};
+	staging.eventCount = count;
+	staging.activity = count == 0 ? State{Status::Online, "no swaps came back for this token"}
+	                              : State{Status::Online, "up to date"};
+	return true;
 }
 
 // Is there depth still to ask for, and is it time to ask? Reads state and nothing else.
 bool detailDue()
 {
-	if (detailStore.address[0] == '\0') {
+	if (!detailOpen || detailStore.address[0] == '\0') {
 		return false;
 	}
 	if (detailStore.holders.status != Status::Fetching &&
@@ -659,57 +729,230 @@ bool trendingDue()
 	return lastAttempt == 0 || now - lastAttempt >= interval;
 }
 
+void cancelRequest(bool detailOnly = false)
+{
+	portENTER_CRITICAL(&publicationLock);
+	if (!detailOnly || (publication.current(pendingJob.ticket) &&
+	                    pendingJob.kind != RequestKind::Trending)) {
+		publication.cancel();
+	}
+	portEXIT_CRITICAL(&publicationLock);
+}
+
+bool startRequest(RequestKind kind, const char *chain = nullptr, const char *address = nullptr)
+{
+	if (worker == nullptr) {
+		return false;
+	}
+	anchor_request::Gate::Ticket ticket = 0;
+	portENTER_CRITICAL(&publicationLock);
+	ticket = publication.start();
+	if (ticket != 0) {
+		memset(&pendingJob, 0, sizeof(pendingJob));
+		pendingJob.kind = kind;
+		pendingJob.ticket = ticket;
+		pendingJob.networkRevision = networkRevision;
+		if (chain != nullptr) {
+			snprintf(pendingJob.chain, sizeof(pendingJob.chain), "%s", chain);
+		}
+		if (address != nullptr) {
+			snprintf(pendingJob.address, sizeof(pendingJob.address), "%s", address);
+		}
+	}
+	portEXIT_CRITICAL(&publicationLock);
+	if (ticket == 0) {
+		return false;
+	}
+	xTaskNotifyGive(worker);
+	return true;
+}
+
+void workerTask(void *)
+{
+	for (;;) {
+		ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+
+		RequestJob job{};
+		bool wanted = false;
+		portENTER_CRITICAL(&publicationLock);
+		job = pendingJob;
+		wanted = publication.current(job.ticket);
+		portEXIT_CRITICAL(&publicationLock);
+
+		RequestResult result{};
+		result.kind = job.kind;
+		result.networkRevision = job.networkRevision;
+		copyBounded(result.detail.chain, sizeof(result.detail.chain), job.chain);
+		copyBounded(result.detail.address, sizeof(result.detail.address), job.address);
+		if (wanted) {
+			switch (job.kind) {
+			case RequestKind::Trending:
+				result.ok = fetchTrending(job, result);
+				break;
+			case RequestKind::Holders:
+				result.ok = fetchHolders(job, result);
+				break;
+			case RequestKind::Activity:
+				result.ok = fetchActivity(job, result);
+				break;
+			}
+		}
+
+		portENTER_CRITICAL(&publicationLock);
+		publication.complete(job.ticket, result);
+		portEXIT_CRITICAL(&publicationLock);
+	}
+}
+
+void applyResult(const RequestResult &result)
+{
+	// A reconnect can retain the same SSID while replacing the underlying network session. Results
+	// from that earlier session are discarded before they can reach loop-owned display state.
+	if (result.networkRevision != networkRevision) {
+		return;
+	}
+	if (result.kind == RequestKind::Trending) {
+		listFetching = false;
+		if (!result.ok) {
+			listFailed = true;
+			listReason = result.reason != nullptr ? result.reason : "the fetch failed";
+			return;
+		}
+		memcpy(tokens, result.tokenRows, sizeof(tokens));
+		tokenCount = result.count;
+		everSucceeded = true;
+		listFailed = false;
+		listReason = nullptr;
+		return;
+	}
+
+	// Generation validity is necessary but identity remains an independent safety check. A result for
+	// one chain/address is never published beneath another token's name.
+	if (!detailOpen || !sameTokenIdentity(detailStore.chain, detailStore.address,
+	                                      result.detail.chain, result.detail.address)) {
+		return;
+	}
+	if (result.kind == RequestKind::Holders) {
+		if (!result.ok) {
+			detailStore.holders = {Status::Failed,
+			                       result.reason != nullptr ? result.reason : "the fetch failed"};
+			return;
+		}
+		memcpy(detailStore.holderRows, result.detail.holderRows, sizeof(detailStore.holderRows));
+		detailStore.holderCount = result.detail.holderCount;
+		memcpy(detailStore.totals, result.detail.totals, sizeof(detailStore.totals));
+		memcpy(detailStore.health, result.detail.health, sizeof(detailStore.health));
+		detailStore.holders = result.detail.holders;
+		return;
+	}
+	if (!result.ok) {
+		detailStore.activity = {Status::Failed,
+		                        result.reason != nullptr ? result.reason : "the fetch failed"};
+		return;
+	}
+	memcpy(detailStore.eventRows, result.detail.eventRows, sizeof(detailStore.eventRows));
+	detailStore.eventCount = result.detail.eventCount;
+	detailStore.activity = result.detail.activity;
+}
+
+void consumeResult()
+{
+	RequestResult result{};
+	bool ready = false;
+	portENTER_CRITICAL(&publicationLock);
+	ready = publication.consume(result);
+	portEXIT_CRITICAL(&publicationLock);
+	if (ready) {
+		applyResult(result);
+	}
+}
+
+void ensureWorker()
+{
+	if (worker != nullptr || workerUnavailable) {
+		return;
+	}
+	if (xTaskCreatePinnedToCore(workerTask, "anchor-open-sea", WORKER_STACK_BYTES, nullptr,
+	                            WORKER_PRIORITY, &worker, WORKER_CORE) != pdPASS) {
+		worker = nullptr;
+		workerUnavailable = true;
+		listFailed = true;
+		listReason = "could not start background requests";
+	}
+}
+
 #endif  // OPENSEA_API_KEY
 
 }  // namespace
 
+void enter()
+{
+#ifdef OPENSEA_API_KEY
+	viewActive = true;
+	networkRevision = net::revision();
+	ensureWorker();
+#endif
+}
+
+void leave()
+{
+#ifdef OPENSEA_API_KEY
+	viewActive = false;
+	detailOpen = false;
+	listFetching = false;
+	cancelRequest();
+#endif
+}
+
 void tick()
 {
 #ifdef OPENSEA_API_KEY
-	// The reader comes first. flint's AGENTS.md: "A blocking fetch eats the keypress on top of it.
-	// Anything filling itself in the background waits for the reader to go still first." Every
-	// request below stalls this loop for the length of a TLS handshake, so none of them starts while
-	// a key is down — which also means the frame that says "asking OpenSea" is on the glass before
-	// the stall rather than after it.
-	//
-	// `isPressed`, never `isChange`: isChange is consuming, it updates the count it compares against
-	// while answering, and `view::loop` is the one caller allowed to hear about a press. Anything
-	// else that peeks at it eats every keypress on the device.
-	if (M5Cardputer.Keyboard.isPressed() != 0) {
+	if (!viewActive) {
 		return;
+	}
+	const uint32_t revision = net::revision();
+	if (revision != networkRevision) {
+		networkRevision = revision;
+		listFetching = false;
+		lastAttempt = 0;
+		lastRequest = 0;
+		cancelRequest();
 	}
 	if (!net::haveCredentials() || !net::online()) {
-		armed = false;
+		listFetching = false;
+		cancelRequest();
+		return;
+	}
+	consumeResult();
+	if (worker == nullptr) {
 		return;
 	}
 
-	const bool depth = detailDue();
-	// One request a tick. Two TLS handshakes in one pass is twice the stall for no extra
-	// information on the glass, and the second of them would be explained by a sentence the panel
-	// never got a frame to draw.
-	if (!depth && !trendingDue()) {
-		armed = false;
+	bool busy = false;
+	portENTER_CRITICAL(&publicationLock);
+	busy = publication.busy();
+	portEXIT_CRITICAL(&publicationLock);
+	if (busy) {
 		return;
 	}
-	if (!armed) {
-		armed = true;
-		armedForDetail = depth;
-		return;  // the frame that says what is about to happen. See `armed`.
-	}
-	armed = false;
 
-	if (depth) {
+	if (detailDue()) {
 		lastRequest = millis() == 0 ? 1 : millis();
 		// Holders first, because it is the facet Tab reaches first.
 		if (detailStore.holders.status == Status::Fetching) {
-			fetchHolders(detailStore.chain, detailStore.address);
+			startRequest(RequestKind::Holders, detailStore.chain, detailStore.address);
 		} else {
-			fetchActivity(detailStore.chain, detailStore.address);
+			startRequest(RequestKind::Activity, detailStore.chain, detailStore.address);
 		}
 		return;
 	}
+	if (!trendingDue()) {
+		return;
+	}
 	lastAttempt = millis() == 0 ? 1 : millis();
-	fetchTrending();
+	if (startRequest(RequestKind::Trending)) {
+		listFetching = true;
+	}
 #endif
 }
 
@@ -728,7 +971,7 @@ State state()
 	if (!net::online()) {
 		return {Status::Joining, "joining the saved network"};
 	}
-	if (armed && !armedForDetail) {
+	if (listFetching) {
 		return {Status::Fetching, "asking OpenSea what is trending"};
 	}
 	if (listFailed) {
@@ -747,8 +990,18 @@ void openDetail(size_t index)
 	// Already open and already fetched: stepping Tab through three facets is not three requests, and
 	// backing out to the list and opening the same row again is free.
 	if (detailIsForToken(detailStore, t)) {
+		detailOpen = true;
+		if (detailStore.holders.status == Status::Fetching ||
+		    detailStore.activity.status == Status::Fetching) {
+			lastRequest = 0;
+		}
 		return;
 	}
+	// A second identity supersedes unfinished depth for the first. The worker keeps ownership of its
+	// transport until it unwinds, and the generation gate prevents that completion from publishing.
+#ifdef OPENSEA_API_KEY
+	cancelRequest(true);
+#endif
 
 	memset(&detailStore, 0, sizeof(detailStore));
 	copyBounded(detailStore.address, sizeof(detailStore.address), t.address);
@@ -760,6 +1013,7 @@ void openDetail(size_t index)
 	// other two facets say plainly that there is nothing to ask for rather than showing a spinner
 	// forever.
 	if (!urlSafe(t.chain) || !urlSafe(t.address)) {
+		detailOpen = true;
 		detailStore.holders = {Status::Failed, "this token's address is not one we can ask about"};
 		detailStore.activity = detailStore.holders;
 		return;
@@ -767,6 +1021,7 @@ void openDetail(size_t index)
 
 	detailStore.holders = {Status::Fetching, "asking OpenSea who holds this"};
 	detailStore.activity = {Status::Fetching, "asking OpenSea what just traded"};
+	detailOpen = true;
 	// Asked for now, so the first request goes out on the very next tick rather than waiting out a
 	// gap that exists to separate two requests from each other.
 	lastRequest = 0;
@@ -774,9 +1029,12 @@ void openDetail(size_t index)
 
 void closeDetail()
 {
-	// Deliberately keeps everything that was fetched. A drawer checks the detail's chain and address
-	// together, so depth held for a row nobody has open is depth that costs nothing and saves a
-	// request if they open it again.
+	detailOpen = false;
+#ifdef OPENSEA_API_KEY
+	cancelRequest(true);
+#endif
+	// Completed depth stays cached. Unfinished work loses interest immediately, and the occupied slot
+	// is released only when its worker-owned request returns.
 }
 
 const Detail &detail()

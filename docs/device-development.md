@@ -85,7 +85,13 @@ node scripts/device.ts sim all
 Replace `all` with `cardputer` or `esp32` to work on one target. Every command requires exactly one
 target and fails when any requested action is skipped or incomplete. The build command compiles the
 Cardputer ADV `cardputer-adv-anchor` environment and the ESP32 `pulse/` sketch. The simulator command
-runs both programs headlessly and requires each to produce its expected smoke output.
+runs both programs headlessly and requires each to produce its expected smoke output. The ESP32
+also taps through Explore, a token, Back, Portfolio, and Wi-Fi, checking visible labels on the
+actual LVGL screen, including partial portfolio coverage, a lost feed, and a 32-network scan
+followed by keyboard input. Forget-network checks verify that cancellation preserves the saved profile
+and confirmation removes it. Text checks fail for hidden or fully clipped labels. Simulator assertions
+and draw-layer allocation failures stop the process; each interaction run also has a 30-second timeout.
+Simulator credentials and readings are fixtures.
 
 The normal build preserves local firmware behavior. If there is no untracked `secrets.h`, the
 OpenSea network reader compiles to its explicit disabled state. In CI, `CI=true` also runs a second,
@@ -97,11 +103,11 @@ a flashable image containing the placeholder. No real credential is needed for b
 temporary header. Use a clean checkout for this check when your development tree has credentials.
 
 CI caches only downloaded dependencies. Board images and simulator results are rebuilt when firmware
-inputs change. Documentation and known independent workspaces skip the firmware job's expensive
-steps. Firmware sources, submodules, toolchain pins, device scripts, and build configuration select
-the full check. Unknown paths or an unavailable Git comparison also select the full check.
-The cache key includes `devices/toolchain.json`, so changing a pin forces bootstrap to validate a new
-dependency set.
+inputs change. Cardputer and ESP32 run as parallel jobs with separate dependency caches. A change
+inside one target selects that target; shared firmware, toolchain pins, device scripts, and build
+configuration select both. Documentation and known independent workspaces skip compilation.
+Unknown paths or an unavailable Git comparison select both targets. Each cache key includes
+`devices/toolchain.json`, so bootstrap validates the pinned dependency set after a pin changes.
 
 These commands never upload to hardware. A simulator checks layout, state transitions, and host-side
 logic. It cannot measure panel addressing, color order, touch coordinates, radio behavior, battery

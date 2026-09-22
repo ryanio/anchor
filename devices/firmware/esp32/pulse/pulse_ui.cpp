@@ -21,6 +21,12 @@ lv_obj_t *frame = nullptr;
 ReadingView reading_view;
 StatusView status_view;
 Screen::Kind showing = Screen::Kind::Status;
+void (*explore_action)() = nullptr;
+
+void openExplore(lv_event_t *)
+{
+	if (explore_action != nullptr) explore_action();
+}
 
 /* --------------------------------------------------------------------------------- the power --- */
 
@@ -309,6 +315,10 @@ void build(const Screen &screen)
 
 	reading_view = buildReading(frame);
 	status_view = buildStatus(frame, false);
+	lv_obj_set_width(reading_view.title, 190);
+	lv_obj_t *explore = makeButton(frame, PANEL_W - INSET - 108, 24, 108, 44,
+	                               "Explore", type::label());
+	lv_obj_add_event_cb(explore, openExplore, LV_EVENT_CLICKED, nullptr);
 
 	/*
 	 * The battery chip, on the frame rather than on either page.
@@ -437,6 +447,11 @@ bool powerConfirmShowing()
 void dismissPowerConfirm()
 {
 	hideConfirm();
+}
+
+void onExplore(void (*action)())
+{
+	explore_action = action;
 }
 
 }  // namespace pulse_ui

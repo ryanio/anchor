@@ -1,5 +1,47 @@
 # The ESP32 pulse display
 
+## Current independent app runtime
+
+The LVGL pool is 128 KiB, allocated from PSRAM first. The former 64 KiB pool hung when opening
+Wi-Fi from Explore: a 7,872-byte render layer exceeded the largest free block of 7,232 bytes.
+96 KiB passed the ordinary flow but exhausted memory with 32 scan results. At 128 KiB, the simulator
+completed the maximum scan and opened the keyboard with 26,960 bytes free in its LVGL pool.
+The simulator fails on allocation warnings and reports peak usage. This does not measure the
+separate TLS stack or internal heap on the physical board.
+
+The supported target is the Waveshare AMOLED `pulse/` firmware described in
+[device development](device-development.md). It fetches and renders on the device. Earlier USB
+pixel transport and provisioning proposals later in this document are historical designs.
+
+The ambient screen has an Explore button. Explore lists trending tokens, opens a token's price,
+24h change, volume, and full identity, and links to the configured portfolio and Wi-Fi settings.
+The list, details, and portfolio use the existing LVGL chooser components. A selected token is
+identified by chain and address; a touch captures that identity before a refresh can reorder rows.
+A token that leaves the list retains its last reading with a saved/stale label. Freshness and wallet
+coverage stay visible.
+
+Pulse Wi-Fi owns the radio. The feed receives configuration, connection, setup, and network revision
+state from the main loop. One worker handles one immutable request at a time. Network changes,
+opening setup, and wallet changes invalidate unfinished work. Only the main loop publishes display
+state, after checking the request generation. Previous wallet totals are cleared when the address
+list changes. Transport phases and response-body time are bounded; cancellation lets the worker
+unwind its own HTTP/TLS objects.
+
+Up to four successfully joined networks are remembered. Selecting a remembered network reuses its
+password. A failed replacement preserves and restores the previous good configuration. Wi-Fi
+association is separate from an OpenSea response, so connected Wi-Fi alone is not reported as
+working internet. Captive portals and iPhone hotspot behavior need physical testing.
+
+The simulator uses the firmware's own setup and loop exactly once. Scripted taps and visible-label
+assertions exercise navigation; host C++ tests exercise the request coordinator. Neither can verify
+panel addressing, touch settling on glass, TLS stack headroom, radio behavior, or battery runtime.
+Those observations belong in the hardware inventory after testing.
+
+## Historical host transport design
+
+The sections below record the earlier USB/LAN display experiment. They do not describe the supported
+independent `pulse/` build. Its network fetches and rendering run on the device, as described above.
+
 The second Anchor device, and the first that is not on a bus.
 
 The Stream Deck taught the device layer what a device is: it declares slots, Anchor paints surfaces

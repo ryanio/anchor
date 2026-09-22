@@ -42,6 +42,7 @@ StatusView result;
  * one of a pair goes, leaving a 166 px hole beside it that read as a second button that failed to
  * draw. Hiding one now simply re-centres the other. */
 lv_obj_t *result_retry = nullptr;
+lv_obj_t *result_retry_label = nullptr;
 lv_obj_t *result_dismiss = nullptr;
 lv_obj_t *result_dismiss_label = nullptr;
 
@@ -88,6 +89,9 @@ constexpr size_t SSID_MAX = 32;   /* 802.11 says 32 octets */
 constexpr size_t WIFI_PASS_MAX = 63;   /* WPA2-PSK passphrase maximum */
 constexpr size_t PASS_MIN = 8;    /* and its minimum, which is worth saying before a join, not after */
 constexpr int MAX_NETWORKS = 32;  /* what the list keeps; it scrolls, so this is memory, not a view */
+constexpr size_t MAX_PROFILES = 4;
+constexpr size_t PROFILE_BLOB_MAX =
+    4 + MAX_PROFILES * (SSID_MAX * 2 + 1 + WIFI_PASS_MAX * 2 + 1);
 
 enum class State : uint8_t {
 	Closed,     /* not on screen */
@@ -98,6 +102,7 @@ enum class State : uint8_t {
 	Joining,    /* on screen, waiting for the radio */
 	Joined,     /* on screen, it worked */
 	Failed,     /* on screen, it did not, and why */
+	ConfirmForget,
 };
 
 struct Network {
@@ -121,6 +126,11 @@ struct Attempt {
 	bool open;
 };
 
+struct Profile {
+	char ssid[SSID_MAX + 1];
+	char pass[WIFI_PASS_MAX + 1];
+};
+
 State state = State::Closed;
 bool built = false;
 bool auto_open_done = false;
@@ -131,6 +141,10 @@ bool have_saved = false;
 char saved_ssid[SSID_MAX + 1] = {0};
 char saved_pass[WIFI_PASS_MAX + 1] = {0};
 uint32_t last_retry_at = 0;
+uint32_t network_revision = 1;
+Profile profiles[MAX_PROFILES];
+size_t profile_count = 0;
+bool joined_saved = true;
 
 Network networks[MAX_NETWORKS];
 int network_count = 0;
@@ -177,15 +191,175 @@ void showPage(lv_obj_t *page)
 
 /* ------------------------------------------------------------------------------- credentials --- */
 
+int profileIndex(const char *ssid)
+{
+	if (ssid == nullptr || ssid[0] == '\0') return -1;
+	for (size_t i = 0; i < profile_count; i++) {
+		if (strcmp(profiles[i].ssid, ssid) == 0) return (int)i;
+	}
+	return -1;
+}
+
+char hexDigit(uint8_t value)
+{
+	return value < 10 ? (char)('0' + value) : (char)('a' + value - 10);
+}
+
+int hexValue(char value)
+{
+	if (value >= '0' && value <= '9') return value - '0';
+	if (value >= 'a' && value <= 'f') return value - 'a' + 10;
+	if (value >= 'A' && value <= 'F') return value - 'A' + 10;
+	return -1;
+}
+
+bool appendHex(char *blob, size_t capacity, size_t &used, const char *value)
+{
+	for (const uint8_t *at = (const uint8_t *)value; *at != 0; at++) {
+		if (used + 2 >= capacity) return false;
+		blob[used++] = hexDigit(*at >> 4);
+		blob[used++] = hexDigit(*at & 0x0f);
+	}
+	return true;
+}
+
+bool encodeProfiles(const Profile *source, size_t count, char *blob, size_t capacity)
+{
+	if (blob == nullptr || capacity < 4 || count > MAX_PROFILES) return false;
+	size_t used = 0;
+	blob[used++] = 'v';
+	blob[used++] = '1';
+	blob[used++] = ';';
+	for (size_t i = 0; i < count; i++) {
+		if (source[i].ssid[0] == '\0' || !appendHex(blob, capacity, used, source[i].ssid)) return false;
+		if (used + 1 >= capacity) return false;
+		blob[used++] = ',';
+		if (!appendHex(blob, capacity, used, source[i].pass)) return false;
+		if (used + 1 >= capacity) return false;
+		blob[used++] = ';';
+	}
+	blob[used] = '\0';
+	return true;
+}
+
+bool decodeHex(const char *begin, const char *end, char *out, size_t capacity)
+{
+	const size_t encoded = (size_t)(end - begin);
+	if ((encoded & 1u) != 0 || encoded / 2 >= capacity) return false;
+	size_t used = 0;
+	for (const char *at = begin; at < end; at += 2) {
+		const int high = hexValue(at[0]);
+		const int low = hexValue(at[1]);
+		if (high < 0 || low < 0) return false;
+		const char value = (char)((high << 4) | low);
+		if (value == '\0') return false;
+		out[used++] = value;
+	}
+	out[used] = '\0';
+	return true;
+}
+
+bool decodeProfiles(const char *blob, Profile *target, size_t &count)
+{
+	count = 0;
+	if (blob == nullptr || strncmp(blob, "v1;", 3) != 0) return false;
+	const char *at = blob + 3;
+	while (*at != '\0') {
+		if (count == MAX_PROFILES) return false;
+		const char *comma = strchr(at, ',');
+		if (comma == nullptr) return false;
+		const char *end = strchr(comma + 1, ';');
+		if (end == nullptr || comma == at) return false;
+		if (!decodeHex(at, comma, target[count].ssid, sizeof(target[count].ssid)) ||
+		    !decodeHex(comma + 1, end, target[count].pass, sizeof(target[count].pass))) {
+			return false;
+		}
+		count++;
+		at = end + 1;
+	}
+	return true;
+}
+
+void activateProfiles(const Profile *source, size_t count)
+{
+	memset(profiles, 0, sizeof(profiles));
+	if (count > 0) memcpy(profiles, source, count * sizeof(Profile));
+	profile_count = count;
+	have_saved = count > 0;
+	if (have_saved) {
+		snprintf(saved_ssid, sizeof(saved_ssid), "%s", profiles[0].ssid);
+		snprintf(saved_pass, sizeof(saved_pass), "%s", profiles[0].pass);
+	} else {
+		saved_ssid[0] = '\0';
+		saved_pass[0] = '\0';
+	}
+}
+
+bool writeCanonicalProfiles(const Profile *source, size_t count)
+{
+	char blob[PROFILE_BLOB_MAX];
+	if (!encodeProfiles(source, count, blob, sizeof(blob))) return false;
+	prefs.begin("anchor-wifi", false);
+	const size_t written = prefs.putString("profiles", blob);
+	prefs.end();
+	return written == strlen(blob);
+}
+
+void writeLegacyActive()
+{
+	prefs.begin("anchor-wifi", false);
+	if (have_saved) {
+		prefs.putString("ssid", saved_ssid);
+		if (saved_pass[0] == '\0') {
+			prefs.remove("pass");
+		} else {
+			prefs.putString("pass", saved_pass);
+		}
+	} else {
+		prefs.remove("ssid");
+		prefs.remove("pass");
+	}
+	prefs.end();
+}
+
 void loadCredentials()
 {
 	prefs.begin("anchor-wifi", true);
-	const String ssid = prefs.getString("ssid", "");
-	const String pass = prefs.getString("pass", "");
+	const String blob = prefs.getString("profiles", "");
+	const String legacy_ssid = prefs.getString("ssid", "");
+	const String legacy_pass = prefs.getString("pass", "");
 	prefs.end();
-	snprintf(saved_ssid, sizeof(saved_ssid), "%s", ssid.c_str());
-	snprintf(saved_pass, sizeof(saved_pass), "%s", pass.c_str());
-	have_saved = saved_ssid[0] != '\0';
+
+	Profile loaded[MAX_PROFILES] = {};
+	size_t loaded_count = 0;
+	if (blob.length() < PROFILE_BLOB_MAX && decodeProfiles(blob.c_str(), loaded, loaded_count)) {
+		activateProfiles(loaded, loaded_count);
+		return;
+	}
+
+	if (legacy_ssid.length() == 0 || legacy_ssid.length() > SSID_MAX ||
+	    legacy_pass.length() > WIFI_PASS_MAX) {
+		activateProfiles(loaded, 0);
+		return;
+	}
+	snprintf(loaded[0].ssid, sizeof(loaded[0].ssid), "%s", legacy_ssid.c_str());
+	snprintf(loaded[0].pass, sizeof(loaded[0].pass), "%s", legacy_pass.c_str());
+	activateProfiles(loaded, 1);
+	/* A failed migration leaves the legacy credential intact and usable. */
+	writeCanonicalProfiles(loaded, 1);
+}
+
+void makeCandidate(const char *ssid, const char *pass, Profile *candidate, size_t &count)
+{
+	memset(candidate, 0, MAX_PROFILES * sizeof(Profile));
+	const int existing = profileIndex(ssid);
+	snprintf(candidate[0].ssid, sizeof(candidate[0].ssid), "%s", ssid);
+	snprintf(candidate[0].pass, sizeof(candidate[0].pass), "%s", pass == nullptr ? "" : pass);
+	count = 1;
+	for (size_t i = 0; i < profile_count && count < MAX_PROFILES; i++) {
+		if ((int)i == existing) continue;
+		candidate[count++] = profiles[i];
+	}
 }
 
 /*
@@ -201,16 +375,20 @@ void loadCredentials()
  * forever, and a write that changes nothing is indistinguishable from no write at all except in
  * wear.
  */
-void persist(const Attempt &joined)
+bool persist(const Attempt &joined)
 {
-	if (strcmp(saved_ssid, joined.ssid) == 0 && strcmp(saved_pass, joined.pass) == 0) return;
-	prefs.begin("anchor-wifi", false);
-	prefs.putString("ssid", String(joined.ssid));
-	prefs.putString("pass", String(joined.pass));
-	prefs.end();
-	snprintf(saved_ssid, sizeof(saved_ssid), "%s", joined.ssid);
-	snprintf(saved_pass, sizeof(saved_pass), "%s", joined.pass);
-	have_saved = true;
+	const int existing = profileIndex(joined.ssid);
+	const bool already_active =
+	    strcmp(saved_ssid, joined.ssid) == 0 && strcmp(saved_pass, joined.pass) == 0;
+	const bool already_profile = existing >= 0 && strcmp(profiles[existing].pass, joined.pass) == 0;
+	if (already_active && already_profile && existing == 0) return true;
+	Profile candidate[MAX_PROFILES];
+	size_t candidate_count = 0;
+	makeCandidate(joined.ssid, joined.pass, candidate, candidate_count);
+	if (!writeCanonicalProfiles(candidate, candidate_count)) return false;
+	activateProfiles(candidate, candidate_count);
+	writeLegacyActive();
+	return true;
 }
 
 /* ---------------------------------------------------------------------------------- the scan --- */
@@ -274,6 +452,7 @@ void collectScan(int16_t found)
 }
 
 void onNetworkPicked(lv_event_t *event);
+void onForgetPicked(lv_event_t *event);
 
 /*
  * The list, rebuilt from `networks`.
@@ -333,6 +512,11 @@ void rebuildList()
 
 		lv_obj_set_user_data(row, (void *)(intptr_t)i);
 		lv_obj_add_event_cb(row, onNetworkPicked, LV_EVENT_CLICKED, nullptr);
+	}
+	if (profile_count > 0) {
+		lv_obj_t *forget = lv_list_add_button(pick.list, nullptr, "Forget saved networks...");
+		styleChooserRow(forget);
+		lv_obj_add_event_cb(forget, onForgetPicked, LV_EVENT_CLICKED, nullptr);
 	}
 }
 
@@ -411,7 +595,7 @@ void showResult()
 			snprintf(result_info_text, sizeof(result_info_text), "%s",
 			         WiFi.localIP().toString().c_str());
 			copy.support = result_info_text;
-			copy.note = "Saved on this unit.";
+			copy.note = joined_saved ? "Saved on this unit." : "Connected, but could not save.";
 			lv_obj_add_flag(result_retry, LV_OBJ_FLAG_HIDDEN);
 			lv_obj_remove_flag(result_dismiss, LV_OBJ_FLAG_HIDDEN);
 			lv_label_set_text(result_dismiss_label, "Done");
@@ -424,7 +608,18 @@ void showResult()
 			copy.note = "Nothing was saved.";
 			lv_obj_remove_flag(result_retry, LV_OBJ_FLAG_HIDDEN);
 			lv_obj_remove_flag(result_dismiss, LV_OBJ_FLAG_HIDDEN);
+			lv_label_set_text(result_retry_label, "Try again");
 			lv_label_set_text(result_dismiss_label, "Back");
+			break;
+		case State::ConfirmForget:
+			copy.headline = "Forget networks?";
+			copy.detail = "All saved Wi-Fi profiles";
+			copy.tone = Tone::Warn;
+			copy.support = result_info_text;
+			lv_obj_remove_flag(result_retry, LV_OBJ_FLAG_HIDDEN);
+			lv_obj_remove_flag(result_dismiss, LV_OBJ_FLAG_HIDDEN);
+			lv_label_set_text(result_retry_label, "Forget");
+			lv_label_set_text(result_dismiss_label, "Cancel");
 			break;
 		default:
 			break;
@@ -464,6 +659,9 @@ void startScan()
 
 void startTyping(const char *ssid, bool for_ssid, bool open)
 {
+	/* Remember the archetype's width rather than copying its reveal-button arithmetic here. */
+	static int32_t password_field_width = 0;
+	if (password_field_width == 0) password_field_width = lv_obj_get_width(typing.field);
 	typing_ssid = for_ssid;
 	pending_open = open;
 	snprintf(pending_ssid, sizeof(pending_ssid), "%s", ssid == nullptr ? "" : ssid);
@@ -478,6 +676,17 @@ void startTyping(const char *ssid, bool for_ssid, bool open)
 	lv_textarea_set_max_length(typing.field, for_ssid ? (uint32_t)SSID_MAX : (uint32_t)WIFI_PASS_MAX);
 	lv_label_set_text(typing.reveal_label, LV_SYMBOL_EYE_OPEN);
 	lv_keyboard_set_mode(typing.keyboard, LV_KEYBOARD_MODE_TEXT_LOWER);
+	lv_textarea_set_placeholder_text(typing.field, for_ssid ? "Network name" : "passphrase");
+	lv_obj_set_width(typing.field, for_ssid ? SAFE_W : password_field_width);
+	if (for_ssid) {
+		lv_obj_add_flag(typing.reveal, LV_OBJ_FLAG_HIDDEN);
+		lv_label_set_text(typing.hint,
+		                  LV_SYMBOL_NEXT "  next      " LV_SYMBOL_KEYBOARD "  goes back");
+	} else {
+		lv_obj_remove_flag(typing.reveal, LV_OBJ_FLAG_HIDDEN);
+		lv_label_set_text(typing.hint,
+		                  LV_SYMBOL_OK "  joins      " LV_SYMBOL_KEYBOARD "  goes back");
+	}
 
 	lv_obj_set_style_text_color(typing.subtitle, hex(colour::ink_dim), LV_PART_MAIN);
 	if (for_ssid) {
@@ -504,6 +713,7 @@ void startJoin(const char *ssid, const char *pass, bool open)
 	snprintf(attempt.ssid, sizeof(attempt.ssid), "%s", ssid == nullptr ? "" : ssid);
 	snprintf(attempt.pass, sizeof(attempt.pass), "%s", pass == nullptr ? "" : pass);
 	attempt.open = open;
+	if (++network_revision == 0) network_revision = 1;
 
 	state = State::Joining;
 	join_started_at = millis();
@@ -541,8 +751,24 @@ void onNetworkPicked(lv_event_t *event)
 		 * here anyway on the retry path, offering a password screen for a network that wants none. */
 		startJoin(net.ssid, "", true);
 	} else {
-		startTyping(net.ssid, false, false);
+		const int saved = profileIndex(net.ssid);
+		if (saved >= 0) {
+			/* A profile exists only after a successful join. Reuse it for switching without asking the
+			 * person holding the unit to type the same passphrase again. A refusal still leaves the
+			 * profile intact and Try again opens the keyboard for a changed passphrase. */
+			startJoin(net.ssid, profiles[saved].pass, false);
+		} else {
+			startTyping(net.ssid, false, false);
+		}
 	}
+}
+
+void onForgetPicked(lv_event_t *event)
+{
+	(void)event;
+	state = State::ConfirmForget;
+	snprintf(result_info_text, sizeof(result_info_text), "This unit will go offline.");
+	showResult();
 }
 
 void onRescan(lv_event_t *event)
@@ -723,6 +949,15 @@ void onKeyboardCancel(lv_event_t *event)
 void onRetry(lv_event_t *event)
 {
 	(void)event;
+	if (state == State::ConfirmForget) {
+		if (clearSaved()) {
+			startScan();
+		} else {
+			snprintf(result_info_text, sizeof(result_info_text), "Could not update saved networks.");
+			showResult();
+		}
+		return;
+	}
 	if (attempt.open) {
 		startJoin(attempt.ssid, "", true);
 	} else {
@@ -739,6 +974,7 @@ void onDismiss(lv_event_t *event)
 	}
 	state = State::Picking;
 	showPage(pick.page);
+	rebuildList();
 	refreshPickStatus();
 }
 
@@ -803,7 +1039,7 @@ void build()
 	/* ---- the result, which is the status archetype with two buttons in it ---- */
 	result = buildStatus(screen, true /* with actions */);
 	result_retry = makeButton(result.actions, 0, 0, STATUS_ACTION_PAIR_W, STATUS_ACTION_H, "Try again",
-	                          type::subhead());
+	                          type::subhead(), &result_retry_label);
 	lv_obj_add_event_cb(result_retry, onRetry, LV_EVENT_CLICKED, nullptr);
 	result_dismiss = makeButton(result.actions, 0, 0, STATUS_ACTION_PAIR_W, STATUS_ACTION_H, "Back",
 	                            type::subhead(), &result_dismiss_label);
@@ -841,7 +1077,7 @@ void tickJoining()
 	if (now == WL_CONNECTED) {
 		state = State::Joined;
 		/* The only call site. See `persist()`. */
-		persist(attempt);
+		joined_saved = persist(attempt);
 		showResult();
 		setStatus("wi-fi: on %s at %s", attempt.ssid, WiFi.localIP().toString().c_str());
 		return;
@@ -991,7 +1227,17 @@ void close()
 	WiFi.scanDelete();
 	if (return_screen != nullptr) lv_screen_load(return_screen);
 	if (have_saved && WiFi.status() != WL_CONNECTED) {
-		setStatus("wi-fi: %s saved, not connected", saved_ssid);
+		/* A failed replacement never overwrites the last good profile. Restore it immediately rather
+		 * than waiting thirty seconds with the radio still aimed at the rejected credential. */
+		if (strcmp(attempt.ssid, saved_ssid) != 0 || strcmp(attempt.pass, saved_pass) != 0) {
+			if (++network_revision == 0) network_revision = 1;
+			WiFi.mode(WIFI_STA);
+			WiFi.begin(saved_ssid, saved_pass);
+			last_retry_at = millis();
+			setStatus("wi-fi: restoring %s", saved_ssid);
+		} else {
+			setStatus("wi-fi: %s saved, not connected", saved_ssid);
+		}
 	} else if (!have_saved) {
 		setStatus("wi-fi: no network saved on this unit");
 	}
@@ -1000,6 +1246,28 @@ void close()
 bool connected()
 {
 	return WiFi.status() == WL_CONNECTED;
+}
+
+bool configured()
+{
+	return have_saved;
+}
+
+uint32_t revision()
+{
+	return network_revision;
+}
+
+bool clearSaved()
+{
+	Profile empty[MAX_PROFILES] = {};
+	if (!writeCanonicalProfiles(empty, 0)) return false;
+	activateProfiles(empty, 0);
+	writeLegacyActive();
+	if (++network_revision == 0) network_revision = 1;
+	WiFi.disconnect();
+	setStatus("wi-fi: no network saved on this unit");
+	return true;
 }
 
 const char *status()

@@ -85,7 +85,7 @@
 
 #if LV_USE_STDLIB_MALLOC == LV_STDLIB_BUILTIN
     /*
-     * ANCHOR: 256 kB rather than the template's 64, and the pool comes out of PSRAM.
+     * ANCHOR: 128 KiB rather than the template's 64, and the pool comes out of PSRAM.
      *
      * Internal SRAM is the scarce thing on this part and `app/app.ino` says why in two places: the
      * 8 kB tile buffer is kept internal *because* it is memcpy'd through on every byte, and the
@@ -97,24 +97,20 @@
      * The template's default would put all of it in an internal static array, which on this board is
      * a quarter of what is left after the USB stack.
      *
-     * **64 kB is measured, not guessed.** This started at 256 kB of pure headroom; `lv_mem_monitor()`
-     * in the boot banner then reported the whole screen resident in **8,768 bytes** — 4% of that
-     * pool, zero fragmentation — so the headroom was thirty times the thing it was protecting. At
-     * 64 kB the same screen reports 8,816 bytes and 15%; the 48-byte difference is TLSF's own block
-     * bookkeeping, which is the check that the number is the allocator's and not a coincidence. 64 kB
-     * is that figure with room for a font glyph cache, a second screen and an image decoder that do
-     * not exist yet, and it is still an order of magnitude more than the tree costs today. What
-     * would falsify it: the banner reporting a used percentage anywhere near 100, or a widget simply
-     * not appearing, which is how an LVGL allocation failure presents. Read the banner before
-     * changing this number in either direction.
+     * Explore plus Wi-Fi setup outgrew the former 64 kB pool. The scripted navigation test
+     * reproduced a layer-allocation retry loop: 7,432 bytes free, largest block 7,232 bytes,
+     * against a required 7,872-byte layer. A 96 kB pool still failed with 32 scan results.
+     * Keep 128 kB for the combined screens and their transient
+     * draw layers. The simulator uses this same budget, fails on an allocation warning, and tests
+     * scan, typing and navigation together. Physical TLS heap and stack headroom are separate
+     * measurements; a passing LVGL test does not establish either one.
      *
      * `heap_caps_malloc` is the ESP-IDF allocator. The host simulator compiles this same file
      * against `sim/include/esp_heap_caps.h`, which is a shim over `malloc` with a `--no-psram`
-     * switch, so the pool is configured identically in both builds and neither needs an `#ifdef` —
-     * which is also why the 8,768-byte figure above, taken on the desktop, means anything about the
-     * board.
+     * switch, so both builds exercise the same pool budget. Platform object sizes can still differ;
+     * the desktop figures above are regression evidence, not measurements of board heap usage.
      */
-    #define LV_MEM_SIZE (64 * 1024U)          /*[bytes]*/
+    #define LV_MEM_SIZE (128 * 1024U)          /*[bytes]*/
 
     /*Size of the memory expand for `lv_malloc()` in bytes*/
     #define LV_MEM_POOL_EXPAND_SIZE 0
@@ -339,7 +335,11 @@
  *-----------*/
 
 /*Enable the log module*/
+#ifdef ANCHOR_SIMULATOR
+#define LV_USE_LOG 1
+#else
 #define LV_USE_LOG 0
+#endif
 #if LV_USE_LOG
 
     /*How important log should be added:
@@ -395,8 +395,13 @@
 #define LV_USE_ASSERT_OBJ           0   /*Check the object's type and existence (e.g. not deleted). (Slow)*/
 
 /*Add a custom handler when assert happens e.g. to restart the MCU*/
+#ifdef ANCHOR_SIMULATOR
+#define LV_ASSERT_HANDLER_INCLUDE <stdlib.h>
+#define LV_ASSERT_HANDLER abort();   /* Fail the check instead of spinning forever. */
+#else
 #define LV_ASSERT_HANDLER_INCLUDE <stdint.h>
 #define LV_ASSERT_HANDLER while(1);   /*Halt by default*/
+#endif
 
 /*-------------
  * Debug

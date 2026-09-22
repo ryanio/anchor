@@ -8,7 +8,7 @@ proposed identifiers only. The devices have not been physically labelled or matc
 
 | Inventory slots | Count | Product Ryan identified | What is known now |
 |---|---:|---|---|
-| CP-01 through CP-03 | 3 | [M5Stack Cardputer-Adv, SKU K132-ADV](https://shop.m5stack.com/products/m5stack-cardputer-adv-version-esp32-s3) | Intended onsite fleet. Current firmware and the identity of each USB-attached unit are not recorded. |
+| CP-01 through CP-03 | 3 | [M5Stack Cardputer-Adv, SKU K132-ADV](https://shop.m5stack.com/products/m5stack-cardputer-adv-version-esp32-s3) | Intended onsite fleet. One USB identity is recorded below; firmware revision and fleet labels remain unverified. |
 | ESP-01 through ESP-03 | 3 | [Waveshare ESP32-S3-Touch-AMOLED-1.8](https://www.waveshare.com/esp32-s3-touch-amoled-1.8.htm) | Intended onsite fleet. Ryan reports that the ESP32 setup has lithium batteries installed, with capacity unknown. Battery presence has not been independently checked on every unit. Current firmware and per-unit board revisions are not recorded. |
 
 Two attached devices have appeared with USB ID `303a:1001`, Espressif USB JTAG/serial. That ID does
@@ -23,6 +23,20 @@ On 2026-09-21, Ryan reported the following for the two devices plugged into this
 
 These observations confirm the displayed screens only. They do not identify the firmware revision,
 map either unit to a USB port or inventory slot, or verify input, Wi-Fi association, or internet access.
+
+## USB identification on 2026-09-22
+
+Read-only esptool identification mapped the two reconnected units:
+
+| Current port | Device | Flash and PSRAM | USB serial / MAC suffix |
+|---|---|---|---|
+| `/dev/cu.usbmodem101` | Cardputer ADV | 8 MB embedded flash | `76:2e:80` |
+| `/dev/cu.usbmodem2101` | Waveshare AMOLED | 16 MB flash, 8 MB embedded PSRAM | `3a:d3:f0` |
+
+The USB registry serials match the chip MACs. Port names can change after replugging; compare the
+serial identity before uploading. These units still need physical fleet labels. Both installed
+partition tables byte-match their respective new builds. The identification commands performed normal
+resets, but did not write firmware or read wallet data or network credentials.
 
 ## Vendor specifications
 
@@ -62,3 +76,16 @@ findings in [The ESP32 display](devices-esp32.md) remain required for this hardw
 - Observe a boot and basic input on every unit: display and keyboard on Cardputers, and display and
   touch on Waveshare boards. Record failures rather than treating a successful build as a hardware
   test.
+
+## Public demo identity
+
+The public API resolved `ryanryanryanryan` to
+`0x1da1a0e5f6a72b24c9ebd331cd265b7e0e140db3` on 2026-09-21. Resolution supplies one canonical
+address, not the complete linked-wallet list. Use it as one configured wallet until more public
+addresses are explicitly supplied or resolved by a supported API.
+
+The read-only API check used the official SDK and a key supplied directly by 1Password. Trending
+returned 401 with `cf-cache-status: BYPASS` without a key, then 200 with `MISS` using the key.
+Username resolution and that address's portfolio also returned 200 with `MISS`. Unique query
+parameters bypassed warmed responses. This proves those public reads from the development machine;
+it does not prove handheld Wi-Fi, TLS, or provisioning. No credential belongs in this inventory.

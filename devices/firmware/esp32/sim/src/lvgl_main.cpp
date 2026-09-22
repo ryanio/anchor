@@ -61,6 +61,7 @@ struct Step {
   int16_t x = 0;
   int16_t y = 0;
   bool touch = false;
+  std::string feed;
   /* 0 is `pulse_touch_sim.cpp`'s default tap. Anything else is a hold, which is how a gesture
    * defined by duration — `pulse_wifi`'s 1.4 s way back into setup — gets driven at all. */
   uint32_t hold_ms = 0;
@@ -68,6 +69,8 @@ struct Step {
 
 std::vector<Step> script;
 std::string shot_prefix;
+std::vector<std::string> expectedVisible;
+std::vector<std::string> expectedPrefixes;
 uint32_t gap_ms = 1200;
 /*
  * How long before the first scripted step. Two refresh periods would be enough to get a frame on
@@ -123,6 +126,26 @@ void describeTree(lv_obj_t *obj, int depth, lv_obj_t *root) {
   for (uint32_t i = 0; i < children; i++) {
     describeTree(lv_obj_get_child(obj, i), depth + 1, root);
   }
+}
+
+// Check the active screen and its clipped viewport, not hidden labels retained in other pages.
+bool visibleText(lv_obj_t *obj, const std::string &expected, lv_area_t viewport, bool prefix = false) {
+  if (lv_obj_has_flag(obj, LV_OBJ_FLAG_HIDDEN)) return false;
+  lv_area_t area;
+  lv_obj_get_coords(obj, &area);
+  area.x1 = area.x1 > viewport.x1 ? area.x1 : viewport.x1;
+  area.y1 = area.y1 > viewport.y1 ? area.y1 : viewport.y1;
+  area.x2 = area.x2 < viewport.x2 ? area.x2 : viewport.x2;
+  area.y2 = area.y2 < viewport.y2 ? area.y2 : viewport.y2;
+  if (area.x1 > area.x2 || area.y1 > area.y2) return false;
+  if (lv_obj_check_type(obj, &lv_label_class) &&
+      (prefix ? strncmp(lv_label_get_text(obj), expected.c_str(), expected.size()) == 0
+              : expected == lv_label_get_text(obj)) &&
+      lv_area_get_width(&area) > 0 && lv_area_get_height(&area) > 0) return true;
+  for (uint32_t i = 0; i < lv_obj_get_child_count(obj); ++i) {
+    if (visibleText(lv_obj_get_child(obj, i), expected, area, prefix)) return true;
+  }
+  return false;
 }
 
 void describe() {
@@ -261,8 +284,8 @@ void usage() {
       "  --lead MS           time before the first step (default 1500)\n"
       "  --shot PREFIX       write PREFIX-NN.ppm before every step and once at the end\n"
       "  --quit-after MS     stop this long after setup() returned\n"
-      "  --wifi              wire pulse_wifi in, as pulse.ino will (begin/tick/hold gesture)\n"
-      "  --power             wire pulse_power in, as pulse.ino will (begin/tick/hold gesture)\n"
+      "  --wifi              report Wi-Fi attempts and saved fixture credentials\n"
+      "  --power             report simulated power state and shutdown commands\n"
       "  --battery PCT[,MV][,usb][,charging][,none]  what the scripted AXP2101 answers; implies\n"
       "                      --power. Registers only, never silicon — see sim/include/Wire.h\n"
       "  --networks \"A:-40,B:-70:open\"  what a scan finds; strongest first is not assumed\n"
@@ -273,12 +296,16 @@ void usage() {
       "  --join-fail         every join fails, whatever was typed\n"
       "  --open-wifi         open Wi-Fi setup immediately, as the hold gesture would\n"
       "  --no-psram          refuse the SPIRAM allocation, to exercise the smaller draw buffer\n"
-      "  --quiet             do not print the boot banner\n");
+      "  --quiet             do not print the boot banner\n"
+      "  --then-feed NAME    switch feed fixture as the next scripted step\n"
+      "  --expect-visible T  fail unless exact label T is visible on the final screen (repeatable)\n"
+      "  --expect-visible-prefix T  require a visible label beginning with T (repeatable)\n");
 }
 
 }  // namespace
 
 int main(int argc, char **argv) {
+  setvbuf(stdout, nullptr, _IONBF, 0);
   std::string saved_ssid;
   std::string saved_pass;
   bool have_saved = false;
@@ -308,6 +335,10 @@ int main(int argc, char **argv) {
         step.hold_ms = ms;
         script.push_back(step);
       }
+    } else if (strcmp(arg, "--then-feed") == 0 && more) {
+      Step step;
+      step.feed = argv[++i];
+      script.push_back(step);
     } else if (strcmp(arg, "--wait") == 0) {
       script.push_back(Step{});
     } else if (strcmp(arg, "--gap") == 0 && more) {
@@ -318,6 +349,10 @@ int main(int argc, char **argv) {
       shot_prefix = argv[++i];
     } else if (strcmp(arg, "--quit-after") == 0 && more) {
       quit_after_ms = (uint32_t)strtoul(argv[++i], nullptr, 10);
+    } else if (strcmp(arg, "--expect-visible") == 0 && more) {
+      expectedVisible.emplace_back(argv[++i]);
+    } else if (strcmp(arg, "--expect-visible-prefix") == 0 && more) {
+      expectedPrefixes.emplace_back(argv[++i]);
     } else if (strcmp(arg, "--feed") == 0 && more) {
       feed::simScenario(argv[++i]);
     } else if (strcmp(arg, "--wifi") == 0) {
@@ -376,42 +411,22 @@ int main(int argc, char **argv) {
 
   Serial.simConnect(true);
   setup();
+  lv_log_register_print_cb([](lv_log_level_t, const char *message) {
+    fputs(message, stderr);
+    if (strstr(message, "Allocating layer buffer failed") != nullptr) {
+      lv_mem_monitor_t memory;
+      lv_mem_monitor(&memory);
+      fprintf(stderr, "sim: layer allocation failed: free=%u largest=%u used=%u%%\n",
+              (unsigned)memory.free_size, (unsigned)memory.free_biggest_size,
+              (unsigned)memory.used_pct);
+      abort();
+    }
+  });
 
-  /*
-   * The Wi-Fi module, wired here rather than in `pulse.ino`.
-   *
-   * `pulse_wifi` was written while another agent owned `pulse.ino`, so these are the exact lines
-   * that go into the sketch, executed from the harness instead: `begin()` after the resting screen
-   * exists, `attachOpenGesture()` on the object that screen offers as its touch surface, and
-   * `tick()` once per pass. Nothing about the module's behaviour depends on which file calls them —
-   * what is being driven below is `pulse_wifi.cpp` in full, against the real LVGL, the real
-   * `lv_conf.h` and the firmware's own display and indev.
-   *
-   * It is opt-in (`--wifi`) so that every existing scenario in `README.md` renders exactly the frame
-   * it rendered yesterday.
-   */
-  if (wifi_wired) {
-    pulse_wifi::begin();
-    pulse_wifi::attachOpenGesture(pulse_ui::surface());
-    if (open_wifi) pulse_wifi::open();
-  }
-
-  /*
-   * The power module, wired here for exactly the reason `pulse_wifi` is: `pulse.ino` is owned by
-   * another task, so these are the lines that go into the sketch, executed from the harness instead.
-   * They are the whole of the wiring — `begin()` after the bus and after the screen exists, the
-   * gesture on the chip that screen drew, and a `tick()` plus a push of the state once per pass.
-   *
-   * Opt-in (`--power`) so that every existing scenario in `README.md` renders the frame it rendered
-   * yesterday, and because a unit whose PMU does not answer is a state worth being able to photograph
-   * too — it is what a board with a dead or absent AXP2101 looks like.
-   */
-  if (power_wired) {
-    pulse_power::begin();
-    pulse_ui::setBattery(pulse_power::state());
-    pulse_ui::attachPowerGesture(pulse_power::powerOff);
-    printf("sim: %s\n", pulse_power::describe());
-  }
+  // setup() owns module initialization and event handlers. Repeating it here
+  // registers gestures twice and tests a different boot from the actual device.
+  if (open_wifi) pulse_wifi::open();
+  if (power_wired) printf("sim: %s\n", pulse_power::describe());
 
   if (!quiet) {
     printf("--- boot banner ---\n%s-------------------\n", Serial.simText().c_str());
@@ -431,7 +446,9 @@ int main(int argc, char **argv) {
       capture();
       if (next_step < script.size()) {
         const Step &step = script[next_step];
-        if (step.touch) {
+        if (!step.feed.empty()) {
+          feed::simScenario(step.feed.c_str());
+        } else if (step.touch) {
           printf("  touch (%d,%d)%s", (int)step.x, (int)step.y, step.hold_ms == 0 ? "\n" : "");
           if (step.hold_ms != 0) printf(" held %ums\n", (unsigned)step.hold_ms);
           pulse_touch::simQueuePress(step.x, step.y, step.hold_ms);
@@ -444,11 +461,6 @@ int main(int argc, char **argv) {
     }
 
     loop();
-    if (wifi_wired) pulse_wifi::tick();
-    if (power_wired) {
-      pulse_power::tick();
-      pulse_ui::setBattery(pulse_power::state());
-    }
     /*
      * One millisecond per pass on top of whatever `loop()` slept.
      *
@@ -506,6 +518,23 @@ int main(int argc, char **argv) {
     lv_mem_monitor(&monitor);
     printf("sim: lv_mem %u total, %u free, %u%% used, %u%% frag\n", (unsigned)monitor.total_size,
            (unsigned)monitor.free_size, (unsigned)monitor.used_pct, (unsigned)monitor.frag_pct);
+    printf("sim: lv_mem peak %u bytes, largest free block %u bytes\n",
+           (unsigned)monitor.max_used, (unsigned)monitor.free_biggest_size);
+  }
+  lv_obj_t *active = lv_screen_active();
+  lv_area_t viewport;
+  lv_obj_get_coords(active, &viewport);
+  for (const auto &expected : expectedVisible) {
+    if (!visibleText(active, expected, viewport)) {
+      fprintf(stderr, "sim: expected visible label missing: %s\n", expected.c_str());
+      return 1;
+    }
+  }
+  for (const auto &expected : expectedPrefixes) {
+    if (!visibleText(active, expected, viewport, true)) {
+      fprintf(stderr, "sim: expected visible label prefix missing: %s\n", expected.c_str());
+      return 1;
+    }
   }
   return 0;
 }

@@ -2,7 +2,7 @@
 
 #include "Preferences.h"
 
-#include <cstdio>
+#include <fstream>
 #include <map>
 #include <string>
 
@@ -15,26 +15,23 @@ bool loaded = false;
 void load() {
   if (loaded) return;
   loaded = true;
-  FILE *in = fopen(store_path.c_str(), "rb");
-  if (in == nullptr) return;
-  char line[512];
-  while (fgets(line, sizeof(line), in) != nullptr) {
-    std::string text(line);
-    while (!text.empty() && (text.back() == '\n' || text.back() == '\r')) text.pop_back();
+  std::ifstream in(store_path, std::ios::binary);
+  if (!in) return;
+  std::string text;
+  while (std::getline(in, text)) {
+    if (!text.empty() && text.back() == '\r') text.pop_back();
     const size_t tab = text.find('\t');
     if (tab == std::string::npos) continue;
     entries[text.substr(0, tab)] = text.substr(tab + 1);
   }
-  fclose(in);
 }
 
 void save() {
-  FILE *out = fopen(store_path.c_str(), "wb");
-  if (out == nullptr) return;
+  std::ofstream out(store_path, std::ios::binary | std::ios::trunc);
+  if (!out) return;
   for (const auto &entry : entries) {
-    fprintf(out, "%s\t%s\n", entry.first.c_str(), entry.second.c_str());
+    out << entry.first << '\t' << entry.second << '\n';
   }
-  fclose(out);
 }
 
 }  // namespace
@@ -59,6 +56,7 @@ void Preferences::end() {
 
 String Preferences::getString(const char *key, const char *fallback) {
   load();
+  if (!open_ || key == nullptr) return String(fallback);
   const auto found = entries.find(namespace_ + "/" + key);
   if (found == entries.end()) return String(fallback);
   return String(found->second);
@@ -69,15 +67,33 @@ size_t Preferences::putString(const char *key, const String &value) {
   // The real Preferences refuses a write to a namespace opened read-only. Refusing it here too is
   // the difference between a simulator that proves a save happened and one that only proves a
   // function was called.
-  if (read_only_) return 0;
+  if (!open_ || read_only_ || key == nullptr) return 0;
   entries[namespace_ + "/" + key] = std::string(value);
   save();
   return value.size();
 }
 
+bool Preferences::remove(const char *key) {
+  load();
+  if (!open_ || read_only_ || key == nullptr) return false;
+  const size_t removed = entries.erase(namespace_ + "/" + key);
+  if (removed != 0) save();
+  return removed != 0;
+}
+
 bool Preferences::clear() {
-  if (read_only_) return false;
-  entries.clear();
-  save();
+  load();
+  if (!open_ || read_only_) return false;
+  const std::string prefix = namespace_ + "/";
+  bool removed = false;
+  for (auto entry = entries.begin(); entry != entries.end();) {
+    if (entry->first.compare(0, prefix.size(), prefix) == 0) {
+      entry = entries.erase(entry);
+      removed = true;
+    } else {
+      ++entry;
+    }
+  }
+  if (removed) save();
   return true;
 }

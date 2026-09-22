@@ -142,6 +142,9 @@ void build(const Screen &screen);
  * makes. */
 void update(const Screen &screen);
 
+// Opens the token browser from a visible header action on either resting screen.
+void onExplore(void (*action)());
+
 /*
  * Just the footer line, which is the one field that changes every second whether anything else does
  * or not. Separate so that a ticking age does not mark four unchanged numbers dirty.

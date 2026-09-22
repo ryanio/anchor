@@ -106,6 +106,9 @@ void seed(size_t count) {
 		snprintf(scenario_tokens[i].price, sizeof(scenario_tokens[i].price), "%s", SEEDS[i].price);
 		snprintf(scenario_tokens[i].change, sizeof(scenario_tokens[i].change), "%s", SEEDS[i].change);
 		scenario_tokens[i].changePositive = SEEDS[i].positive;
+		snprintf(scenario_tokens[i].chain, sizeof(scenario_tokens[i].chain), "solana");
+		snprintf(scenario_tokens[i].address, sizeof(scenario_tokens[i].address), "ExampleToken%u", (unsigned)i);
+		snprintf(scenario_tokens[i].volume, sizeof(scenario_tokens[i].volume), "$1.2M");
 	}
 }
 
@@ -286,7 +289,7 @@ void simScenario(const char *name) {
 
 void begin() {}
 
-void tick(bool) {}
+void tick(bool, bool, bool, uint32_t) {}
 
 Snapshot snapshot() {
 	Snapshot out{};

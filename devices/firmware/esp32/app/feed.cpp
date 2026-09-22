@@ -1,5 +1,7 @@
 #include "feed.h"
 
+#include "feed_request.h"
+
 /*
  * Every include here is unconditional, and that is a correction rather than a style choice.
  *
@@ -143,6 +145,23 @@ void formatUsd(double value, char *out, size_t n) {
 		snprintf(out, n, "$%.2f", value);
 	} else {
 		snprintf(out, n, "$%.4f", value);
+	}
+}
+
+void formatBigUsd(double value, char *out, size_t n) {
+	if (!isfinite(value)) {
+		snprintf(out, n, "--");
+		return;
+	}
+	const double magnitude = fabs(value);
+	if (magnitude >= 1000000000.0) {
+		snprintf(out, n, "$%.1fB", value / 1000000000.0);
+	} else if (magnitude >= 1000000.0) {
+		snprintf(out, n, "$%.1fM", value / 1000000.0);
+	} else if (magnitude >= 1000.0) {
+		snprintf(out, n, "$%.0fK", value / 1000.0);
+	} else {
+		formatUsd(value, out, n);
 	}
 }
 
@@ -329,10 +348,25 @@ namespace {
 void fillRowFilter(JsonObject row) {
 	row["symbol"] = true;
 	row["name"] = true;
+	row["chain"] = true;
+	row["address"] = true;
 	row["usdPrice"] = true;
 	row["usd_price"] = true;
 	row["priceChange24h"] = true;
 	row["price_change_24h"] = true;
+	row["volume24h"] = true;
+	row["volume_24h"] = true;
+}
+
+bool copyIdentity(char *out, size_t n, const char *in) {
+	if (out == nullptr || n < 2 || in == nullptr || in[0] == '\0') return false;
+	size_t length = 0;
+	for (; in[length] != '\0'; length++) {
+		const unsigned char value = (unsigned char)in[length];
+		if (length + 1 >= n || value < 0x20 || value > 0x7e) return false;
+	}
+	memcpy(out, in, length + 1);
+	return true;
 }
 
 /*
@@ -420,6 +454,10 @@ size_t parseTrending(Stream &in, Token *out, size_t max, const char **err) {
 		memset(&token, 0, sizeof(token));
 		copyBounded(token.symbol, sizeof(token.symbol), entry["symbol"] | "");
 		copyBounded(token.name, sizeof(token.name), entry["name"] | "");
+		if (!copyIdentity(token.chain, sizeof(token.chain), entry["chain"] | "") ||
+		    !copyIdentity(token.address, sizeof(token.address), entry["address"] | "")) {
+			continue;
+		}
 		/*
 		 * A row with neither a symbol nor a name is unshowable, so it is dropped rather than drawn
 		 * as a blank line with a price beside it. Same judgement `readTrendingTokens` makes when it
@@ -433,7 +471,10 @@ size_t parseTrending(Stream &in, Token *out, size_t max, const char **err) {
 		if (price.isNull()) price = entry["usd_price"];
 		JsonVariantConst change_field = entry["priceChange24h"];
 		if (change_field.isNull()) change_field = entry["price_change_24h"];
+		JsonVariantConst volume_field = entry["volume24h"];
+		if (volume_field.isNull()) volume_field = entry["volume_24h"];
 		formatUsd(numberOf(price), token.price, sizeof(token.price));
+		formatBigUsd(numberOf(volume_field), token.volume, sizeof(token.volume));
 		const double change = numberOf(change_field);
 		formatPercent(change, token.change, sizeof(token.change));
 		token.changePositive = isfinite(change) && change >= 0.0;
@@ -642,11 +683,12 @@ constexpr uint32_t WALLET_GAP_MS = 500;
  * the glass yet, so this is only ever a unit that was re-pointed between polls. A minute is faster
  * than the portfolio refreshes anyway. */
 constexpr uint32_t WALLET_RECHECK_MS = 60000;
-constexpr uint32_t JOIN_RETRY_MS = 30000;
-constexpr uint32_t CRED_RECHECK_MS = 5000;
 constexpr uint32_t CONNECT_TIMEOUT_MS = 8000;
 constexpr uint32_t READ_TIMEOUT_MS = 8000;
 constexpr uint32_t HANDSHAKE_TIMEOUT_S = 15;
+/* A per-read timeout still permits a peer to send one byte before every expiry forever. Body parsing
+ * gets an absolute deadline as well, checked alongside cancellation on every stream operation. */
+constexpr uint32_t BODY_BUDGET_MS = 10000;
 
 /*
  * A ceiling on what this unit will read.
@@ -711,20 +753,37 @@ bool portfolioEver = false;
 bool portfolioFetching = false;
 const char *portfolioFailReason = nullptr;
 
-/* What the worker has been asked to do. Set under the lock by `tick()`, drained by the worker. Two
- * bits rather than two tasks: the jobs are minutes apart, they share one TLS-sized stack, and doing
- * them on one task is what guarantees only one handshake is ever in flight on this unit. */
-constexpr uint8_t JOB_TRENDING = 1u << 0;
-constexpr uint8_t JOB_PORTFOLIO = 1u << 1;
-uint8_t pendingJobs = 0;
+/* One persistent worker and one fixed job slot. A running request keeps the slot even after the loop
+ * cancels interest, so its HTTP and TLS objects always unwind on their owning task. */
+constexpr size_t WALLET_ADDRESS_MAX = 64;
+struct RequestJob {
+	Request request;
+	char wallets[MAX_WALLETS][WALLET_ADDRESS_MAX + 1];
+	size_t walletsAsked;
+	size_t walletsConfigured;
+};
 
-/* Loop-task-owned: written and read only from `begin()`/`tick()`, so no lock. */
+struct RequestResult {
+	Request request;
+	bool ok;
+	const char *reason;
+	int httpCode;
+	uint32_t finishedAt;
+	uint32_t stackFree;
+	Token tokens[MAX_TOKENS];
+	size_t count;
+	Portfolio portfolio;
+};
+
+RequestCoordinator requests;
+RequestJob pendingJob{};
+RequestResult readyResult{};
 TaskHandle_t worker = nullptr;
-bool haveCreds = false;
-String savedSsid;
-String savedPass;
-uint32_t lastCredCheck = 0;
-uint32_t lastJoinMs = 0;
+bool workerUnavailable = false;
+bool networkConfigured = false;
+bool networkConnected = false;
+bool networkRadioBusy = false;
+uint32_t networkRevision = 0;
 uint32_t lastAttemptMs = 0;
 uint32_t lastPortfolioAttemptMs = 0;
 uint32_t lastWalletCheck = 0;
@@ -750,10 +809,13 @@ uint32_t lastWalletCheck = 0;
  * (the simulator's NVS is a text file, and `nvs_partition_gen` writes a real one), and the
  * compiled-in list is what a flashed unit runs on.
  */
-constexpr size_t ADDRESS_MAX = 64;
-char wallets[MAX_WALLETS][ADDRESS_MAX + 1];
-size_t walletsAsked = 0;
-size_t walletsConfigured = 0;
+struct WalletConfig {
+	char values[MAX_WALLETS][WALLET_ADDRESS_MAX + 1];
+	size_t asked;
+	size_t configured;
+	uint32_t revision;
+};
+WalletConfig walletConfig{};
 
 /*
  * What may be put into a URL path, checked character by character.
@@ -769,7 +831,7 @@ size_t walletsConfigured = 0;
  * encode: an address that would need it is refused instead.
  */
 bool addressLooksSane(const char *text, size_t length) {
-	if (length < 26 || length > ADDRESS_MAX) return false;
+	if (length < 26 || length > WALLET_ADDRESS_MAX) return false;
 	for (size_t i = 0; i < length; i++) {
 		const char c = text[i];
 		const bool alnum = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
@@ -788,9 +850,10 @@ bool addressLooksSane(const char *text, size_t length) {
  * Something that is not an address at all is not counted as a wallet the answer is missing: it is
  * not a wallet.
  */
-void splitWallets(const char *list) {
-	walletsAsked = 0;
-	walletsConfigured = 0;
+void splitWallets(WalletConfig &config, const char *list) {
+	memset(config.values, 0, sizeof(config.values));
+	config.asked = 0;
+	config.configured = 0;
 	if (list == nullptr) return;
 	size_t i = 0;
 	while (list[i] != '\0') {
@@ -806,16 +869,16 @@ void splitWallets(const char *list) {
 		const size_t length = i - start;
 		if (length == 0) continue;
 		if (!addressLooksSane(list + start, length)) continue;
-		walletsConfigured++;
-		if (walletsAsked < MAX_WALLETS) {
-			memcpy(wallets[walletsAsked], list + start, length);
-			wallets[walletsAsked][length] = '\0';
-			walletsAsked++;
+		config.configured++;
+		if (config.asked < MAX_WALLETS) {
+			memcpy(config.values[config.asked], list + start, length);
+			config.values[config.asked][length] = '\0';
+			config.asked++;
 		}
 	}
 }
 
-void loadWallets() {
+void readWallets(WalletConfig &config) {
 	Preferences prefs;
 	String stored;
 	if (prefs.begin("anchor-wallets", true /* read-only */)) {
@@ -823,42 +886,32 @@ void loadWallets() {
 		prefs.end();
 	}
 	if (stored.length() > 0) {
-		splitWallets(stored.c_str());
-		if (walletsConfigured > 0) return;
+		splitWallets(config, stored.c_str());
+		if (config.configured > 0) return;
 		/* Written but unusable — fall through to the compiled-in list rather than showing nothing.
 		 * A unit that was handed a malformed list is better off saying what it knows than saying
 		 * nothing, and the coverage label is what keeps that honest. */
 	}
 #if defined(ANCHOR_WALLETS)
-	splitWallets(ANCHOR_WALLETS);
+	splitWallets(config, ANCHOR_WALLETS);
 #else
-	splitWallets("");
+	splitWallets(config, "");
 #endif
 }
 
-/*
- * The network this unit was told to join, read rather than owned.
- *
- * `wifi_setup.cpp` is the only writer of the `anchor-wifi` namespace and it writes only after a
- * join has actually succeeded ("the measurement AGENTS.md asks for, not the assumption that typing
- * Join means it worked"). This module opens the same namespace read-only and never writes it: two
- * credential stores on one device is how a unit ends up replaying a passphrase that never worked.
- *
- * Re-read on a timer rather than once at boot, because the interesting case is a unit that starts
- * with nothing saved and has a network typed into it ten minutes later at the offsite. Reading once
- * would leave it saying "no WiFi saved" until a power cycle nobody thinks to perform.
- */
-void loadCredentials() {
-	Preferences prefs;
-	if (!prefs.begin("anchor-wifi", true /* read-only */)) {
-		/* The namespace does not exist yet: nothing has ever been saved on this unit. */
-		haveCreds = false;
-		return;
-	}
-	savedSsid = prefs.getString("ssid", "");
-	savedPass = prefs.getString("pass", "");
-	prefs.end();
-	haveCreds = savedSsid.length() > 0;
+bool sameWalletConfig(const WalletConfig &left, const WalletConfig &right) {
+	return left.asked == right.asked && left.configured == right.configured &&
+	       memcmp(left.values, right.values, sizeof(left.values)) == 0;
+}
+
+bool refreshWallets() {
+	WalletConfig next{};
+	readWallets(next);
+	if (sameWalletConfig(walletConfig, next)) return false;
+	next.revision = walletConfig.revision + 1u;
+	if (next.revision == 0) next.revision = 1;
+	walletConfig = next;
+	return true;
 }
 
 /*
@@ -885,12 +938,46 @@ const char *reasonForHttp(int code) {
 	return "OpenSea returned an unexpected status";
 }
 
+bool requestWanted(const Request &request) {
+	bool wanted = false;
+	portENTER_CRITICAL(&publishLock);
+	wanted = requests.current(request);
+	portEXIT_CRITICAL(&publishLock);
+	return wanted;
+}
+
+class BoundedBodyStream : public Stream {
+public:
+	BoundedBodyStream(Stream &source, const Request &request)
+	    : source_(source), request_(request), started_(millis()) {
+		setTimeout(READ_TIMEOUT_MS);
+	}
+
+	int available() override { return allowed() ? source_.available() : 0; }
+	int read() override { return allowed() ? source_.read() : -1; }
+	int peek() override { return allowed() ? source_.peek() : -1; }
+	void flush() override { source_.flush(); }
+	size_t write(uint8_t byte) override {
+		(void)byte;
+		return 0;
+	}
+	bool expired() const { return millis() - started_ >= BODY_BUDGET_MS; }
+	bool cancelled() const { return !requestWanted(request_); }
+
+private:
+	Stream &source_;
+	Request request_;
+	uint32_t started_;
+
+	bool allowed() const { return !expired() && !cancelled(); }
+};
+
 /*
  * One fetch, start to finish, on the worker task. Every blocking call in this module is inside it.
  */
-bool fetchOnce(Token *out, size_t &count, const char *&err, int &code) {
+bool fetchOnce(const Request &request, Token *out, size_t &count, const char *&err, int &code) {
 	count = 0;
-	if (WiFi.status() != WL_CONNECTED) {
+	if (!requestWanted(request) || WiFi.status() != WL_CONNECTED) {
 		err = "the network dropped mid-fetch";
 		return false;
 	}
@@ -920,6 +1007,11 @@ bool fetchOnce(Token *out, size_t &count, const char *&err, int &code) {
 	http.addHeader("X-API-KEY", OPENSEA_API_KEY);
 
 	code = http.GET();
+	if (!requestWanted(request)) {
+		err = "the request was cancelled";
+		http.end();
+		return false;
+	}
 	if (code != HTTP_CODE_OK) {
 		err = reasonForHttp(code);
 		http.end();
@@ -935,8 +1027,17 @@ bool fetchOnce(Token *out, size_t &count, const char *&err, int &code) {
 	}
 
 	err = nullptr;
-	count = parseTrending(http.getStream(), out, MAX_TOKENS, &err);
+	BoundedBodyStream body(http.getStream(), request);
+	count = parseTrending(body, out, MAX_TOKENS, &err);
 	http.end();
+	if (body.cancelled()) {
+		err = "the request was cancelled";
+		return false;
+	}
+	if (body.expired()) {
+		err = "the response took too long to read";
+		return false;
+	}
 	if (count == 0) {
 		if (err == nullptr) err = "the trending list came back empty";
 		return false;
@@ -952,8 +1053,9 @@ bool fetchOnce(Token *out, size_t &count, const char *&err, int &code) {
  * ceiling and the header are properties of *this unit talking to OpenSea*, not of one endpoint, and
  * a second copy of them is a second place for `setInsecure()` to appear during a debugging session.
  */
-bool fetchPortfolioOnce(const char *address, Figures &out, const char *&err, int &code) {
-	if (WiFi.status() != WL_CONNECTED) {
+bool fetchPortfolioOnce(const Request &request, const char *address, Figures &out, const char *&err,
+                        int &code) {
+	if (!requestWanted(request) || WiFi.status() != WL_CONNECTED) {
 		err = "the network dropped mid-fetch";
 		return false;
 	}
@@ -984,6 +1086,11 @@ bool fetchPortfolioOnce(const char *address, Figures &out, const char *&err, int
 	http.addHeader("X-API-KEY", OPENSEA_API_KEY);
 
 	code = http.GET();
+	if (!requestWanted(request)) {
+		err = "the request was cancelled";
+		http.end();
+		return false;
+	}
 	if (code != HTTP_CODE_OK) {
 		err = reasonForHttp(code);
 		http.end();
@@ -999,8 +1106,17 @@ bool fetchPortfolioOnce(const char *address, Figures &out, const char *&err, int
 	}
 
 	err = nullptr;
-	const bool ok = parsePortfolio(http.getStream(), out, &err);
+	BoundedBodyStream body(http.getStream(), request);
+	const bool ok = parsePortfolio(body, out, &err);
 	http.end();
+	if (body.cancelled()) {
+		err = "the request was cancelled";
+		return false;
+	}
+	if (body.expired()) {
+		err = "the response took too long to read";
+		return false;
+	}
 	if (!ok && err == nullptr) err = "the portfolio did not parse";
 	return ok;
 }
@@ -1017,9 +1133,9 @@ bool fetchPortfolioOnce(const char *address, Figures &out, const char *&err, int
  * one function: **every** wallet is read, the money is summed as integers, and a wallet that did not
  * answer raises `configured` above `covered` instead of vanishing.
  */
-bool fetchPortfolio(Portfolio &out, const char *&err, int &code) {
+bool fetchPortfolio(const RequestJob &job, Portfolio &out, const char *&err, int &code) {
 	memset(&out, 0, sizeof(out));
-	out.configured = walletsConfigured;
+	out.configured = job.walletsConfigured;
 	snprintf(out.total, sizeof(out.total), "--");
 	snprintf(out.nftValue, sizeof(out.nftValue), "--");
 	snprintf(out.change, sizeof(out.change), "--");
@@ -1032,12 +1148,22 @@ bool fetchPortfolio(Portfolio &out, const char *&err, int &code) {
 	bool havePnl = false;
 	const char *lastErr = nullptr;
 
-	for (size_t i = 0; i < walletsAsked; i++) {
-		if (i > 0) delay(WALLET_GAP_MS);
+	for (size_t i = 0; i < job.walletsAsked; i++) {
+		if (!requestWanted(job.request)) {
+			err = "the request was cancelled";
+			return false;
+		}
+		if (i > 0) {
+			delay(WALLET_GAP_MS);
+			if (!requestWanted(job.request)) {
+				err = "the request was cancelled";
+				return false;
+			}
+		}
 		Figures figures;
 		const char *walletErr = nullptr;
 		int walletCode = 0;
-		if (!fetchPortfolioOnce(wallets[i], figures, walletErr, walletCode)) {
+		if (!fetchPortfolioOnce(job.request, job.wallets[i], figures, walletErr, walletCode)) {
 			lastErr = walletErr;
 			code = walletCode;
 			continue;
@@ -1116,83 +1242,94 @@ void workerTask(void *) {
 	for (;;) {
 		ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 
-		uint8_t jobs = 0;
+		RequestJob job{};
+		bool wanted = false;
 		portENTER_CRITICAL(&publishLock);
-		jobs = pendingJobs;
-		pendingJobs = 0;
+		job = pendingJob;
+		wanted = requests.current(job.request);
 		portEXIT_CRITICAL(&publishLock);
 
-		if (jobs & JOB_TRENDING) {
-			Token staging[MAX_TOKENS];
-			memset(staging, 0, sizeof(staging));
-			size_t count = 0;
+		RequestResult result{};
+		result.request = job.request;
+		if (wanted) {
 			const char *err = nullptr;
-			int code = 0;
-			const bool ok = fetchOnce(staging, count, err, code);
-			const uint32_t finishedAt = millis();
-			/* ESP-IDF reports this in bytes, unlike vanilla FreeRTOS; see WORKER_STACK_BYTES. */
-			const uint32_t stackFree = (uint32_t)uxTaskGetStackHighWaterMark(nullptr);
-
-			/*
-			 * Publish. Nothing above this line touched shared state and nothing below it can block —
-			 * which is the whole reason the parse happens into `staging` first rather than into
-			 * `published` directly. A renderer that caught a half-replaced list would show one token's
-			 * symbol against another's price.
-			 */
-			portENTER_CRITICAL(&publishLock);
-			fetching = false;
-			lastHttpCode = code;
-			workerStackFree = stackFree;
-			if (ok) {
-				memcpy(published, staging, sizeof(published));
-				publishedCount = count;
-				lastSuccessMs = finishedAt;
-				everSucceeded = true;
-				failReason = nullptr;
-			} else {
-				failReason = err != nullptr ? err : "the fetch failed";
+			if (job.request.kind == RequestKind::Trending) {
+				result.ok = fetchOnce(job.request, result.tokens, result.count, err, result.httpCode);
+			} else if (job.request.kind == RequestKind::Portfolio) {
+				result.ok = fetchPortfolio(job, result.portfolio, err, result.httpCode);
 			}
-			portEXIT_CRITICAL(&publishLock);
+			result.reason = err;
 		}
+		result.finishedAt = millis();
+		result.stackFree = (uint32_t)uxTaskGetStackHighWaterMark(nullptr);
 
-		if (jobs & JOB_PORTFOLIO) {
-			/*
-			 * The same staging-then-publish shape, and here it also covers the *label*: `covered` and
-			 * `configured` are copied across in the same critical section as the total they describe.
-			 * A renderer that caught a new total beside an old coverage count would be showing "6 of
-			 * 6" over a figure summed from two — which is this project's worst bug with extra steps.
-			 */
-			Portfolio staging;
-			const char *err = nullptr;
-			int code = 0;
-			const bool ok = fetchPortfolio(staging, err, code);
-			const uint32_t finishedAt = millis();
-			const uint32_t stackFree = (uint32_t)uxTaskGetStackHighWaterMark(nullptr);
+		portENTER_CRITICAL(&publishLock);
+		if (requests.complete(job.request)) readyResult = result;
+		portEXIT_CRITICAL(&publishLock);
+	}
+}
 
-			portENTER_CRITICAL(&publishLock);
-			portfolioFetching = false;
-			lastHttpCode = code;
-			workerStackFree = stackFree;
-			if (ok) {
-				memcpy(&publishedPortfolio, &staging, sizeof(publishedPortfolio));
-				portfolioSuccessMs = finishedAt;
-				portfolioEver = true;
-				/*
-				 * A partial pass is a success wearing a label, not a failure.
-				 *
-				 * `Status::Failed` on this device means "what is on the glass is older than it
-				 * looks", and a total that just came back over two of three wallets is not old — it
-				 * is current and incomplete, which is a different sentence. The incompleteness is
-				 * carried by `covered` and `configured` and rendered next to the number itself, so
-				 * the label travels with the figure it qualifies rather than with the status.
-				 */
-				portfolioFailReason = nullptr;
-			} else {
-				portfolioFailReason = err != nullptr ? err : "the portfolio fetch failed";
-			}
-			portEXIT_CRITICAL(&publishLock);
+void applyResult(const RequestResult &result) {
+	portENTER_CRITICAL(&publishLock);
+	lastHttpCode = result.httpCode;
+	workerStackFree = result.stackFree;
+	if (result.request.kind == RequestKind::Trending) {
+		fetching = false;
+		if (result.ok) {
+			memcpy(published, result.tokens, sizeof(published));
+			publishedCount = result.count;
+			lastSuccessMs = result.finishedAt;
+			everSucceeded = true;
+			failReason = nullptr;
+		} else {
+			failReason = result.reason != nullptr ? result.reason : "the fetch failed";
+		}
+	} else if (result.request.kind == RequestKind::Portfolio) {
+		portfolioFetching = false;
+		if (result.ok) {
+			memcpy(&publishedPortfolio, &result.portfolio, sizeof(publishedPortfolio));
+			portfolioSuccessMs = result.finishedAt;
+			portfolioEver = true;
+			portfolioFailReason = nullptr;
+		} else {
+			portfolioFailReason =
+			    result.reason != nullptr ? result.reason : "the portfolio fetch failed";
 		}
 	}
+	portEXIT_CRITICAL(&publishLock);
+}
+
+void consumeResult() {
+	RequestResult result{};
+	bool ready = false;
+	portENTER_CRITICAL(&publishLock);
+	if (requests.consume() != 0) {
+		result = readyResult;
+		ready = true;
+	}
+	portEXIT_CRITICAL(&publishLock);
+	if (ready) applyResult(result);
+}
+
+bool startRequest(RequestKind kind) {
+	RequestJob job{};
+	portENTER_CRITICAL(&publishLock);
+	job.request = requests.start(kind);
+	if (job.request.ticket != 0) {
+		job.walletsAsked = walletConfig.asked;
+		job.walletsConfigured = walletConfig.configured;
+		memcpy(job.wallets, walletConfig.values, sizeof(job.wallets));
+		pendingJob = job;
+		if (kind == RequestKind::Trending) {
+			fetching = true;
+		} else {
+			portfolioFetching = true;
+		}
+	}
+	portEXIT_CRITICAL(&publishLock);
+	if (job.request.ticket == 0) return false;
+	xTaskNotifyGive(worker);
+	return true;
 }
 
 #endif /* ANCHOR_FEED_LIVE */
@@ -1205,98 +1342,86 @@ void begin() {
 #if ANCHOR_FEED_LIVE
 	memset(published, 0, sizeof(published));
 	memset(&publishedPortfolio, 0, sizeof(publishedPortfolio));
-	loadCredentials();
-	loadWallets();
-	lastCredCheck = millis();
+	readWallets(walletConfig);
+	walletConfig.revision = 1;
 	lastWalletCheck = millis();
-	/*
-	 * Seeded as though a join had just been attempted, because one has: `wifi_setup::begin()` runs
-	 * before this and starts an opportunistic station connect with these same credentials. Starting
-	 * the retry clock here rather than at zero is what stops this module firing a second,
-	 * identical `WiFi.begin()` in the same millisecond as that one.
-	 */
-	lastJoinMs = millis();
-	xTaskCreatePinnedToCore(workerTask, "anchor-feed", WORKER_STACK_BYTES, nullptr, WORKER_PRIORITY,
-	                        &worker, WORKER_CORE);
+	const BaseType_t created = xTaskCreatePinnedToCore(
+	    workerTask, "anchor-feed", WORKER_STACK_BYTES, nullptr, WORKER_PRIORITY, &worker, WORKER_CORE);
+	portENTER_CRITICAL(&publishLock);
+	requests.setWorkerAvailable(created == pdPASS);
+	if (created != pdPASS) {
+		worker = nullptr;
+		workerUnavailable = true;
+		failReason = "could not start background requests";
+		portfolioFailReason = "could not start background requests";
+	}
+	portEXIT_CRITICAL(&publishLock);
 #endif
 }
 
-void tick(bool radioBusy) {
+void tick(bool configured, bool connected, bool radioBusy, uint32_t revision) {
 #if !ANCHOR_FEED_LIVE
+	(void)configured;
+	(void)connected;
 	(void)radioBusy;
+	(void)revision;
 #else
 	/*
-	 * Everything in this function is a comparison, a `WiFi.status()` read, or a notification post.
-	 * There is no DNS here, no socket, no TLS, no parse and no allocation — those are all on the
-	 * worker task, on the other core. That is the guarantee: `tick()` cannot take longer than a
-	 * handful of microseconds because there is nothing in it that *can* take longer, not because
-	 * the network is usually fast. What would falsify it: any blocking call added below, or a
-	 * `portENTER_CRITICAL` section that grows something that waits.
+	 * Network I/O and response parsing stay on the worker. This loop coordinates requests and
+	 * periodically reads the wallet configuration from NVS; that local read can allocate Strings.
+	 * It does not perform DNS, open sockets, or wait for TLS. Adding those operations here would
+	 * break the separation that keeps network timeouts off the input/rendering task.
 	 */
-	if (worker == nullptr) {
-		return; /* `begin()` was never called, or the task would not start. */
-	}
 	const uint32_t now = millis();
 
-	if (!haveCreds) {
-		if (now - lastCredCheck < CRED_RECHECK_MS) {
-			return;
-		}
-		lastCredCheck = now;
-		loadCredentials();
-		if (!haveCreds) {
-			return;
+	bool walletsChanged = false;
+	if (now - lastWalletCheck >= WALLET_RECHECK_MS) {
+		lastWalletCheck = now;
+		walletsChanged = refreshWallets();
+		if (walletsChanged) {
+			memset(&publishedPortfolio, 0, sizeof(publishedPortfolio));
+			portfolioEver = false;
+			portfolioSuccessMs = 0;
+			portfolioFailReason = nullptr;
+			lastPortfolioAttemptMs = 0;
 		}
 	}
 
-	/*
-	 * Hands off while the setup UI owns the radio. Somebody is standing in front of the unit
-	 * picking a network or typing a passphrase, and a `WiFi.begin()` from here would join over the
-	 * top of the one they are making — the same class of bug as `wifi_setup.cpp`'s `entry` versus
-	 * `connectingPass`, where the credential used was not the credential meant.
-	 */
-	if (radioBusy) {
-		return;
+	networkConfigured = configured;
+	networkConnected = connected;
+	networkRadioBusy = radioBusy;
+	networkRevision = revision;
+	const RequestContext context = {configured, connected, radioBusy, revision,
+	                                walletConfig.revision};
+	portENTER_CRITICAL(&publishLock);
+	const Observation observation = requests.observe(context);
+	if (observation.networkChanged && !workerUnavailable) {
+		failReason = nullptr;
+		portfolioFailReason = nullptr;
+	}
+	if (observation.discarded || walletsChanged) {
+		fetching = false;
+		portfolioFetching = false;
+	}
+	portEXIT_CRITICAL(&publishLock);
+	if (observation.networkChanged) {
+		lastAttemptMs = 0;
+		lastPortfolioAttemptMs = 0;
 	}
 
-	if (WiFi.status() != WL_CONNECTED) {
-		if (now - lastJoinMs >= JOIN_RETRY_MS) {
-			lastJoinMs = now;
-			WiFi.mode(WIFI_STA);
-			if (savedPass.isEmpty()) {
-				WiFi.begin(savedSsid.c_str());
-			} else {
-				WiFi.begin(savedSsid.c_str(), savedPass.c_str());
-			}
-		}
-		return;
-	}
+	consumeResult();
+	if (worker == nullptr || workerUnavailable || !configured || !connected || radioBusy) return;
 
 	bool busy = false;
 	bool failing = false;
 	bool portfolioBusy = false;
 	bool portfolioFailing = false;
 	portENTER_CRITICAL(&publishLock);
-	busy = fetching;
+	busy = requests.busy();
 	failing = failReason != nullptr;
-	portfolioBusy = portfolioFetching;
 	portfolioFailing = portfolioFailReason != nullptr;
 	portEXIT_CRITICAL(&publishLock);
-
-	/*
-	 * Re-read the address list, on the same cadence and for the same reason as the credentials: a
-	 * unit that is re-pointed at a different set of addresses should notice without a power cycle.
-	 *
-	 * Guarded on neither fetch being in flight, because `wallets` is the one loop-task-owned array
-	 * the *worker* also reads — during a portfolio pass, one address at a time. Rewriting it under a
-	 * running fan-out would let a pass sum wallet A's figure and then wallet D's and call the result
-	 * three of three. The guard costs a poll interval of latency and buys a total that cannot be
-	 * assembled out of two different configurations.
-	 */
-	if (!busy && !portfolioBusy && now - lastWalletCheck >= WALLET_RECHECK_MS) {
-		lastWalletCheck = now;
-		loadWallets();
-	}
+	portfolioBusy = busy;
 
 	/* Back off less after a failure than after a success: a unit that just joined a network wants
 	 * its first screen, and a unit that is up to date does not want the radio. */
@@ -1304,11 +1429,7 @@ void tick(bool radioBusy) {
 		const uint32_t interval = failing ? RETRY_MS : POLL_MS;
 		if (lastAttemptMs == 0 || now - lastAttemptMs >= interval) {
 			lastAttemptMs = now == 0 ? 1 : now;
-			portENTER_CRITICAL(&publishLock);
-			fetching = true;
-			pendingJobs |= JOB_TRENDING;
-			portEXIT_CRITICAL(&publishLock);
-			xTaskNotifyGive(worker);
+			startRequest(RequestKind::Trending);
 			return;
 		}
 	}
@@ -1322,7 +1443,7 @@ void tick(bool radioBusy) {
 	 * and neither is dropped: a job that is due while the other is running simply fires on the next
 	 * pass through `loop()`, which is milliseconds away.
 	 */
-	if (busy || portfolioBusy || walletsAsked == 0) {
+	if (busy || portfolioBusy || walletConfig.asked == 0) {
 		return;
 	}
 	const uint32_t portfolioInterval = portfolioFailing ? PORTFOLIO_RETRY_MS : PORTFOLIO_POLL_MS;
@@ -1330,11 +1451,7 @@ void tick(bool radioBusy) {
 		return;
 	}
 	lastPortfolioAttemptMs = now == 0 ? 1 : now;
-	portENTER_CRITICAL(&publishLock);
-	portfolioFetching = true;
-	pendingJobs |= JOB_PORTFOLIO;
-	portEXIT_CRITICAL(&publishLock);
-	xTaskNotifyGive(worker);
+	startRequest(RequestKind::Portfolio);
 #endif
 }
 
@@ -1394,19 +1511,25 @@ Snapshot snapshot() {
 	 * whatever the answer is, because "no addresses" and "three addresses and no answer" are two
 	 * different screens.
 	 *
-	 * `walletsAsked` is read here from the loop task, which is also the only writer: `snapshot()` is
+	 * `walletConfig` is read here from the loop task, which is also the only writer: `snapshot()` is
 	 * called from `loop()` on this device, next to `tick()`.
 	 */
 	if (!out.portfolioEverSucceeded) {
-		out.portfolio.configured = walletsConfigured;
+		out.portfolio.configured = walletConfig.configured;
 	}
-	if (!haveCreds) {
+	if (workerUnavailable) {
+		out.portfolioStatus = Status::Failed;
+		out.portfolioReason = "could not start background requests";
+	} else if (!networkConfigured) {
 		out.portfolioStatus = Status::NoCredentials;
 		out.portfolioReason = "tap anywhere to set up wi-fi";
-	} else if (walletsAsked == 0) {
+	} else if (walletConfig.asked == 0) {
 		out.portfolioStatus = Status::NoWallets;
 		out.portfolioReason = "no addresses configured on this unit";
-	} else if (WiFi.status() != WL_CONNECTED) {
+	} else if (networkRadioBusy) {
+		out.portfolioStatus = Status::Joining;
+		out.portfolioReason = "wi-fi setup is open";
+	} else if (!networkConnected) {
 		out.portfolioStatus = Status::Joining;
 		out.portfolioReason = "joining the saved network";
 	} else if (portfolioBusy) {
@@ -1430,10 +1553,16 @@ Snapshot snapshot() {
 	 * arrived in an access point's beacon frame, was picked off a scan list, and is exactly as
 	 * untrusted as a token name. A network called `\e[2J` has no business on the panel.
 	 */
-	if (!haveCreds) {
+	if (workerUnavailable) {
+		out.status = Status::Failed;
+		out.reason = "could not start background requests";
+	} else if (!networkConfigured) {
 		out.status = Status::NoCredentials;
 		out.reason = "tap anywhere to set up wi-fi";
-	} else if (WiFi.status() != WL_CONNECTED) {
+	} else if (networkRadioBusy) {
+		out.status = Status::Joining;
+		out.reason = "wi-fi setup is open";
+	} else if (!networkConnected) {
 		out.status = Status::Joining;
 		out.reason = "joining the saved network";
 	} else if (busy) {

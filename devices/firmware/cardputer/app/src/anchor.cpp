@@ -1623,6 +1623,7 @@ void enter()
 	browseSel = 0;
 	browseFacet = 0;
 	browseReset();
+	standalone::enter();
 	sentLevel = -1;
 	savedBrightness = ui::gfx().getBrightness();
 	// The host clears its own per slot cache when a device says hello and
@@ -1633,6 +1634,7 @@ void enter()
 
 void leave()
 {
+	standalone::leave();
 	// An open filter must not outlive the screen it was filtering. Escape
 	// closes it on the host, and the loop took the key before this view could.
 	if (queryActive) {

@@ -3,6 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "../../../common/request_gate.h"
 #include "token_identity.h"
 
 // What this unit shows when nothing is plugged into it, fetched by this unit.
@@ -18,12 +19,36 @@
 // feature moved onto the unit: the same three facets in the same order, the same refusal to draw one
 // item's holders under another item's name, and the same endpoints.
 //
-// Deliberately narrow: public discovery data only. Never a wallet, never a portfolio, never anything
-// that needs more than an API key scoped to public reads. See app/src/secrets.h.example for
+// This reader currently serves public token discovery. Public portfolios can use an address list
+// in a future app; credentials that can act never belong here. See app/src/secrets.h.example for
 // OPENSEA_API_KEY and platformio.ini for FLINT_PROFILE_NETWORK, which is where the override of
 // flint's own "no secrets on the device" rule is argued. This module owns fetching, parsing and
 // saying what state it is in; it owns no pixels, and `anchor.cpp` owns every decision about drawing.
 namespace standalone {
+
+// Token identity is request input, so truncation or sanitization would change which token a detail
+// request names. Accept a nonempty printable string only when it fits whole.
+inline bool copyTokenIdentity(char *out, size_t n, const char *in)
+{
+	if (out == nullptr || n < 2) {
+		return false;
+	}
+	out[0] = '\0';
+	if (in == nullptr || in[0] == '\0') {
+		return false;
+	}
+	size_t length = 0;
+	for (; in[length] != '\0'; length++) {
+		const unsigned char value = (unsigned char)in[length];
+		if (length + 1 >= n || value < 0x20 || value > 0x7E) {
+			return false;
+		}
+	}
+	for (size_t i = 0; i <= length; i++) {
+		out[i] = in[i];
+	}
+	return true;
+}
 
 struct Token {
 	char symbol[12];
@@ -102,6 +127,42 @@ struct State {
 	const char *reason;
 };
 
+// The exact worker-to-loop publication primitive used by the firmware. It has no platform types so
+// the host regression harness can exercise the production handoff rather than a second model of it.
+// It is deliberately not thread safe: firmware guards every call with one short publication lock.
+template <typename Result>
+class RequestPublication {
+public:
+	using Ticket = anchor_request::Gate::Ticket;
+
+	Ticket start() { return gate.start(); }
+	void cancel() { gate.cancel(); }
+	bool busy() const { return gate.busy(); }
+	bool current(Ticket ticket) const { return gate.current(ticket); }
+
+	bool complete(Ticket ticket, const Result &result)
+	{
+		if (!gate.complete(ticket)) {
+			return false;
+		}
+		ready = result;
+		return true;
+	}
+
+	bool consume(Result &result)
+	{
+		if (gate.consume() == 0) {
+			return false;
+		}
+		result = ready;
+		return true;
+	}
+
+private:
+	anchor_request::Gate gate;
+	Result ready{};
+};
+
 // The depth behind the one item that is open.
 //
 // `chain` plus `address` is the whole safety property. `discoveryDetail` on the host holds one
@@ -141,20 +202,27 @@ inline bool detailIsForToken(const Detail &detail, const Token &token)
 extern Token tokens[MAX_TOKENS];
 extern size_t tokenCount;
 
-// Call every tick once flint's own `net::loop()` has run. Rate limits itself and defers around the
-// keyboard; safe to call every frame. Does nothing at all unless OPENSEA_API_KEY is compiled in.
+// View lifecycle. The worker is persistent once created; leave only cancels interest in its bounded
+// request and never kills a task or closes another task's TLS objects.
+void enter();
+void leave();
+
+// Call every tick once flint's own `net::loop()` has run. It only publishes completed work and wakes
+// the background worker, so network latency cannot stall input or drawing. Does nothing at all unless
+// OPENSEA_API_KEY is compiled in.
 void tick();
 
 // Why the trending list looks the way it does, whether or not it has rows.
 State state();
 
 // Open the depth behind one row, by index into `tokens`. Cheap and non blocking: it records what to
-// ask for and the next `tick()` that finds the reader still does the asking. Reopening the item that
+// ask for and the worker does the blocking request. Reopening the item that
 // is already open keeps what was already fetched rather than asking again — somebody stepping Tab
 // through three facets is not three requests.
 void openDetail(size_t index);
 
-// Nothing is open. Keeps the fetched depth, so backing out and opening the same row again is free.
+// Nothing is open. Keeps fetched depth, but cancels interest in unfinished depth. Reopening the same
+// row after that stale worker finishes starts a new generation, so the old result cannot land.
 void closeDetail();
 
 // The depth for whatever was last opened. Always check its full identity against the item drawn.

@@ -99,6 +99,15 @@ describe("failure behavior", () => {
     );
   });
 
+  test("a stalled simulator is bounded by the process timeout", () => {
+    const runner = new ProcessRunner();
+    assert.throws(
+      () =>
+        runner.run(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { quiet: true, timeoutMs: 100 }),
+      /timed out after 100 ms/,
+    );
+  });
+
   test("cache paths can be discarded without touching the checkout", () => {
     const root = mkdtempSync(join(tmpdir(), "anchor-device-test-"));
     try {

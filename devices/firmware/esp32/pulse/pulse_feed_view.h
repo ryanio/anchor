@@ -64,6 +64,9 @@ struct Token {
 	const char *price;
 	const char *change;
 	bool changePositive;
+	const char *chain = "";
+	const char *address = "";
+	const char *volume = "--";
 };
 
 /* Everything about the trending half, as `feed::Snapshot` knows it.

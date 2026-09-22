@@ -14,10 +14,26 @@ becomes `## [0.1.0] - YYYY-MM-DD` at the moment the tag is pushed, and not befor
 
 ### Added
 
-Firmware CI now checks changed paths before installing board toolchains. Documentation and known
-independent workspace changes skip compilation; firmware, dependency, and build-tool changes still
-compile both boards and run both simulators. Unknown inputs or an unavailable Git comparison run
-the full check.
+Cardputer OpenSea reads now run on a bounded background worker. App exit, token changes, and network
+changes invalidate unfinished work without destroying another task's HTTP objects. ESP32 feed reads
+use the same generation gate and one worker slot, and clear old portfolio totals when configured
+wallets change. Host regressions exercise the production request and publication rules.
+
+Both handhelds remember up to four successful Wi-Fi networks and preserve the previous configuration
+when a replacement join fails. Association and API availability remain separate states. Flint's
+blocking boot HTTPS probe is now opt-in.
+
+The ESP32 ambient display now opens Explore: trending tokens, token readings and full identity,
+portfolio coverage, and Wi-Fi settings. Selection survives list refresh by chain and address. Cached
+readings show their age and stale state. Scripted simulator taps check navigation and visible text.
+The LVGL simulator initializes the actual firmware once, removing duplicate Wi-Fi/power setup.
+Its allocation checks caught an insufficient display heap during Wi-Fi scans. The pool now supports
+Explore, all 32 scan results, and keyboard entry together; simulator interaction runs are time-bounded.
+
+Firmware CI checks changed paths before installing board toolchains. Each board has a parallel job
+and its own dependency cache. Target-specific edits compile that board; shared inputs select both.
+Documentation and known independent workspace changes skip compilation. Unknown inputs or an
+unavailable Git comparison run the full check. Both firmware variants still check active API readers.
 
 Device development now has a shared command for setup checks, pinned dependencies, physical
 firmware builds, and simulator smoke tests. `devices/toolchain.json` records the toolchain;

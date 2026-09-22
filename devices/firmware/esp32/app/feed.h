@@ -26,13 +26,13 @@
  *
  * Three things are different here, each because this board is different:
  *
- *   1. **The fetch runs on its own FreeRTOS task**, not inline in `tick()`. The Cardputer's
- *      `standalone::tick()` blocks its caller for the length of a TLS handshake; on this board the
- *      same loop also drives a 368x448 AMOLED and feeds `anchor_pulse_feed()`, and a blocking fetch
- *      is a frozen panel and a dropped frame. See `feed.cpp` for the guarantee and what bounds it.
- *   2. **Credentials come out of NVS**, written by `wifi_setup.cpp` under the `anchor-wifi`
- *      namespace, rather than from a compiled-in `WIFI_SSID`. A unit handed to somebody at the
- *      offsite gets its network typed on it; nothing about the network is baked in here.
+ *   1. **The fetch runs on its own FreeRTOS task**, not inline in `tick()`. Both handhelds now keep
+ *      network work off their UI loops. On this board the loop drives a 368x448 AMOLED and feeds
+ *      `anchor_pulse_feed()`, so a blocking fetch would freeze the panel and drop frames. See
+ *      `feed.cpp` for the guarantee and what bounds it.
+ *   2. **The Wi-Fi module owns the radio.** This module receives whether a saved network exists,
+ *      whether it is connected, whether setup is using the radio, and which network generation
+ *      those facts describe. It never reads a passphrase and never calls `WiFi.begin()`.
  *   3. **There is a status, and a reason.** AGENTS.md is not negotiable about this — an empty list
  *      must say *why* it is empty — and a panel that can draw a token list can draw a sentence.
  *
@@ -72,15 +72,14 @@
  * pin `devices/firmware/cardputer/flint/flint.ini` already carries for the sibling device. See the
  * comment above the includes in `feed.cpp` for why it cannot be an optional `__has_include`.
  *
- * **Nothing calls this yet.** `app.ino` is deliberately untouched: it is the working firmware, and
- * wiring a new subsystem into it is a change somebody should make on purpose rather than find. The
- * whole wiring is three lines — `feed::begin()` next to `wifi_setup::begin()` in `setup()`, and
- * `feed::tick(wifi_setup::active())` next to `wifi_setup::tick()` in `loop()`, with whatever draws
- * the panel calling `feed::snapshot()`. With no `app/secrets.h` present those three lines compile
- * to nothing at all: measured, `963,539` bytes of flash and `55,392` of static RAM either way,
- * byte-identical to the build before this module existed.
+ * `pulse/pulse.ino` wires this to `pulse_wifi`, which is the one owner of connection, retry and
+ * saved-network switching. With no `app/secrets.h` present the live worker compiles out and the
+ * snapshot explains that no OpenSea key is present.
  */
 namespace feed {
+
+constexpr size_t TOKEN_CHAIN_MAX = 16;
+constexpr size_t TOKEN_ADDRESS_MAX = 48;
 
 /*
  * One row, formatted.
@@ -101,6 +100,12 @@ struct Token {
 	char name[24];
 	char price[16];
 	char change[10];
+	char volume[16];
+	/* Chain plus address is the identity. These bounds match the Cardputer so both handhelds
+	 * accept and reject the same rows, and an overlong value is dropped rather than truncated into
+	 * an identity that never existed. */
+	char chain[TOKEN_CHAIN_MAX];
+	char address[TOKEN_ADDRESS_MAX];
 	bool changePositive;
 };
 
@@ -246,12 +251,11 @@ struct Snapshot {
 };
 
 /*
- * Call once, after `wifi_setup::begin()`.
+ * Call once during setup.
  *
- * Reads the saved network out of NVS and starts the worker task. Does not connect, does not fetch,
- * and returns immediately — `wifi_setup::begin()` has already started an opportunistic join with
- * the same credentials, and racing it here would only produce two `WiFi.begin()` calls in the same
- * millisecond.
+ * Reads the public wallet configuration and starts one persistent worker task. It does not connect
+ * or fetch. A worker-allocation failure becomes a visible failed snapshot rather than a feed that
+ * waits forever.
  *
  * Safe to call on a unit with no key compiled in: it short-circuits to `Status::Disabled` and
  * creates no task, so a checkout with no `secrets.h` costs a branch and one byte of RAM.
@@ -261,16 +265,16 @@ void begin();
 /*
  * Call every `loop()` pass. Never blocks.
  *
- * This function does no I/O at all: it compares a few `millis()` deltas, reads `WiFi.status()`, and
- * at most posts a notification to the worker task. The blocking parts — DNS, TCP, the TLS
- * handshake, the read, the parse — live on that task, pinned to the core the Arduino loop is not
- * running on. `feed.cpp` states the guarantee and what would falsify it.
+ * The fast path compares context and time, consumes a fixed-size staged result, and at most posts a
+ * task notification. DNS, TCP, TLS, body reads and parsing live on the worker. Once per minute it
+ * re-reads the small public wallet list from local NVS so a changed configuration invalidates an
+ * old total instead of leaking it under the new configuration.
  *
- * `radioBusy` is `wifi_setup::active()`. While the setup UI owns the radio somebody is picking or
- * typing a network, and a `WiFi.begin()` from here would join over the top of the one they are
- * making. Nothing else in this module cares who owns the panel.
+ * `networkRevision` changes when the intended network changes. Setup, disconnection, a revision
+ * change, or a wallet change cancels interest in the current ticket. The worker is never deleted
+ * while HTTP is active; its obsolete completion is rejected after its bounded unwind.
  */
-void tick(bool radioBusy = false);
+void tick(bool networkConfigured, bool connected, bool radioBusy, uint32_t networkRevision);
 
 /* The whole state, atomically. Cheap: a bounded `memcpy` inside a spinlock, no waiting. */
 Snapshot snapshot();

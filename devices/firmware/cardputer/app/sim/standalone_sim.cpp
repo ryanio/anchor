@@ -52,6 +52,8 @@ constexpr uint32_t ACTIVITY_MS = 1900;
 
 uint32_t openedAt = 0;
 bool listed = false;
+bool viewActive = false;
+bool detailOpen = false;
 
 struct Row {
 	const char *symbol;
@@ -147,7 +149,7 @@ uint32_t detailOpenedAt = 0;
 // thing worth looking at, and a fixture that filled both at the same instant would never show it.
 void fillDepth()
 {
-	if (detailOpenedAt == 0) {
+	if (!viewActive || !detailOpen || detailOpenedAt == 0) {
 		return;
 	}
 	if (detailStore.holderCount == 0 && millis() - detailOpenedAt >= HOLDERS_MS) {
@@ -201,8 +203,26 @@ bool forcedIs(const char *name)
 
 }  // namespace
 
+void enter()
+{
+	viewActive = true;
+}
+
+void leave()
+{
+	viewActive = false;
+	detailOpen = false;
+	detailOpenedAt = 0;
+	if (!listed) {
+		openedAt = 0;
+	}
+}
+
 void tick()
 {
+	if (!viewActive) {
+		return;
+	}
 	if (openedAt == 0) {
 		openedAt = millis() == 0 ? 1 : millis();
 	}
@@ -239,6 +259,11 @@ void openDetail(size_t index)
 		return;
 	}
 	if (detailIsForToken(detailStore, tokens[index])) {
+		detailOpen = true;
+		if (detailStore.holders.status == Status::Fetching ||
+		    detailStore.activity.status == Status::Fetching) {
+			detailOpenedAt = millis() == 0 ? 1 : millis();
+		}
 		return;
 	}
 	memset(&detailStore, 0, sizeof(detailStore));
@@ -246,10 +271,15 @@ void openDetail(size_t index)
 	snprintf(detailStore.chain, sizeof(detailStore.chain), "%s", tokens[index].chain);
 	detailStore.holders = {Status::Fetching, "asking OpenSea who holds this"};
 	detailStore.activity = {Status::Fetching, "asking OpenSea what just traded"};
+	detailOpen = true;
 	detailOpenedAt = millis() == 0 ? 1 : millis();
 }
 
-void closeDetail() {}
+void closeDetail()
+{
+	detailOpen = false;
+	detailOpenedAt = 0;
+}
 
 const Detail &detail()
 {

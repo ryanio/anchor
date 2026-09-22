@@ -64,6 +64,7 @@ interface RunOptions {
   cwd?: string;
   env?: NodeJS.ProcessEnv;
   quiet?: boolean;
+  timeoutMs?: number;
 }
 
 export interface CommandRunner {
@@ -151,6 +152,7 @@ export class ProcessRunner implements CommandRunner {
       env: options.env,
       encoding: "utf8",
       maxBuffer: 128 * 1024 * 1024,
+      timeout: options.timeoutMs,
     });
     const output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
     if (!options.quiet && output) process.stdout.write(output);
@@ -159,6 +161,9 @@ export class ProcessRunner implements CommandRunner {
         throw new Error(
           `Missing prerequisite: ${command}. Run 'node scripts/device.ts doctor all' for setup guidance.`,
         );
+      }
+      if ((result.error as NodeJS.ErrnoException).code === "ETIMEDOUT") {
+        throw new Error(`${command} timed out after ${options.timeoutMs} ms`);
       }
       throw result.error;
     }
@@ -667,7 +672,11 @@ function simCardputer(root: string, paths: DevicePaths, manifest: Toolchain, run
     { env },
   );
   const binary = join(env.PLATFORMIO_BUILD_DIR as string, manifest.cardputer.simEnvironment, "program");
-  runner.run(binary, ["--shot", join(output, "anchor"), "--quit-after", "1000"], { cwd: output, env });
+  runner.run(binary, ["--shot", join(output, "anchor"), "--quit-after", "1000"], {
+    cwd: output,
+    env,
+    timeoutMs: 30_000,
+  });
   assertShot(output);
 }
 
@@ -690,6 +699,81 @@ function simEsp32(root: string, paths: DevicePaths, manifest: Toolchain, runner:
     { env: { ...process.env, ANCHOR_GFX_DIR: gfx, ANCHOR_LVGL_DIR: lvgl } },
   );
   assertShot(output);
+  // Exercise the real LVGL screens with scripted input. Fixture data and credentials only.
+  const binary = join(root, "devices", "firmware", "esp32", "sim", "build", "pulse-lvgl-sim");
+  const cases = [
+    { name: "explore", taps: "295,46", labels: ["Explore", "STONK  $0.24\nsolana | -4.58%"] },
+    { name: "token", taps: "295,46 135,148", labels: ["STONK", "Price\n$0.24"] },
+    {
+      name: "lost-detail",
+      thenFeed: "lost",
+      taps: "295,46 135,148",
+      labels: ["STONK", "Price\n$0.24"],
+      extra: ["--expect-visible-prefix", "Saved / stale |"],
+    },
+    { name: "back", taps: "295,46 135,148 70,398", labels: ["Explore"] },
+    { name: "portfolio", taps: "295,46 180,398", labels: ["Portfolio", "Total | 6 of 6 wallets\n$3,125"] },
+    {
+      name: "partial",
+      feed: "portfolio-partial",
+      taps: "295,46 180,398",
+      labels: ["Portfolio", "Total | 4 of 6 wallets\n$3,033"],
+    },
+    { name: "wifi", taps: "295,46 295,398", labels: ["Wi-Fi", "Rescan", "Hidden"] },
+    {
+      name: "forget-cancel",
+      taps: "295,46 295,398",
+      extra: ["--wait", "--tap", "130,185", "--tap", "270,320"],
+      labels: ["Wi-Fi", "Forget saved networks..."],
+      savedAfter: true,
+    },
+    {
+      name: "forget-confirm",
+      taps: "295,46 295,398",
+      extra: ["--wait", "--tap", "130,185", "--tap", "90,320"],
+      labels: ["Wi-Fi"],
+      savedAfter: false,
+    },
+    {
+      name: "wifi-crowded",
+      networks: Array.from(
+        { length: 32 },
+        (_, i) => `Conference-${i.toString().padStart(2, "0")}-long-network-name:-${35 + i}`,
+      ).join(","),
+      taps: "295,46 295,398",
+      extra: ["--wait", "--tap", "180,398"],
+      labels: ["Hidden network"],
+    },
+  ];
+  for (const scenario of cases) {
+    runner.run(
+      binary,
+      [
+        "--nvs",
+        join(output, `${scenario.name}.nvs`),
+        "--saved",
+        "Demo:fixturepass",
+        "--networks",
+        scenario.networks ?? "Demo:-40",
+        "--feed",
+        scenario.feed ?? "portfolio",
+        "--taps",
+        scenario.taps,
+        ...(scenario.thenFeed ? ["--then-feed", scenario.thenFeed] : []),
+        ...(scenario.extra ?? []),
+        "--shot",
+        join(output, scenario.name),
+        ...scenario.labels.flatMap((label) => ["--expect-visible", label]),
+      ],
+      { cwd: output, timeoutMs: 30_000 },
+    );
+    if (scenario.savedAfter !== undefined) {
+      const saved = readFileSync(join(output, `${scenario.name}.nvs`), "utf8").includes("44656d6f");
+      if (saved !== scenario.savedAfter) {
+        throw new Error(`${scenario.name}: saved Demo profile did not match the confirmation choice`);
+      }
+    }
+  }
 }
 
 export function concreteTargets(target: DeviceTarget): ConcreteTarget[] {

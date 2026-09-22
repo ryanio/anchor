@@ -43,6 +43,7 @@
 #include "pulse_touch.h"
 #include "../app/feed.h"
 #include "pulse_feed_view.h"
+#include "pulse_explore.h"
 #include "pulse_power.h"
 #include "pulse_ui.h"
 #include "pulse_wifi.h"
@@ -362,6 +363,9 @@ static void refresh_feed(void) {
     view_tokens[i].price = snap.tokens[i].price;
     view_tokens[i].change = snap.tokens[i].change;
     view_tokens[i].changePositive = snap.tokens[i].changePositive;
+    view_tokens[i].chain = snap.tokens[i].chain;
+    view_tokens[i].address = snap.tokens[i].address;
+    view_tokens[i].volume = snap.tokens[i].volume;
   }
 
   pulse_feed_view::Trending trending;
@@ -391,6 +395,7 @@ static void refresh_feed(void) {
   portfolio.everSucceeded = snap.portfolioEverSucceeded;
 
   screen = pulse_feed_view::compose(trending, portfolio, millis() / ROTATE_MS);
+  pulse_explore::update(trending, portfolio, millis());
   pulse_ui::update(screen);
 }
 
@@ -663,6 +668,8 @@ void setup() {
    * should do is ask for a network rather than sit there saying it has none.
    */
   pulse_wifi::begin();
+  pulse_explore::begin(pulse_wifi::open);
+  pulse_ui::onExplore(pulse_explore::open);
   pulse_wifi::attachOpenGesture(pulse_ui::surface());
   /* `LV_EVENT_PRESSED` rather than `LV_EVENT_CLICKED`: a press is reported the moment LVGL decides
    * a finger is down, which is what a calibration readout wants. A click waits for the release and
@@ -697,7 +704,8 @@ void loop() {
   pulse_power::tick();
   pulse_ui::setBattery(pulse_power::state());
 
-  feed::tick();
+  feed::tick(pulse_wifi::configured(), pulse_wifi::connected(), pulse_wifi::active(),
+             pulse_wifi::revision());
   /*
    * Nothing touches the ambient screen while Wi-Fi setup is up.
    *

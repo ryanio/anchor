@@ -51,9 +51,9 @@
  * working is worth more than a setup screen nobody asked for, and an AP that drops for ten seconds
  * is not a provisioning problem.
  *
- * Credentials land in NVS under the namespace `anchor-wifi` with keys `ssid` and `pass`. Those exact
- * names are not a choice — `app/feed.cpp` and `app/wifi_setup.cpp` both already read them, and a
- * unit that has been provisioned by one firmware must come up joined under the other.
+ * Up to four successfully joined networks land in NVS under `anchor-wifi`. The active profile is
+ * also written to the legacy `ssid` and `pass` keys so `app/wifi_setup.cpp` and older firmware keep
+ * booting on the same network. A failed replacement never overwrites the last known good profile.
  */
 namespace pulse_wifi {
 
@@ -86,6 +86,17 @@ void close();
  * when it thought it had succeeded — "present is not works", and a join that dropped an hour ago
  * should not still be reported as a connection. */
 bool connected();
+
+/* Whether at least one successfully joined network is saved on this unit. */
+bool configured();
+
+/* Changes whenever the intended network changes. Feed requests carry this value so a completion
+ * from the previous network cannot publish after setup, switching, or clearing. */
+uint32_t revision();
+
+/* Forget every remembered network and disconnect. Safe while offline. The setup screen remains the
+ * path back in, and no failed join ever calls this or overwrites a last known good profile. */
+bool clearSaved();
 
 /*
  * One line about where this module actually is, for a footer or a boot log.

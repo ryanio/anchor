@@ -1,5 +1,31 @@
 # The M5Stack Cardputer as an Anchor device
 
+## Current independent app runtime
+
+The supported target is the Cardputer ADV Anchor profile described in
+[device development](device-development.md). The USB surface protocol discussed later in this
+historical design document is not the handheld app's runtime. The device joins Wi-Fi through Flint
+and reads OpenSea directly.
+
+Anchor uses one persistent background worker and one request slot. The main loop owns rendered
+state; the worker copies a finished result under a short lock. Leaving Anchor, closing an unfinished
+token detail, or changing the network cancels interest in that work. Cancellation never destroys a
+TLS object from another task. The slot stays occupied until its worker returns, and a generation
+check rejects an obsolete completion. Connect, handshake, and read phases have timeouts; streaming
+the response also has an absolute body deadline.
+
+Flint remembers up to four successfully joined networks. A candidate password is saved after Wi-Fi
+association succeeds. A failed replacement restores the previous saved network. Association does
+not prove internet access: the OpenSea request reports authentication, HTTP, or transport failure
+separately. Hotel captive portals still require hardware testing; the iPhone hotspot is the planned
+fallback.
+
+Token identity is chain plus full address. The production comparator is shared with the ESP32;
+unusable identities are rejected rather than shortened into a different identity. Host tests cover
+cancellation, publication, and identity. Hardware tests must still prove typing and exit remain
+responsive during TLS timeouts and repeated network switches.
+
+
 The Cardputer is the third shape in the device family, after the Stream Deck and the ESP32 pulse
 display, and the first one that is *typed at*. That single fact is what makes it worth a design
 document rather than another entry in a geometry table: a keyboard is an input the shared contract

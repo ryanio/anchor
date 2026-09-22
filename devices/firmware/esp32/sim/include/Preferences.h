@@ -21,6 +21,7 @@ class Preferences {
   void end();
   String getString(const char *key, const char *fallback = "");
   size_t putString(const char *key, const String &value);
+  bool remove(const char *key);
   bool clear();
 
   /* The driver's half: where the store lives, so a run can start from a known unit. */
