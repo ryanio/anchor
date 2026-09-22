@@ -8,9 +8,9 @@ on:
 permissions:
   contents: read
 
-# The application workspaces share one short job and one install. Firmware stays in a second job
-# because its board toolchains and simulator dependencies are larger, cached separately, and useful
-# to diagnose independently from application lint and tests.
+# The application workspaces share one short job and one install. Firmware runs in separate target
+# jobs because its board toolchains and simulator dependencies are larger, cached separately, and
+# useful to diagnose independently from application lint and tests.
 jobs:
   ci:
     name: lint, test, build
@@ -98,12 +98,16 @@ jobs:
         run: node site/build.ts
 
   # Firmware has a separate toolchain and a much larger cache than the TypeScript workspaces. Keep
-  # it isolated so a board compiler download cannot hide or delay a lint failure. The job itself
-  # always reports a result, while its expensive steps run only when an input to the firmware build
-  # changed.
+  # it isolated so a board compiler download cannot hide or delay a lint failure. Each target always
+  # reports a result, while its expensive steps run only when one of its inputs changed. The matrix
+  # lets the two boards compile in parallel when a shared input selects both.
   firmware:
-    name: firmware boards and simulators
+    name: firmware (${{ matrix.target }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [cardputer, esp32]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -118,7 +122,7 @@ jobs:
           HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
         run: |
           decision=true
-          if classified=$(node scripts/firmware-changes.mjs "$BASE_SHA" "$HEAD_SHA"); then
+          if classified=$(node scripts/firmware-changes.mjs "$BASE_SHA" "$HEAD_SHA" "${{ matrix.target }}"); then
             case "$classified" in
               true|false) decision=$classified ;;
               *) echo "::warning::firmware path classifier returned an invalid result; building" ;;
@@ -130,10 +134,10 @@ jobs:
 
       - name: No firmware inputs changed
         if: steps.firmware-changes.outputs.run != 'true'
-        run: echo "Firmware build skipped because only independent paths changed."
+        run: echo "${{ matrix.target }} firmware skipped because only independent paths changed."
 
       - name: Check out firmware submodules
-        if: steps.firmware-changes.outputs.run == 'true'
+        if: steps.firmware-changes.outputs.run == 'true' && matrix.target == 'cardputer'
         run: git submodule update --init --recursive
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -145,39 +149,69 @@ jobs:
         if: steps.firmware-changes.outputs.run == 'true'
         run: npm ci
 
-      - name: Install simulator system dependencies
-        if: steps.firmware-changes.outputs.run == 'true'
+      - name: Install Cardputer simulator system dependencies
+        if: steps.firmware-changes.outputs.run == 'true' && matrix.target == 'cardputer'
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y build-essential libsdl2-dev imagemagick python3-venv
+          sudo apt-get install -y build-essential libsdl2-dev python3-venv
           command -v c++
 
-      # The manifest pins the CLIs and direct firmware dependencies. Their package managers resolve
-      # compiler support packages transitively. The cache key changes with the manifest, while a
-      # partial restore keeps large downloads reusable. Bootstrap validates restored state before use.
-      - name: Restore firmware toolchains
-        if: steps.firmware-changes.outputs.run == 'true'
+      - name: Install ESP32 simulator system dependencies
+        if: steps.firmware-changes.outputs.run == 'true' && matrix.target == 'esp32'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y build-essential imagemagick
+          command -v c++
+
+      # Each target restores only the toolchain it uses. Separate keys and path sets keep a partial
+      # cache from one board from becoming the starting state for the other.
+      - name: Restore Cardputer toolchain
+        if: steps.firmware-changes.outputs.run == 'true' && matrix.target == 'cardputer'
+        uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: .cache/device/platformio
+          key: ${{ runner.os }}-anchor-firmware-cardputer-${{ hashFiles('devices/toolchain.json') }}
+          restore-keys: |
+            ${{ runner.os }}-anchor-firmware-cardputer-
+
+      - name: Restore ESP32 toolchain
+        if: steps.firmware-changes.outputs.run == 'true' && matrix.target == 'esp32'
         uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
         with:
           path: |
             .cache/device/arduino
-            .cache/device/platformio
+            .cache/device/bin/arduino-cli
             .cache/device/vendor
-          key: ${{ runner.os }}-anchor-firmware-${{ hashFiles('devices/toolchain.json') }}
+          key: ${{ runner.os }}-anchor-firmware-esp32-${{ hashFiles('devices/toolchain.json') }}
           restore-keys: |
-            ${{ runner.os }}-anchor-firmware-
+            ${{ runner.os }}-anchor-firmware-esp32-
 
-      - name: Install pinned firmware CLIs
-        if: steps.firmware-changes.outputs.run == 'true'
+      - name: Install pinned PlatformIO CLI
+        if: steps.firmware-changes.outputs.run == 'true' && matrix.target == 'cardputer'
         run: |
           export PLATFORMIO_CORE_DIR="$GITHUB_WORKSPACE/.cache/device/platformio"
           export PLATFORMIO_BUILD_DIR="$GITHUB_WORKSPACE/.cache/device/build/platformio"
           export PLATFORMIO_LIBDEPS_DIR="$GITHUB_WORKSPACE/.cache/device/platformio/libdeps"
           export PLATFORMIO_SETTING_ENABLE_TELEMETRY=no
+          platformio_version=$(jq -r '.tools.platformioCore' devices/toolchain.json)
+          mkdir -p .cache/device/platformio
+
+          pio=.cache/device/platformio/venv/bin/pio
+          if ! "$pio" --version 2>/dev/null | grep -Fq "$platformio_version"; then
+            python3 -m venv --clear .cache/device/platformio/venv
+            .cache/device/platformio/venv/bin/pip install --disable-pip-version-check \
+              "platformio==$platformio_version"
+          fi
+
+          echo "$GITHUB_WORKSPACE/.cache/device/platformio/venv/bin" >> "$GITHUB_PATH"
+          "$pio" --version
+
+      - name: Install pinned Arduino CLI
+        if: steps.firmware-changes.outputs.run == 'true' && matrix.target == 'esp32'
+        run: |
           arduino_version=$(jq -r '.tools.arduinoCli.version' devices/toolchain.json)
           arduino_sha=$(jq -r '.tools.arduinoCli.linuxX64Sha256' devices/toolchain.json)
-          platformio_version=$(jq -r '.tools.platformioCore' devices/toolchain.json)
-          mkdir -p .cache/device/bin .cache/device/platformio
+          mkdir -p .cache/device/bin
 
           arduino=.cache/device/bin/arduino-cli
           if ! "$arduino" version 2>/dev/null | grep -Fq "$arduino_version"; then
@@ -189,25 +223,16 @@ jobs:
             tar -xzf "$archive" -C .cache/device/bin arduino-cli
           fi
 
-          pio=.cache/device/platformio/venv/bin/pio
-          if ! "$pio" --version 2>/dev/null | grep -Fq "$platformio_version"; then
-            python3 -m venv --clear .cache/device/platformio/venv
-            .cache/device/platformio/venv/bin/pip install --disable-pip-version-check \
-              "platformio==$platformio_version"
-          fi
-
           echo "$GITHUB_WORKSPACE/.cache/device/bin" >> "$GITHUB_PATH"
-          echo "$GITHUB_WORKSPACE/.cache/device/platformio/venv/bin" >> "$GITHUB_PATH"
           "$arduino" version
-          "$pio" --version
 
       - name: Bootstrap pinned firmware toolchains
         if: steps.firmware-changes.outputs.run == 'true'
-        run: node scripts/device.ts bootstrap all
+        run: node scripts/device.ts bootstrap ${{ matrix.target }}
 
       - name: Verify firmware toolchains
         if: steps.firmware-changes.outputs.run == 'true'
-        run: node scripts/device.ts doctor all
+        run: node scripts/device.ts doctor ${{ matrix.target }}
 
       # CI also performs an isolated second compile with nonsecret placeholders. The device command
       # requires compile evidence plus the placeholder in the linked image, then deletes that image
@@ -216,8 +241,8 @@ jobs:
         if: steps.firmware-changes.outputs.run == 'true'
         env:
           CI: 'true'
-        run: node scripts/device.ts build all
+        run: node scripts/device.ts build ${{ matrix.target }}
 
       - name: Run firmware simulator smoke tests
         if: steps.firmware-changes.outputs.run == 'true'
-        run: node scripts/device.ts sim all
+        run: node scripts/device.ts sim ${{ matrix.target }}

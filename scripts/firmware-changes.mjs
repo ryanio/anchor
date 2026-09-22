@@ -1,6 +1,8 @@
 import { spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 
+export const FIRMWARE_TARGETS = ["cardputer", "esp32"];
+
 const FIRMWARE_INPUTS = new Set([
   ".github/workflows/ci.yml",
   ".gitmodules",
@@ -35,21 +37,37 @@ const UNRELATED_FILES = new Set([
 ]);
 
 export function affectsFirmware(path) {
-  if (path.startsWith("devices/firmware/")) return true;
-  if (path.startsWith("scripts/device")) return true;
-  if (FIRMWARE_INPUTS.has(path)) return true;
-
-  if (path.endsWith(".md")) return false;
-  if (UNRELATED_FILES.has(path)) return false;
-  if (UNRELATED_PREFIXES.some((prefix) => path.startsWith(prefix))) return false;
-
-  // Unknown files build firmware. A new build input must not silently escape the gate merely
-  // because this classifier predates it.
-  return true;
+  return firmwareTargetsForPath(path).length > 0;
 }
 
-export function classifyFirmwareChanges(paths) {
-  const relevant = paths.filter(affectsFirmware);
+export function firmwareTargetsForPath(path) {
+  if (path.startsWith("devices/firmware/cardputer/")) return ["cardputer"];
+  if (path.startsWith("devices/firmware/esp32/")) return ["esp32"];
+  if (path.startsWith("devices/firmware/")) return FIRMWARE_TARGETS;
+  if (path.startsWith("scripts/device")) return FIRMWARE_TARGETS;
+  if (FIRMWARE_INPUTS.has(path)) return FIRMWARE_TARGETS;
+
+  if (path.endsWith(".md")) return [];
+  if (UNRELATED_FILES.has(path)) return [];
+  if (UNRELATED_PREFIXES.some((prefix) => path.startsWith(prefix))) return [];
+
+  // Unknown files build both targets. A new build input must not silently escape either gate merely
+  // because this classifier predates it.
+  return FIRMWARE_TARGETS;
+}
+
+function validateTarget(target) {
+  if (target !== undefined && !FIRMWARE_TARGETS.includes(target)) {
+    throw new Error(`Unknown firmware target ${JSON.stringify(target)}`);
+  }
+}
+
+export function classifyFirmwareChanges(paths, target) {
+  validateTarget(target);
+  const relevant = paths.filter((path) => {
+    const targets = firmwareTargetsForPath(path);
+    return target === undefined ? targets.length > 0 : targets.includes(target);
+  });
   return {
     run: relevant.length > 0,
     relevant,
@@ -68,7 +86,8 @@ function git(root, args) {
   });
 }
 
-export function classifyGitRange(base, head, root = process.cwd()) {
+export function classifyGitRange(base, head, root = process.cwd(), target) {
+  validateTarget(target);
   if (!validCommitSha(base) || !validCommitSha(head)) {
     return { run: true, relevant: [], reason: "the event did not provide two commit SHAs" };
   }
@@ -89,15 +108,14 @@ export function classifyGitRange(base, head, root = process.cwd()) {
 
   const paths = diff.stdout.toString("utf8").split("\0");
   paths.pop();
-  return { ...classifyFirmwareChanges(paths), reason: "changed paths were classified" };
+  return { ...classifyFirmwareChanges(paths, target), reason: "changed paths were classified" };
 }
 
 function main() {
-  const [base = "", head = ""] = process.argv.slice(2);
-  const result = classifyGitRange(base, head);
-  console.error(
-    result.run ? `firmware build selected: ${result.reason}` : `firmware build skipped: ${result.reason}`,
-  );
+  const [base = "", head = "", target] = process.argv.slice(2);
+  const result = classifyGitRange(base, head, process.cwd(), target);
+  const label = target ? `${target} firmware build` : "firmware build";
+  console.error(result.run ? `${label} selected: ${result.reason}` : `${label} skipped: ${result.reason}`);
   process.stdout.write(result.run ? "true" : "false");
 }
 

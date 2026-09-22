@@ -1,10 +1,18 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, test } from "node:test";
-import { affectsFirmware, classifyFirmwareChanges, classifyGitRange } from "./firmware-changes.mjs";
+import { fileURLToPath } from "node:url";
+import {
+  affectsFirmware,
+  classifyFirmwareChanges,
+  classifyGitRange,
+  firmwareTargetsForPath,
+} from "./firmware-changes.mjs";
+
+const workflowPath = fileURLToPath(new URL("../.github/workflows/ci.yml", import.meta.url));
 
 function inRepository(run) {
   const root = mkdtempSync(join(tmpdir(), "anchor-firmware-changes-"));
@@ -64,7 +72,43 @@ describe("firmware path classification", () => {
 
   test("builds for unknown files instead of creating a silent coverage hole", () => {
     assert.equal(affectsFirmware("new-build-system/config.toml"), true);
+    assert.deepEqual(firmwareTargetsForPath("new-build-system/config.toml"), ["cardputer", "esp32"]);
     assert.deepEqual(classifyFirmwareChanges([]), { run: false, relevant: [] });
+  });
+
+  test("selects only the target whose private inputs changed", () => {
+    const paths = [
+      "devices/firmware/cardputer/app/src/anchor.cpp",
+      "devices/firmware/esp32/pulse/pulse.ino",
+      "docs/device-development.md",
+    ];
+
+    assert.deepEqual(classifyFirmwareChanges(paths, "cardputer"), {
+      run: true,
+      relevant: ["devices/firmware/cardputer/app/src/anchor.cpp"],
+    });
+    assert.deepEqual(classifyFirmwareChanges(paths, "esp32"), {
+      run: true,
+      relevant: ["devices/firmware/esp32/pulse/pulse.ino"],
+    });
+    assert.deepEqual(classifyFirmwareChanges([paths[0]], "esp32"), { run: false, relevant: [] });
+  });
+
+  test("selects both targets for shared, tooling, root, and unknown inputs", () => {
+    for (const path of [
+      "devices/firmware/common/request_gate.h",
+      "scripts/device.ts",
+      "devices/toolchain.json",
+      "new-build-system/config.toml",
+    ]) {
+      assert.deepEqual(firmwareTargetsForPath(path), ["cardputer", "esp32"], path);
+      assert.equal(classifyFirmwareChanges([path], "cardputer").run, true, path);
+      assert.equal(classifyFirmwareChanges([path], "esp32").run, true, path);
+    }
+  });
+
+  test("rejects an unknown target so the workflow fails safe to a build", () => {
+    assert.throws(() => classifyFirmwareChanges(["docs/devices.md"], "other"), /Unknown firmware target/);
   });
 });
 
@@ -102,5 +146,39 @@ describe("git range classification", () => {
       const head = git("rev-parse", "HEAD");
       assert.equal(classifyGitRange(base, head, root).run, true);
     });
+  });
+
+  test("classifies target-specific git ranges independently", () => {
+    inRepository(({ root, git, commit }) => {
+      const base = commit("README.md", "base\n", "base");
+      const cardputerHead = commit(
+        "devices/firmware/cardputer/app/src/main.cpp",
+        "int main() {}\n",
+        "cardputer",
+      );
+      assert.equal(classifyGitRange(base, cardputerHead, root, "cardputer").run, true);
+      assert.equal(classifyGitRange(base, cardputerHead, root, "esp32").run, false);
+
+      git("checkout", "--quiet", "--detach", base);
+      const esp32Head = commit("devices/firmware/esp32/pulse/pulse.ino", "void setup() {}\n", "esp32");
+      assert.equal(classifyGitRange(base, esp32Head, root, "cardputer").run, false);
+      assert.equal(classifyGitRange(base, esp32Head, root, "esp32").run, true);
+    });
+  });
+});
+
+describe("firmware workflow", () => {
+  test("parses as YAML and runs each selected target in its own matrix job", () => {
+    execFileSync("ruby", ["-e", 'require "yaml"; YAML.parse_file(ARGV.fetch(0))', workflowPath]);
+
+    const workflow = readFileSync(workflowPath, "utf8");
+    assert.match(workflow, /target: \[cardputer, esp32\]/);
+    assert.ok(workflow.includes(`firmware-changes.mjs "$BASE_SHA" "$HEAD_SHA" "\${{ matrix.target }}"`));
+    for (const command of ["bootstrap", "doctor", "build", "sim"]) {
+      assert.ok(workflow.includes(`node scripts/device.ts ${command} \${{ matrix.target }}`), command);
+      assert.ok(!workflow.includes(`node scripts/device.ts ${command} all`), command);
+    }
+    assert.match(workflow, /anchor-firmware-cardputer-/);
+    assert.match(workflow, /anchor-firmware-esp32-/);
   });
 });
