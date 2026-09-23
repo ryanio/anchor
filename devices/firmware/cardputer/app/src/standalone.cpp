@@ -5,6 +5,7 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #include <HTTPClient.h>
+#include <M5Cardputer.h>
 #include <WiFiClientSecure.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -133,7 +134,18 @@ struct RequestResult {
 	Token tokenRows[MAX_TOKENS];
 	size_t count;
 	Detail detail;
+	// Diagnostics for the health line, carried back with the result so no second lock is needed:
+	// the worker's stack high-water mark in bytes, and the HTTP status of the request it just made.
+	uint32_t stackFree;
+	int httpCode;
 };
+
+// Written only on the worker, by `request()`, and copied into the result the worker publishes.
+int requestCode = 0;
+// Loop-owned copies of the diagnostics above, and when the last health line went out.
+uint32_t workerStackFree = 0;
+int lastHttpCode = 0;
+uint32_t lastHealth = 0;
 
 // One slot includes both a running request and an unread completion. The worker owns its immutable
 // job copy and all staging memory. Only tick() applies a consumed result to tokens/detailStore.
@@ -144,6 +156,8 @@ TaskHandle_t worker = nullptr;
 bool workerUnavailable = false;
 
 constexpr uint32_t WORKER_STACK_BYTES = 12288;
+// How often `reportHealth()` prints while Anchor is browsing.
+constexpr uint32_t HEALTH_MS = 60000;
 constexpr UBaseType_t WORKER_PRIORITY = 1;
 constexpr BaseType_t WORKER_CORE = 0;
 
@@ -303,6 +317,7 @@ bool request(const char *url, JsonDocument &filter, JsonDocument &doc,
 	http.addHeader("X-API-KEY", OPENSEA_API_KEY);
 
 	const int code = http.GET();
+	requestCode = code;
 	if (!requestWanted(ticket)) {
 		err = "the request was cancelled";
 		http.end();
@@ -619,6 +634,7 @@ void workerTask(void *)
 		portEXIT_CRITICAL(&publicationLock);
 
 		RequestResult result{};
+		requestCode = 0;
 		result.kind = job.kind;
 		result.networkRevision = job.networkRevision;
 		copyBounded(result.detail.chain, sizeof(result.detail.chain), job.chain);
@@ -637,6 +653,9 @@ void workerTask(void *)
 			}
 		}
 
+		result.httpCode = requestCode;
+		result.stackFree = (uint32_t)uxTaskGetStackHighWaterMark(nullptr);
+
 		portENTER_CRITICAL(&publicationLock);
 		publication.complete(job.ticket, result);
 		portEXIT_CRITICAL(&publicationLock);
@@ -645,6 +664,9 @@ void workerTask(void *)
 
 void applyResult(const RequestResult &result)
 {
+	// Before the revision check, because a stale result still measured the worker's stack.
+	workerStackFree = result.stackFree;
+	lastHttpCode = result.httpCode;
 	// A reconnect can retain the same SSID while replacing the underlying network session. Results
 	// from that earlier session are discarded before they can reach loop-owned display state.
 	if (result.networkRevision != networkRevision) {
@@ -744,12 +766,56 @@ void leave()
 #endif
 }
 
+#ifdef OPENSEA_API_KEY
+const char *statusName(Status status)
+{
+	switch (status) {
+	case Status::Disabled:
+		return "disabled";
+	case Status::NoCredentials:
+		return "no-wifi";
+	case Status::Joining:
+		return "joining";
+	case Status::Online:
+		return "online";
+	case Status::Fetching:
+		return "fetching";
+	case Status::Failed:
+		return "failed";
+	}
+	return "unknown";
+}
+
+// One line a minute on Serial while Anchor is browsing, for endurance and battery runs: the same idea
+// as the ESP32's, so a long capture shows when a unit stopped and what its memory did before then.
+// Integers and fixed words only, never text from a response.
+void reportHealth()
+{
+	const uint32_t now = millis();
+	if (lastHealth != 0 && now - lastHealth < HEALTH_MS) {
+		return;
+	}
+	lastHealth = now == 0 ? 1 : now;
+	uint32_t at = 0;
+	const bool dated = everSucceeded && listFetchedAt(at);
+	Serial.printf("anchor-cardputer: health up=%lus heap=%u largest=%u heap_min=%u "
+	              "worker_stack_min=%lu http=%d trending=%s rows=%u list_age=%lds battery=%d%%%s\n",
+	              (unsigned long)(now / 1000u), (unsigned)ESP.getFreeHeap(),
+	              (unsigned)ESP.getMaxAllocHeap(), (unsigned)ESP.getMinFreeHeap(),
+	              (unsigned long)workerStackFree, lastHttpCode, statusName(state().status),
+	              (unsigned)tokenCount, dated ? (long)((now - at) / 1000u) : -1L,
+	              (int)M5.Power.getBatteryLevel(),
+	              M5.Power.isCharging() == m5::Power_Class::is_charging ? " charging" : "");
+}
+#endif
+
 void tick()
 {
 #ifdef OPENSEA_API_KEY
 	if (!viewActive) {
 		return;
 	}
+	reportHealth();
 	const uint32_t revision = net::revision();
 	if (revision != networkRevision) {
 		networkRevision = revision;

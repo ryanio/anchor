@@ -35,6 +35,18 @@ arithmetic, and the copy that cleans response text for drawing (`firmware/common
 are shared with the ESP32, so both handhelds read one response into the same rows and write the
 same price the same way. Host tests pin both, the reader against a captured live response.
 
+While Anchor is browsing, a keyed build prints one line a minute to Serial:
+
+```
+anchor-cardputer: health up=120s heap=... largest=... heap_min=... worker_stack_min=... http=200 trending=online rows=8 list_age=14s battery=87%
+```
+
+`heap_min` is the lowest free heap since boot, `worker_stack_min` the fetch worker's stack
+high-water mark in bytes (0 before its first request), and `list_age` how old the rows are, or -1
+before the first list. On 2026-09-23 the `0716006` image went silent over USB overnight with nothing
+recorded about when; a capture of these lines is how the next occurrence gets a time and a memory
+trend. The simulator cannot show the line, because it swaps out the fetcher that prints it.
+
 Token identity is chain plus full address. The production comparator is shared with the ESP32;
 unusable identities are rejected rather than shortened into a different identity. Host tests cover
 cancellation, publication, and identity. Hardware tests must still prove typing and exit remain
