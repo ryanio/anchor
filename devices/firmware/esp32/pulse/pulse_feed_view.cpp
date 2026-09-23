@@ -1,5 +1,7 @@
 #include "pulse_feed_view.h"
 
+#include "../../common/freshness.h"
+
 #include <stdio.h>
 #include <string.h>
 
@@ -344,16 +346,8 @@ pulse_ui::Screen composeTrending(const Trending &trending, size_t index) {
 }  // namespace
 
 void formatAge(uint32_t ms, char *into, size_t size) {
-	const uint32_t seconds = ms / 1000u;
-	if (seconds < 1u) {
-		snprintf(into, size, "just now");
-	} else if (seconds < 60u) {
-		snprintf(into, size, "%us ago", (unsigned)seconds);
-	} else if (seconds < 3600u) {
-		snprintf(into, size, "%um ago", (unsigned)(seconds / 60u));
-	} else {
-		snprintf(into, size, "%uh ago", (unsigned)(seconds / 3600u));
-	}
+	/* The Cardputer describes age with the same function, so the two devices cannot drift. */
+	anchor_freshness::formatAge(ms, into, size);
 }
 
 size_t slotCount(const Trending &trending) {

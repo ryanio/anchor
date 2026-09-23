@@ -626,6 +626,11 @@ assuming it, so a machine without one shows the command exactly as before.
   gap, and what to delete when each is fixed.
 
 ### Changed
+- **The Cardputer says how old its trending rows are.** It kept the last list on screen through a
+  lost network or a failed refresh, with nothing saying how old it was. The strip now leads with
+  "live, just now" or, when the unit cannot refresh, "stale, 4m ago" in the warning colour before the
+  reason. An open token shows the age of its own reading. Both handhelds take the wording from one
+  shared, host-tested `firmware/common/freshness.h`.
 - **The ESP32 pulse display's systemd service opens on `portfolio` instead of `desktop`.** `desktop`
   is a page of desktop controls a touch-only ambient display can't do much with; `panel.json` itself
   is unchanged, so the Stream Deck and Cardputer still default to `desktop`. `--page portfolio` on

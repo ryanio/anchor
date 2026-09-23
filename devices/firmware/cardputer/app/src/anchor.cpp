@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "../../../common/freshness.h"
 #include "art.h"
 #include "cable.h"
 #include "motion.h"
@@ -269,6 +270,9 @@ size_t lastHolderCount = 0;
 size_t lastEventCount = 0;
 const char *lastHoldersReason = nullptr;
 const char *lastActivityReason = nullptr;
+// The age the browse strip last drew, so a repaint happens when that label changes and not on every
+// tick. Minute resolution keeps it to at most one repaint a minute.
+char lastAgeLabel[16] = "";
 
 // Three seconds naming what this is before the tiles start, for whoever just
 // picked the unit up off a table and has never seen Anchor before. Zero means
@@ -807,6 +811,10 @@ int browseSel = 0;
 int browseFacet = 0;
 bool browseOpen = false;
 standalone::Token browseToken;
+// When the open token's reading arrived. It follows the list while the token is still on it and
+// stops when the token drops off, so a reading kept after it left the list keeps its own age.
+uint32_t browseTokenAt = 0;
+bool browseTokenDated = false;
 
 // The body, held across frames rather than built on the stack, because `drawList` keeps its scroll
 // position in `Slot::top` and a slot rebuilt every frame is a list that snaps back to the top under
@@ -1004,6 +1012,49 @@ void buildActivity(Slot &s)
 	}
 }
 
+// Rows kept on screen while the unit cannot refresh them are stale: the network is gone or the last
+// fetch failed. A refresh in flight is not stale, the rows are as fresh as the last success.
+bool listIsStale(const standalone::State &st)
+{
+	return st.status == standalone::Status::Failed || st.status == standalone::Status::Joining ||
+	       st.status == standalone::Status::NoCredentials;
+}
+
+// "just now" or "4m ago" for a reading that arrived at `at`, or empty when it never arrived.
+void ageLabel(bool dated, uint32_t at, char *out, size_t n)
+{
+	if (!dated) {
+		out[0] = '\0';
+		return;
+	}
+	anchor_freshness::formatAge(anchor_freshness::age(millis(), at, true), out, n,
+	                            anchor_freshness::Resolution::Minutes);
+}
+
+// The age the strip draws right now, whichever of the list or the open token it is describing.
+void currentAgeLabel(char *out, size_t n)
+{
+	if (browseOpen) {
+		ageLabel(browseTokenDated, browseTokenAt, out, n);
+		return;
+	}
+	uint32_t at = 0;
+	const bool dated = standalone::tokenCount > 0 && standalone::listFetchedAt(at);
+	ageLabel(dated, at, out, n);
+}
+
+// True once each time the strip's age label changes, which is at most once a minute.
+bool ageLabelChanged()
+{
+	char now[sizeof(lastAgeLabel)];
+	currentAgeLabel(now, sizeof(now));
+	if (strcmp(now, lastAgeLabel) == 0) {
+		return false;
+	}
+	snprintf(lastAgeLabel, sizeof(lastAgeLabel), "%s", now);
+	return true;
+}
+
 // The strip over the browse body: what is being looked at, or why there is nothing to look at.
 //
 // Which of those it says is decided by what the body is about to draw, and the rule is that the
@@ -1040,15 +1091,46 @@ void drawBrowseStrip(const standalone::State &st, bool bodyHasRows)
 		Seg &price = s.segs[s.segCount++];
 		takeText(price.text, sizeof(price.text), browseToken.price);
 		price.color = palette[INK_DIM];
+		// How old that price is. Last, because the three before it say what is open and this only
+		// qualifies it, and warning-coloured when nothing can refresh it.
+		char age[16];
+		ageLabel(browseTokenDated, browseTokenAt, age, sizeof(age));
+		if (age[0] != '\0') {
+			Seg &when = s.segs[s.segCount++];
+			const bool stale = listIsStale(st);
+			snprintf(when.text, sizeof(when.text), "%s%s", stale ? "stale, " : "", age);
+			when.color = stale ? palette[WARNING] : palette[INK_DIM];
+		}
 	} else if (st.status == standalone::Status::Online) {
 		takeText(first.text, sizeof(first.text), "trending");
 		first.color = palette[ACCENT];
 		Seg &how = s.segs[s.segCount++];
-		takeText(how.text, sizeof(how.text), st.reason);
+		char age[16];
+		currentAgeLabel(age, sizeof(age));
+		if (age[0] != '\0') {
+			snprintf(how.text, sizeof(how.text), "live, %s", age);
+		} else {
+			takeText(how.text, sizeof(how.text), st.reason);
+		}
 		how.color = palette[INK_DIM];
 	} else if (bodyHasRows) {
-		takeText(first.text, sizeof(first.text), st.reason);
-		first.color = st.status == standalone::Status::Failed ? palette[WARNING] : palette[INK_DIM];
+		// Rows with a reason over them are rows the unit cannot currently refresh, or is refreshing.
+		// The age goes first so a long reason can never clip it: "stale, 4m ago" is the part a
+		// person holding the unit needs, and the sentence says why.
+		char age[16];
+		currentAgeLabel(age, sizeof(age));
+		const bool stale = listIsStale(st);
+		if (age[0] != '\0') {
+			snprintf(first.text, sizeof(first.text), "%s%s", stale ? "stale, " : "", age);
+			first.color = stale ? palette[WARNING] : palette[INK_DIM];
+			Seg &why = s.segs[s.segCount++];
+			takeText(why.text, sizeof(why.text), st.reason);
+			why.color = st.status == standalone::Status::Failed ? palette[WARNING] : palette[INK_DIM];
+		} else {
+			takeText(first.text, sizeof(first.text), st.reason);
+			first.color =
+			    st.status == standalone::Status::Failed ? palette[WARNING] : palette[INK_DIM];
+		}
 	} else {
 		takeText(first.text, sizeof(first.text), "trending");
 		first.color = palette[ACCENT];
@@ -1065,6 +1147,7 @@ void refreshBrowseToken()
 	for (size_t i = 0; i < standalone::tokenCount; i++) {
 		if (standalone::sameTokenIdentity(standalone::tokens[i], browseToken)) {
 			browseToken = standalone::tokens[i];
+			browseTokenDated = standalone::listFetchedAt(browseTokenAt);
 			return;
 		}
 	}
@@ -1689,12 +1772,15 @@ void tick()
 		// list because it is drawn — a screen that said "joining the saved network" after it had
 		// joined would be a worse lie than a blank one.
 		const standalone::State st = standalone::state();
+		// Evaluated before the comparison chain so it records every change, not only the ones no
+		// earlier condition already caught.
+		const bool ageChanged = ageLabelChanged();
 		if (standalone::tokenCount != lastStandaloneCount || st.status != lastStandaloneStatus ||
 		    st.reason != lastStandaloneReason ||
 		    standalone::detail().holderCount != lastHolderCount ||
 		    standalone::detail().eventCount != lastEventCount ||
 		    standalone::detail().holders.reason != lastHoldersReason ||
-		    standalone::detail().activity.reason != lastActivityReason) {
+		    standalone::detail().activity.reason != lastActivityReason || ageChanged) {
 			lastStandaloneCount = standalone::tokenCount;
 			lastStandaloneStatus = st.status;
 			lastStandaloneReason = st.reason;
@@ -1731,6 +1817,7 @@ bool browseKey(const view::Key &k)
 			standalone::closeDetail();
 		} else if (rows > 0 && browseSel < rows) {
 			browseToken = standalone::tokens[browseSel];
+			browseTokenDated = standalone::listFetchedAt(browseTokenAt);
 			// Asked for here, fetched in `standalone::tick()` once the key is back up: a fetch
 			// started under a held key is a fetch that eats the next keypress, which is flint's own
 			// rule and the reason this only ever records the intent.
