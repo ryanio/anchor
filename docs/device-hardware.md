@@ -90,10 +90,13 @@ device). Its first health line after reboot reported 158,024 bytes of internal h
 151,408, the LVGL pool 44% used, battery 100% on USB, and `trending=no-wifi`: no network is saved on
 this unit, consistent with the Wi-Fi list it showed on 2026-09-21.
 
-The Cardputer (`76:2e:80`) was not updated. Its port was present, but it sent no serial output in
-six seconds and did not answer esptool's default or USB-JTAG reset, so nothing was written. It still
-runs the `0716006` image. Whether it had hung after a night on USB, or was asleep in a way USB cannot
-wake, needs someone to look at the screen before power-cycling it.
+The Cardputer (`76:2e:80`) did not answer at first. Its port was present, but it sent no serial
+output in six seconds and did not answer esptool's default or USB-JTAG reset, so nothing was written.
+After Ryan replugged it, esptool confirmed its MAC and 8 MB flash and wrote only app0 at `0x10000`
+(1,196,160 bytes, hash verified on the device), with the same key. Its first boot on `c32682f` printed
+the Anchor profile banner and began joining its saved network, with no panic in a twelve-second
+capture. What the old image was showing before the replug was not recorded, so whether it had hung
+remains open.
 
 ## Size on the glass, 2026-09-22
 
