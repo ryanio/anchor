@@ -51,6 +51,22 @@ int main()
 	assert(says(formatUsd, 3125.4, "$3125"));
 	assert(says(formatUsd, NAN, "--"));
 	assert(says(formatUsd, INFINITY, "--"));
+	assert(says(formatUsd, 0.01, "$0.0100"));
+	assert(says(formatUsd, 0, "$0.0000"));
+
+	/* Under a cent: three significant figures, never a row of zeros. */
+	assert(says(formatUsd, 0.000021, "$0.000021"));
+	assert(says(formatUsd, 0.0012345, "$0.00123"));
+	assert(says(formatUsd, 0.009, "$0.009"));
+	assert(says(formatUsd, 0.00000000543, "$0.00000000543"));
+	assert(says(formatUsd, 0.0000000001234, "$0.000000000123"));
+	assert(says(formatUsd, 0.00000000001, "<$0.0000000001"));
+	/* And it fits the 16-byte price field both devices draw from. */
+	{
+		char field[16];
+		formatUsd(0.0000000001234, field, sizeof(field));
+		assert(std::strcmp(field, "$0.000000000123") == 0);
+	}
 
 	/* Volume in the width a row can spare. */
 	assert(says(formatBigUsd, 15500000, "$15.5M"));

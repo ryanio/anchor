@@ -30,6 +30,7 @@
  */
 
 #include "../../app/feed.h"
+#include "../../../common/display_format.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -83,19 +84,22 @@ void seedPortfolio(const char *total, const char *nft, const char *change, bool 
  * the sibling rows `review.ts` renders, so what is drawn here is the width and character of a real
  * response rather than a tidy invention. A price that is always four characters wide would hide the
  * column overflow a real `$26,444,366` finds. */
+/* Prices are numbers, formatted by the same function the firmware uses. They were strings once, and
+ * "$0.24" and "$0.000021" were shapes the real formatter could never produce: it printed the first
+ * as "$0.2400" and the second as "$0.0000", and the screenshots hid both. */
 struct Seed {
 	const char *symbol;
 	const char *name;
-	const char *price;
+	double price;
 	const char *change;
 	bool positive;
 };
 
 const Seed SEEDS[] = {
-    {"STONK", "STONK", "$0.24", "-4.58%", false},   {"BONK", "Bonk", "$0.000021", "+18.32%", true},
-    {"JUP", "Jupiter", "$0.84", "+4.21%", true},    {"WIF", "dogwifhat", "$2.19", "-11.29%", false},
-    {"JTO", "Jito", "$3.41", "+0.67%", true},       {"PYTH", "Pyth Network", "$0.42", "-2.33%", false},
-    {"RAY", "Raydium", "$5.23", "+9.14%", true},    {"HNT", "Helium", "$26,444,366", "-0.51%", false},
+    {"STONK", "STONK", 0.24, "-4.58%", false},   {"BONK", "Bonk", 0.000021, "+18.32%", true},
+    {"JUP", "Jupiter", 0.84, "+4.21%", true},    {"WIF", "dogwifhat", 2.19, "-11.29%", false},
+    {"JTO", "Jito", 3.41, "+0.67%", true},       {"PYTH", "Pyth Network", 0.42, "-2.33%", false},
+    {"RAY", "Raydium", 5.23, "+9.14%", true},    {"HNT", "Helium", 26444366, "-0.51%", false},
 };
 
 void seed(size_t count) {
@@ -103,7 +107,7 @@ void seed(size_t count) {
 	for (size_t i = 0; i < scenario_count; i++) {
 		snprintf(scenario_tokens[i].symbol, sizeof(scenario_tokens[i].symbol), "%s", SEEDS[i].symbol);
 		snprintf(scenario_tokens[i].name, sizeof(scenario_tokens[i].name), "%s", SEEDS[i].name);
-		snprintf(scenario_tokens[i].price, sizeof(scenario_tokens[i].price), "%s", SEEDS[i].price);
+		anchor_format::formatUsd(SEEDS[i].price, scenario_tokens[i].price, sizeof(scenario_tokens[i].price));
 		snprintf(scenario_tokens[i].change, sizeof(scenario_tokens[i].change), "%s", SEEDS[i].change);
 		scenario_tokens[i].changePositive = SEEDS[i].positive;
 		snprintf(scenario_tokens[i].chain, sizeof(scenario_tokens[i].chain), "solana");

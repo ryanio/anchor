@@ -4,6 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 
 // How both handhelds write a number a person reads, and how they copy text that came off the network.
 //
@@ -42,7 +43,12 @@ inline void copyBounded(char *out, size_t n, const char *in)
 
 // Money as a display string. A value that did not arrive is "--", never "$0.0000": a missing price
 // has no reading, and $0.0000 is a reading. Whole dollars from $1,000, cents from $1, four places
-// below that. No thousands separators, because trending rows are narrow.
+// from one cent. No thousands separators, because trending rows are narrow.
+//
+// Below one cent, three significant figures with trailing zeros dropped: "$0.000021", "$0.00123".
+// Four fixed places used to print every sub-cent token, which trending is full of, as "$0.0000", a
+// plausible price that is not the price. Below $0.0000000001 the string says so instead of printing
+// zeros.
 inline void formatUsd(double value, char *out, size_t n)
 {
 	if (!isfinite(value)) {
@@ -53,8 +59,27 @@ inline void formatUsd(double value, char *out, size_t n)
 		snprintf(out, n, "$%.0f", value);
 	} else if (value >= 1.0) {
 		snprintf(out, n, "$%.2f", value);
-	} else {
+	} else if (value >= 0.01 || value <= 0.0) {
 		snprintf(out, n, "$%.4f", value);
+	} else if (value < 1e-10) {
+		snprintf(out, n, "<$0.0000000001");
+	} else {
+		int places = (int)floor(-log10(value)) + 3;
+		/* Twelve keeps three significant figures down to 1e-10, and "$0.000000000123" is fifteen
+		 * characters, which fits the sixteen-byte price field both devices use. */
+		if (places > 12) {
+			places = 12;
+		}
+		char digits[24];
+		snprintf(digits, sizeof(digits), "%.*f", places, value);
+		size_t length = strlen(digits);
+		while (length > 0 && digits[length - 1] == '0') {
+			digits[--length] = '\0';
+		}
+		if (length > 0 && digits[length - 1] == '.') {
+			digits[--length] = '\0';
+		}
+		snprintf(out, n, "$%s", digits);
 	}
 }
 

@@ -744,13 +744,13 @@ function simEsp32(root: string, paths: DevicePaths, manifest: Toolchain, runner:
   // Exercise the real LVGL screens with scripted input. Fixture data and credentials only.
   const binary = join(root, "devices", "firmware", "esp32", "sim", "build", "pulse-lvgl-sim");
   const cases = [
-    { name: "explore", taps: "295,46", labels: ["Explore", "STONK  $0.24", "solana | -4.58%"] },
-    { name: "token", taps: "295,46 135,148", labels: ["STONK", "Price", "$0.24"] },
+    { name: "explore", taps: "295,46", labels: ["Explore", "STONK  $0.2400", "solana | -4.58%"] },
+    { name: "token", taps: "295,46 135,148", labels: ["STONK", "Price", "$0.2400"] },
     {
       name: "lost-detail",
       thenFeed: "lost",
       taps: "295,46 135,148",
-      labels: ["STONK", "Price", "$0.24"],
+      labels: ["STONK", "Price", "$0.2400"],
       extra: ["--expect-visible-prefix", "Saved / stale |"],
     },
     { name: "back", taps: "295,46 135,148 70,398", labels: ["Explore"] },

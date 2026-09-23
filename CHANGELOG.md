@@ -626,6 +626,11 @@ assuming it, so a machine without one shows the command exactly as before.
   gap, and what to delete when each is fixed.
 
 ### Changed
+- **Sub-cent token prices read as prices.** Both handhelds formatted every price under a dollar to
+  four places, so a token at $0.000021 showed as "$0.0000". Prices under a cent now show three
+  significant figures ("$0.000021", "$0.00123"). Anything below $0.0000000001 says so rather than
+  printing zeros. The ESP32 simulator's fixture prices are now numbers run through the same function,
+  because its hand-typed strings were shapes the formatter could not produce and hid the bug.
 - **The ESP32 prints a health line every minute** for endurance and battery runs: uptime, internal heap
   (free, largest block, lowest since boot), PSRAM, the LVGL pool, the fetch worker's stack high-water
   mark, the last HTTP status, both feed states and battery. The simulator gains `--expect-serial`
