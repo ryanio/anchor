@@ -9,6 +9,7 @@
 #include <string.h>
 
 #include "pulse_design.h"
+#include "pulse_keypad.h"
 
 namespace pulse_wifi {
 
@@ -455,6 +456,20 @@ void onNetworkPicked(lv_event_t *event);
 void onForgetPicked(lv_event_t *event);
 
 /*
+ * A network row is a tap target, so it is taller and larger than a chooser's default.
+ *
+ * At the chooser's 20 px face and 12 px padding a row was 46 px, about 3.6 mm on this glass, which the
+ * first physical session reported as too small to read or hit. 24 px text with 20 px padding makes it
+ * 67 px (5.3 mm), measured from the simulator's tree dump.
+ */
+void styleNetworkRow(lv_obj_t *row)
+{
+	styleChooserRow(row);
+	lv_obj_set_style_text_font(row, type::heading(), LV_PART_MAIN);
+	lv_obj_set_style_pad_ver(row, space::lg, LV_PART_MAIN);
+}
+
+/*
  * The list, rebuilt from `networks`.
  *
  * Each row carries its strength and whether it wants a passphrase, in text rather than in an icon.
@@ -469,7 +484,7 @@ void rebuildList()
 	lv_obj_clean(pick.list);
 	for (int i = 0; i < network_count; i++) {
 		lv_obj_t *row = lv_list_add_button(pick.list, LV_SYMBOL_WIFI, networks[i].ssid);
-		styleChooserRow(row);
+		styleNetworkRow(row);
 
 		/*
 		 * `lv_list_add_button` gives its text label `LV_LABEL_LONG_SCROLL_CIRCULAR`, which animates a
@@ -497,7 +512,7 @@ void rebuildList()
 		         networks[i].open ? "open" : "WPA");
 		lv_obj_t *meta = lv_label_create(row);
 		lv_label_set_text(meta, detail);
-		lv_obj_set_style_text_font(meta, type::caption(), LV_PART_MAIN);
+		lv_obj_set_style_text_font(meta, type::label(), LV_PART_MAIN);
 		/*
 		 * `Warn` for an open network, not `Bad`.
 		 *
@@ -515,7 +530,16 @@ void rebuildList()
 	}
 	if (profile_count > 0) {
 		lv_obj_t *forget = lv_list_add_button(pick.list, nullptr, "Forget saved networks...");
+		/* A secondary action keeps the chooser's 20 px face, which fits its sentence, and takes the
+		 * network rows' height so it is as easy to hit. At 24 px the sentence overran the row and the
+		 * list button's default circular scroll slid it sideways. */
 		styleChooserRow(forget);
+		lv_obj_set_style_pad_ver(forget, space::lg, LV_PART_MAIN);
+		lv_obj_t *forget_label = lv_obj_get_child(forget, -1);
+		if (forget_label != nullptr && lv_obj_check_type(forget_label, &lv_label_class)) {
+			lv_label_set_long_mode(forget_label, LV_LABEL_LONG_DOT);
+			lv_obj_set_flex_grow(forget_label, 1);
+		}
 		lv_obj_add_event_cb(forget, onForgetPicked, LV_EVENT_CLICKED, nullptr);
 	}
 }
@@ -675,23 +699,19 @@ void startTyping(const char *ssid, bool for_ssid, bool open)
 	lv_textarea_set_password_mode(typing.field, !for_ssid);
 	lv_textarea_set_max_length(typing.field, for_ssid ? (uint32_t)SSID_MAX : (uint32_t)WIFI_PASS_MAX);
 	lv_label_set_text(typing.reveal_label, LV_SYMBOL_EYE_OPEN);
-	lv_keyboard_set_mode(typing.keyboard, LV_KEYBOARD_MODE_TEXT_LOWER);
+	pulse_keypad::reset(typing.keyboard, for_ssid ? "Next" : "Join");
 	lv_textarea_set_placeholder_text(typing.field, for_ssid ? "Network name" : "passphrase");
 	lv_obj_set_width(typing.field, for_ssid ? SAFE_W : password_field_width);
 	if (for_ssid) {
 		lv_obj_add_flag(typing.reveal, LV_OBJ_FLAG_HIDDEN);
-		lv_label_set_text(typing.hint,
-		                  LV_SYMBOL_NEXT "  next      " LV_SYMBOL_KEYBOARD "  goes back");
 	} else {
 		lv_obj_remove_flag(typing.reveal, LV_OBJ_FLAG_HIDDEN);
-		lv_label_set_text(typing.hint,
-		                  LV_SYMBOL_OK "  joins      " LV_SYMBOL_KEYBOARD "  goes back");
 	}
 
 	lv_obj_set_style_text_color(typing.subtitle, hex(colour::ink_dim), LV_PART_MAIN);
 	if (for_ssid) {
 		lv_label_set_text(typing.title, "Hidden network");
-		lv_label_set_text(typing.subtitle, "Type the name, then OK");
+		lv_label_set_text(typing.subtitle, "Type the name, then Next");
 	} else {
 		lv_label_set_text(typing.title, pending_ssid);
 		lv_label_set_text(typing.subtitle, open ? "Open network, no passphrase"
@@ -805,101 +825,8 @@ void onReveal(lv_event_t *event)
 	lv_label_set_text(typing.reveal_label, hidden ? LV_SYMBOL_EYE_CLOSE : LV_SYMBOL_EYE_OPEN);
 }
 
-/*
- * The magnifier: the key under the finger, drawn large, above the finger, on the top layer.
- *
- * LVGL's own popover was the first attempt and it is not enough here. It redraws the pressed key
- * extended upward by exactly one key height — about 61 px on this keyboard — which on a 368 px panel
- * held at arm's length is barely a magnification at all, and the part that matters is still directly
- * under the fingertip covering it. Reported plainly from the desk: it needed to be much bigger and
- * clearly above the finger.
- *
- * So this is a label on `lv_layer_top()`, which draws over every screen and is not clipped by the
- * keyboard's bounds — the constraint that makes a bigger popover impossible inside the widget. It
- * follows `LV_EVENT_PRESSING`, so it tracks a finger sliding across the keys rather than appearing
- * once where the press started; the button matrix commits on release, so sliding to the right key
- * and then letting go is a real correction rather than a mistake to undo.
- *
- * It is deliberately *not* shown for the control keys. Magnifying a backspace or a shift tells
- * nobody anything they did not already know from pressing it, and a 64 px glyph of an arrow over the
- * passphrase field is noise where the letters are signal.
- */
-/* Its size and its styling are `pulse_design::makeMagnifier`'s; where it goes is this file's, because
- * that is a question about a finger. */
-lv_obj_t *magnifier = nullptr;
-
-void hideMagnifier()
-{
-	if (magnifier != nullptr) lv_obj_add_flag(magnifier, LV_OBJ_FLAG_HIDDEN);
-}
-
-void onKeyboardPressing(lv_event_t *event)
-{
-	lv_obj_t *kb = (lv_obj_t *)lv_event_get_target(event);
-	if (kb == nullptr || magnifier == nullptr) return;
-
-	const uint32_t id = lv_buttonmatrix_get_selected_button(kb);
-	if (id == LV_BUTTONMATRIX_BUTTON_NONE) {
-		hideMagnifier();
-		return;
-	}
-	const char *text = lv_buttonmatrix_get_button_text(kb, id);
-	/*
-	 * One printable character only. Everything else on this keyboard is a control — the mode switch,
-	 * backspace, enter, the arrows — and those arrive here as multi byte symbol strings or words
-	 * rather than as a letter. Length is the whole test, and it keeps the magnifier to exactly the
-	 * keys whose identity is in doubt under a fingertip.
-	 */
-	if (text == nullptr || text[0] == '\0' || text[1] != '\0') {
-		hideMagnifier();
-		return;
-	}
-
-	/*
-	 * Positioned from the finger, not from the key.
-	 *
-	 * LVGL 9.2 exposes no public way to ask a button matrix where it drew a given button — the rect
-	 * is internal — so the first version of this did not compile. The touch point is the better
-	 * anchor anyway, and it is what was actually asked for: the magnifier belongs above the *finger*,
-	 * which is the thing doing the covering. It also means the magnifier tracks a slide smoothly
-	 * rather than jumping key to key.
-	 */
-	lv_indev_t *indev = lv_indev_active();
-	if (indev == nullptr) {
-		hideMagnifier();
-		return;
-	}
-	lv_point_t touch;
-	lv_indev_get_point(indev, &touch);
-
-	lv_label_set_text(magnifier, text);
-
-	/*
-	 * Centred over the key, and far enough above it to clear a fingertip.
-	 *
-	 * A finger on this glass covers roughly 100 px, so sitting the magnifier one key height up — what
-	 * the built-in popover does — leaves it under the hand that is asking the question. It is placed
-	 * a full magnifier height above the key's top instead, and clamped into the panel so the top row
-	 * does not push it off the screen. The clamp is why this is not simply an offset: the top row is
-	 * exactly the row where the answer is least visible and most wanted.
-	 */
-	int32_t x = touch.x - MAG_W / 2;
-	int32_t y = touch.y - MAG_H - 56;
-	if (x < INSET) x = INSET;
-	if (x > PANEL_W - INSET - MAG_W) x = PANEL_W - INSET - MAG_W;
-	if (y < INSET) y = INSET;
-	lv_obj_set_pos(magnifier, x, y);
-	lv_obj_remove_flag(magnifier, LV_OBJ_FLAG_HIDDEN);
-}
-
-void onKeyboardReleased(lv_event_t *event)
-{
-	(void)event;
-	hideMagnifier();
-}
-
-/* The keyboard's own OK key. LVGL raises `LV_EVENT_READY` from it and from the newline key, so there
- * is exactly one place a submission arrives from and no geometry deciding what a tap meant. */
+/* The keypad's submit key. `pulse_keypad` raises `LV_EVENT_READY` from it and from nothing else, so
+ * there is exactly one place a submission arrives from and no geometry deciding what a tap meant. */
 void onKeyboardReady(lv_event_t *event)
 {
 	(void)event;
@@ -937,13 +864,19 @@ void onKeyboardReady(lv_event_t *event)
 	startJoin(pending_ssid, typed, pending_open);
 }
 
-/* The keyboard's close key: back to the list, and the field is cleared on the way in next time. */
+/* The input's cancel button: back to the list, and the field is cleared on the way in next time. */
 void onKeyboardCancel(lv_event_t *event)
 {
 	(void)event;
 	state = State::Picking;
 	showPage(pick.page);
 	refreshPickStatus();
+}
+
+void onCancelTapped(lv_event_t *event)
+{
+	(void)event;
+	pulse_keypad::cancel(typing.keyboard);
 }
 
 void onRetry(lv_event_t *event)
@@ -1025,16 +958,7 @@ void build()
 	lv_obj_add_event_cb(typing.reveal, onReveal, LV_EVENT_CLICKED, nullptr);
 	lv_obj_add_event_cb(typing.keyboard, onKeyboardReady, LV_EVENT_READY, nullptr);
 	lv_obj_add_event_cb(typing.keyboard, onKeyboardCancel, LV_EVENT_CANCEL, nullptr);
-
-	/*
-	 * The magnifier, built once on the top layer and moved around thereafter. Created hidden, and
-	 * every path that ends a press hides it again — including `LV_EVENT_RELEASED`, which fires for the
-	 * press that commits a key, so it never outlives the finger that summoned it.
-	 */
-	magnifier = makeMagnifier();
-	lv_obj_add_event_cb(typing.keyboard, onKeyboardPressing, LV_EVENT_PRESSING, nullptr);
-	lv_obj_add_event_cb(typing.keyboard, onKeyboardReleased, LV_EVENT_RELEASED, nullptr);
-	lv_obj_add_event_cb(typing.keyboard, onKeyboardReleased, LV_EVENT_PRESS_LOST, nullptr);
+	lv_obj_add_event_cb(typing.cancel, onCancelTapped, LV_EVENT_CLICKED, nullptr);
 
 	/* ---- the result, which is the status archetype with two buttons in it ---- */
 	result = buildStatus(screen, true /* with actions */);

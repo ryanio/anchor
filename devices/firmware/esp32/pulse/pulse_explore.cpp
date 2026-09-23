@@ -29,7 +29,9 @@ char portfolioTotal[24]{}, portfolioNfts[24]{}, portfolioChange[16]{}, coverage[
 bool portfolioPositive = false, portfolioPartial = false;
 lv_obj_t *screen = nullptr, *previous = nullptr;
 ChooserView chooser;
-lv_obj_t *rowButtons[CAPACITY]{}, *rowLabels[CAPACITY]{};
+/* Each row is two labels: a large one for the thing being read and a small one that says what it is.
+ * One 20 px label per row was reported from the physical unit as far too small to read. */
+lv_obj_t *rowButtons[CAPACITY]{}, *rowTop[CAPACITY]{}, *rowBottom[CAPACITY]{};
 Action wifi = nullptr;
 
 template <size_t N>
@@ -77,7 +79,30 @@ void describe(char *out, size_t size, pulse_feed_view::Status status, const char
 	}
 }
 
-void line(size_t index, const char *text, Tone tone = Tone::Ink, bool clickable = false)
+struct Row2 {
+	const char *big = "";
+	const char *small = "";
+	Tone bigTone = Tone::Ink;
+	Tone smallTone = Tone::Quiet;
+	/* A reading puts its label above the value; a list row puts its detail below the name. */
+	bool smallFirst = false;
+	const lv_font_t *bigFont = nullptr;
+};
+
+void setText(lv_obj_t *label, const char *text, const lv_font_t *font, Tone tone)
+{
+	const bool empty = text == nullptr || text[0] == '\0';
+	if (empty) {
+		lv_obj_add_flag(label, LV_OBJ_FLAG_HIDDEN);
+		return;
+	}
+	lv_obj_remove_flag(label, LV_OBJ_FLAG_HIDDEN);
+	lv_label_set_text(label, text);
+	lv_obj_set_style_text_font(label, font, LV_PART_MAIN);
+	lv_obj_set_style_text_color(label, hex(toneColour(tone)), LV_PART_MAIN);
+}
+
+void line(size_t index, const Row2 &row, bool clickable = false)
 {
 	visibleRows |= (uint16_t)(1u << index);
 	lv_obj_remove_flag(rowButtons[index], LV_OBJ_FLAG_HIDDEN);
@@ -86,8 +111,18 @@ void line(size_t index, const char *text, Tone tone = Tone::Ink, bool clickable 
 	} else {
 		lv_obj_remove_flag(rowButtons[index], LV_OBJ_FLAG_CLICKABLE);
 	}
-	lv_label_set_text(rowLabels[index], text);
-	lv_obj_set_style_text_color(rowLabels[index], hex(toneColour(tone)), LV_PART_MAIN);
+	const lv_font_t *big = row.bigFont != nullptr ? row.bigFont : type::title();
+	lv_obj_t *bigLabel = row.smallFirst ? rowBottom[index] : rowTop[index];
+	lv_obj_t *smallLabel = row.smallFirst ? rowTop[index] : rowBottom[index];
+	setText(bigLabel, row.big, big, row.bigTone);
+	setText(smallLabel, row.small, type::body(), row.smallTone);
+}
+
+Tone changeTone(const char *change, bool positive)
+{
+	return change == nullptr || change[0] == '\0' || strcmp(change, "--") == 0 ? Tone::Quiet
+	       : positive                                                          ? Tone::Good
+	                                                                           : Tone::Bad;
 }
 
 void render()
@@ -97,17 +132,27 @@ void render()
 	}
 	visibleRows = 0;
 	char text[112];
+	char detail[112];
 	if (page == Page::List) {
 		lv_label_set_text(chooser.title, "Explore");
 		lv_label_set_text(chooser.subtitle, listStatus);
 		for (size_t i = 0; i < count; ++i) {
 			// Bound every array field explicitly, including under GCC's fortified snprintf checks.
-			snprintf(text, sizeof(text), "%.11s  %.15s\n%.15s | %.9s", rows[i].symbol, rows[i].price,
-			         rows[i].chain, rows[i].change);
-			line(i, text, Tone::Ink, true);
+			snprintf(text, sizeof(text), "%.11s  %.15s", rows[i].symbol, rows[i].price);
+			snprintf(detail, sizeof(detail), "%.15s | %.9s", rows[i].chain, rows[i].change);
+			Row2 row;
+			row.big = text;
+			row.small = detail;
+			row.smallTone = changeTone(rows[i].change, rows[i].positive);
+			line(i, row, true);
 		}
 		if (count == 0) {
-			line(0, "No tokens yet.\nUse Wi-Fi to connect or change networks.", Tone::Quiet);
+			Row2 row;
+			row.big = "No tokens yet";
+			row.small = "Use Wi-Fi to connect or change networks.";
+			row.bigTone = Tone::Quiet;
+			row.bigFont = type::heading();
+			line(0, row);
 		}
 	} else if (page == Page::Token) {
 		lv_label_set_text(chooser.title, selected.symbol);
@@ -122,34 +167,65 @@ void render()
 		             : "Saved / stale",
 		         age);
 		lv_label_set_text(chooser.subtitle, text);
-		snprintf(text, sizeof(text), "%s\n%s", selected.name, selected.chain);
-		line(0, text);
-		snprintf(text, sizeof(text), "Price\n%s", selected.price);
-		line(1, text);
-		snprintf(text, sizeof(text), "24h change\n%s", selected.change);
-		line(2, text,
-		     strcmp(selected.change, "--") == 0 ? Tone::Quiet
-		     : selected.positive                ? Tone::Good
-		                                        : Tone::Bad);
-		snprintf(text, sizeof(text), "24h volume\n%s", selected.volume);
-		line(3, text);
-		snprintf(text, sizeof(text), "Token address\n%s", selected.address);
-		line(4, text, Tone::Quiet);
+		Row2 name;
+		name.big = selected.name;
+		name.small = selected.chain;
+		name.bigFont = type::heading();
+		line(0, name);
+		Row2 price;
+		price.big = selected.price;
+		price.small = "Price";
+		price.smallFirst = true;
+		line(1, price);
+		Row2 change;
+		change.big = selected.change;
+		change.small = "24h change";
+		change.bigTone = changeTone(selected.change, selected.positive);
+		change.smallFirst = true;
+		line(2, change);
+		Row2 volume;
+		volume.big = selected.volume;
+		volume.small = "24h volume";
+		volume.smallFirst = true;
+		line(3, volume);
+		Row2 address;
+		address.big = selected.address;
+		address.small = "Token address";
+		address.bigTone = Tone::Quiet;
+		address.bigFont = type::body();
+		address.smallFirst = true;
+		line(4, address);
 		if (!selectedPresent) {
-			line(5, "This token left the latest list. Its last reading is retained.", Tone::Warn);
+			Row2 gone;
+			gone.big = "Not in the latest list";
+			gone.small = "Its last reading is kept.";
+			gone.bigTone = Tone::Warn;
+			gone.smallTone = Tone::Warn;
+			gone.bigFont = type::heading();
+			line(5, gone);
 		}
 	} else {
 		lv_label_set_text(chooser.title, "Portfolio");
 		lv_label_set_text(chooser.subtitle, portfolioStatus);
-		snprintf(text, sizeof(text), "Total | %s\n%s", coverage, portfolioTotal);
-		line(0, text, portfolioPartial ? Tone::Warn : Tone::Ink);
-		snprintf(text, sizeof(text), "24h change\n%s", portfolioChange);
-		line(1, text,
-		     strcmp(portfolioChange, "--") == 0 ? Tone::Quiet
-		     : portfolioPositive                ? Tone::Good
-		                                        : Tone::Bad);
-		snprintf(text, sizeof(text), "NFT value\n%s", portfolioNfts);
-		line(2, text);
+		snprintf(text, sizeof(text), "Total | %s", coverage);
+		Row2 total;
+		total.big = portfolioTotal;
+		total.small = text;
+		total.bigTone = portfolioPartial ? Tone::Warn : Tone::Ink;
+		total.smallTone = portfolioPartial ? Tone::Warn : Tone::Quiet;
+		total.smallFirst = true;
+		line(0, total);
+		Row2 change;
+		change.big = portfolioChange;
+		change.small = "24h change";
+		change.bigTone = changeTone(portfolioChange, portfolioPositive);
+		change.smallFirst = true;
+		line(1, change);
+		Row2 nfts;
+		nfts.big = portfolioNfts;
+		nfts.small = "NFT value";
+		nfts.smallFirst = true;
+		line(2, nfts);
 	}
 	for (size_t i = 0; i < CAPACITY; ++i) {
 		if ((visibleRows & (1u << i)) == 0) {
@@ -217,19 +293,22 @@ void begin(Action openWifi)
 	paintGround(screen);
 	chooser = buildChooser(screen, "Explore", "Back", "Portfolio", "Wi-Fi");
 	// Two lines for connection state or a specific failure, without truncating it.
-	lv_obj_set_style_text_font(chooser.subtitle, type::caption(), LV_PART_MAIN);
 	lv_label_set_long_mode(chooser.subtitle, LV_LABEL_LONG_WRAP);
-	lv_obj_set_y(chooser.list, 106);
-	lv_obj_set_height(chooser.list, 254);
+	lv_obj_set_y(chooser.list, 112);
+	lv_obj_set_height(chooser.list, 248);
 	for (size_t i = 0; i < CAPACITY; ++i) {
 		rowButtons[i] = lv_button_create(chooser.list);
 		styleChooserRow(rowButtons[i]);
 		lv_obj_set_width(rowButtons[i], LV_PCT(100));
 		lv_obj_set_height(rowButtons[i], LV_SIZE_CONTENT);
-		rowLabels[i] = lv_label_create(rowButtons[i]);
-		lv_obj_set_width(rowLabels[i], LV_PCT(100));
-		lv_label_set_long_mode(rowLabels[i], LV_LABEL_LONG_WRAP);
-		lv_obj_set_style_text_font(rowLabels[i], type::body(), LV_PART_MAIN);
+		lv_obj_set_flex_flow(rowButtons[i], LV_FLEX_FLOW_COLUMN);
+		lv_obj_set_style_pad_row(rowButtons[i], space::xs, LV_PART_MAIN);
+		lv_obj_t **labels[2] = {&rowTop[i], &rowBottom[i]};
+		for (lv_obj_t **label : labels) {
+			*label = lv_label_create(rowButtons[i]);
+			lv_obj_set_width(*label, LV_PCT(100));
+			lv_label_set_long_mode(*label, LV_LABEL_LONG_WRAP);
+		}
 		lv_obj_add_event_cb(rowButtons[i], onRow, LV_EVENT_PRESSED, (void *)(uintptr_t)i);
 		lv_obj_add_event_cb(rowButtons[i], onRow, LV_EVENT_CLICKED, (void *)(uintptr_t)i);
 	}

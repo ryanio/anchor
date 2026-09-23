@@ -162,9 +162,9 @@ constexpr int32_t lg = 18;
  * read from across a room. LVGL's own `LV_FONT_DEFAULT` is still Montserrat 14 because anything that
  * renders text without being told a font needs one; nothing in this firmware asks for it.
  *
- * `shout` and `display` each exist for exactly one job — the key drawn under a fingertip, and the
- * magnifier above it — which is worth saying so that a future screen reaches for `hero` instead of
- * inventing a reason to use the biggest thing in the box.
+ * `shout` and `display` are for short strings with a lot of room: the ambient readout's big values,
+ * and the keypad's group labels and chosen letters. A future screen of prose should reach for `hero`
+ * at most.
  */
 namespace type {
 inline const lv_font_t *caption() { return &lv_font_montserrat_16; } /* a footer, a row's metadata */
@@ -173,9 +173,9 @@ inline const lv_font_t *body() { return &lv_font_montserrat_20; }    /* a senten
 inline const lv_font_t *subhead() { return &lv_font_montserrat_22; } /* what labels a big number */
 inline const lv_font_t *heading() { return &lv_font_montserrat_24; } /* a keyboard key, a field */
 inline const lv_font_t *title() { return &lv_font_montserrat_28; }   /* what a screen is called */
-inline const lv_font_t *shout() { return &lv_font_montserrat_32; }   /* the key under a finger */
+inline const lv_font_t *shout() { return &lv_font_montserrat_32; }   /* a keypad group */
 inline const lv_font_t *hero() { return &lv_font_montserrat_40; }    /* the number, and the state */
-inline const lv_font_t *display() { return &lv_font_montserrat_48; } /* the magnifier */
+inline const lv_font_t *display() { return &lv_font_montserrat_48; } /* a keypad letter */
 }  // namespace type
 
 /* ------------------------------------------------------------------------------- the primitives - */
@@ -365,11 +365,13 @@ ChooserView buildChooser(lv_obj_t *parent, const char *title, const char *action
 void styleChooserRow(lv_obj_t *row);
 
 /*
- * **Input** — a heading, a line of context, one field with a reveal button, a hint, and a keyboard.
+ * **Input**: a heading with a cancel button, a line of context, one field with a reveal button, and
+ * the keypad.
  *
- * `lv_keyboard` and `lv_textarea` own hit-testing, shift state, scrolling and password masking, which
- * is four of the seven bugs the hand-drawn module had. What is left for this file is the geometry,
- * and the geometry is where that module's remaining mistakes lived.
+ * `lv_textarea` owns the cursor, scrolling and password masking, and `lv_buttonmatrix` owns hit
+ * testing, which is four of the seven bugs the hand-drawn module had. The keypad's layout is
+ * `pulse_keypad_model.h`. `keyboard` raises `LV_EVENT_READY` when submitted and `LV_EVENT_CANCEL` when
+ * `cancel` is tapped (through `pulse_keypad::cancel`, called by the input's owner).
  */
 struct InputView {
 	lv_obj_t *page = nullptr;
@@ -378,16 +380,10 @@ struct InputView {
 	lv_obj_t *field = nullptr;
 	lv_obj_t *reveal = nullptr;
 	lv_obj_t *reveal_label = nullptr;
-	lv_obj_t *hint = nullptr;
+	lv_obj_t *cancel = nullptr;
 	lv_obj_t *keyboard = nullptr;
 };
 InputView buildInput(lv_obj_t *parent, const char *placeholder);
-
-/* The magnifier: one key, drawn large, above the finger, on `lv_layer_top()`. Built here because it
- * is a piece of this system's appearance; driven from `pulse_wifi.cpp`, which owns the input. */
-constexpr int32_t MAG_W = 112;
-constexpr int32_t MAG_H = 124;
-lv_obj_t *makeMagnifier();
 
 /* ---------------------------------------------------------------------------------- the charge - */
 

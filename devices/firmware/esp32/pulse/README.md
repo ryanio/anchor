@@ -28,7 +28,8 @@ screen this firmware has. Nothing else in `pulse/` names a colour or a pixel.
   across a room.
 - **Four archetypes**: `buildReading` (one subject, four labelled values, a footer),
   `buildStatus` (one state, said plainly, with what to do about it), `buildChooser` (the network
-  list), `buildInput` (the passphrase keyboard). Every screen in the firmware is one of them, and
+  list), `buildInput` (the passphrase keypad, `pulse_keypad.{h,cpp}` over the host-tested
+  `pulse_keypad_model.h`). Every screen in the firmware is one of them, and
   the Wi-Fi join result and the ambient "Not set up" screen are now the *same* archetype.
 
 The status archetype is why this exists. Every state with no data used to be drawn as a reading with

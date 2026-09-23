@@ -626,6 +626,14 @@ assuming it, so a machine without one shows the command exactly as before.
   gap, and what to delete when each is fixed.
 
 ### Changed
+- **The ESP32 Wi-Fi keyboard is a phone-style keypad with keys a finger can hit.** The panel is
+  about 29 mm wide, and `lv_keyboard` gave it 27 to 32 px keys (about 2.5 mm), which the first
+  physical session found extremely hard to use. Three columns of 112 x 63 px keys now hold letter
+  groups, and a tap on a group shows its letters at 48 px, lower case above upper case. Digits and
+  all 32 ASCII symbols have their own pages, so every printable character is within three taps. A
+  host test checks that by search, and a simulator scenario types a network name and passphrase
+  and checks that the saved profile holds exactly what was typed. Explore rows, the chooser status
+  line and buttons, and Wi-Fi network rows are larger too. Not yet checked on the glass.
 - **The ESP32 pulse display's systemd service opens on `portfolio` instead of `desktop`.** `desktop`
   is a page of desktop controls a touch-only ambient display can't do much with; `panel.json` itself
   is unchanged, so the Stream Deck and Cardputer still default to `desktop`. `--page portfolio` on

@@ -15,7 +15,9 @@ pixel transport and provisioning proposals later in this document are historical
 
 The ambient screen has an Explore button. Explore lists trending tokens, opens a token's price,
 24h change, volume, and full identity, and links to the configured portfolio and Wi-Fi settings.
-The list, details, and portfolio use the existing LVGL chooser components. A selected token is
+The list, details, and portfolio use the existing LVGL chooser components. Each row is a 28 px
+reading with a 20 px label, sized for the physical panel as described under
+[the panel is 29 mm wide](#the-panel-is-29-mm-wide-so-size-for-a-fingertip-not-for-pixels). A selected token is
 identified by chain and address; a touch captures that identity before a refresh can reorder rows.
 A token that leaves the list retains its last reading with a saved/stale label. Freshness and wallet
 coverage stay visible.
@@ -502,6 +504,40 @@ as geometry, and nothing in a screenshot shows it because the simulator draws th
 drift is silent too — the Wi-Fi picker's three-button row stayed 109 px wide after `INSET` went from
 12 to 20, so the last button's right edge sat 5 px from the panel edge for as long as the number was
 written out by hand in two files. Derive the row from the safe width; do not retype it.
+
+### The panel is 29 mm wide, so size for a fingertip, not for pixels
+
+The 1.8 inch panel puts 368 x 448 pixels on about 29 x 35 mm of glass, 322 pixels to the inch, so
+12.7 px is a millimetre. A layout that looks roomy in a 368 px screenshot is small in the hand. On
+2026-09-22 Ryan reported from the first physical session that the unit was very small to read and
+that the Wi-Fi keyboard was extremely hard to use.
+
+The keyboard was LVGL's `lv_keyboard`: ten or eleven keys a row across 352 px, 27 to 32 px a key,
+which is 2.1 to 2.5 mm against the 8 to 10 mm a fingertip needs. A magnifier above the finger showed
+which key was pressed but did not make the keys any easier to hit. No full keyboard fits this width at a
+usable size, so `pulse/pulse_keypad_model.h` replaces it with a phone-style keypad:
+
+- Three columns and four rows, each key 112 x 63 px (8.8 x 5 mm).
+- Letters in telephone groups. Tapping a group shows that group's letters, lower case above upper
+  case, at 48 px on keys 82 px wide or more; the second tap types the letter and returns to the grid.
+- Digits are one tap each on their own page. The 32 ASCII symbols are in nine groups on a third page,
+  one tap from the letters.
+
+Every character WPA2 accepts, 0x20 to 0x7E, is reachable in three taps or fewer, and letters and
+digits in two. `host/keypad.cpp` checks that by search rather than by listing cases. The simulator's
+`keypad-join` scenario types a hidden network name and the passphrase `Pass-123` by coordinates and
+checks that the saved profile holds exactly that string. The simulated unit starts with
+`fixturepass` saved, so a keypad that typed the wrong characters fails the check.
+
+Text follows the same arithmetic. 20 px Montserrat is about 1.6 mm tall. Explore rows now read at
+28 px with a 20 px label, the chooser status line and buttons at 20 px, and Wi-Fi network rows at
+24 px with 20 px padding. In the simulator's tree dump a network row is now 67 px (5.3 mm) instead
+of 46 px. The crowded case, 32 scan results followed by the keypad, peaks at 107,888 bytes of the
+128 KiB LVGL pool with a 23,384-byte largest free block.
+
+What the simulator cannot say: whether these sizes are enough on the glass, whether two taps a letter
+is acceptable to the people using it, and how the CST820 behaves on the larger keys. Those need a
+unit in the hand, and the result belongs in this section.
 
 ### The AXP2101 is how this board is switched off, and the register map came from two vendor drivers
 

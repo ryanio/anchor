@@ -80,6 +80,16 @@ findings in [The ESP32 display](devices-esp32.md) remain required for this hardw
 - Preserve the 40 ms CST820 touch settle when the controller reports a momentary zero finger count
   during contact.
 
+## Size on the glass, 2026-09-22
+
+After the demo images were flashed, Ryan reported that the Waveshare unit is very small to read and
+that its Wi-Fi keyboard is extremely hard to use. The keyboard had 27 to 32 px keys, about 2.5 mm on
+this panel. A three-column keypad with 112 x 63 px keys and larger Explore and Wi-Fi text replaced
+it in the source; see
+[the ESP32 notes](devices-esp32.md#the-panel-is-29-mm-wide-so-size-for-a-fingertip-not-for-pixels).
+The units still run the `0716006` demo images until they are reflashed, so this change has not been
+seen on the glass yet.
+
 ## What still needs observation
 
 - Physically label each unit and assign CP-01 through CP-03 and ESP-01 through ESP-03.

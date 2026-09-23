@@ -1,5 +1,7 @@
 #include "pulse_design.h"
 
+#include "pulse_keypad.h"
+
 #include <stdio.h>
 #include <string.h>
 
@@ -131,32 +133,33 @@ constexpr int32_t CHOOSER_ACTION_W = (SAFE_W - 2 * CHOOSER_ACTION_GAP) / 3; /* 1
 /* -------------------------------------------------------------------------- the input's metrics - */
 
 constexpr int32_t INPUT_TITLE_Y = INSET;
-constexpr int32_t INPUT_SUB_Y = 54;
-constexpr int32_t INPUT_FIELD_Y = 84;
-constexpr int32_t INPUT_FIELD_H = 56;
-constexpr int32_t INPUT_REVEAL_W = 72;
-constexpr int32_t INPUT_FIELD_W = SAFE_W - INPUT_REVEAL_W - space::sm; /* 248 */
-constexpr int32_t INPUT_HINT_Y = 150;
+/* Cancel sits beside the title rather than on the keypad, because the keypad's rows are spent on keys
+ * that type. It is a close glyph rather than the word: "Cancel" cost the title 44 px and cut "Hidden
+ * network" to "Hidden netw...". A longer network name is dotted where it meets the button. */
+constexpr int32_t INPUT_CANCEL_W = 52;
+constexpr int32_t INPUT_CANCEL_H = 44;
+constexpr int32_t INPUT_CANCEL_Y = INSET - 6;
+constexpr int32_t INPUT_TITLE_W = SAFE_W - INPUT_CANCEL_W - space::sm; /* 268 */
+constexpr int32_t INPUT_SUB_Y = 58;
+constexpr int32_t INPUT_FIELD_Y = 88;
+constexpr int32_t INPUT_FIELD_H = 52;
+constexpr int32_t INPUT_REVEAL_W = 64;
+constexpr int32_t INPUT_FIELD_W = SAFE_W - INPUT_REVEAL_W - space::sm; /* 256 */
 /*
- * The keyboard: 352 wide at x=8, 242 tall from y=186 to the safe bottom at 428.
+ * The keypad: 352 wide at x=8, 276 tall from y=152 to the safe bottom at 428.
  *
- * Key height is the axis that is free here and `app/wifi_setup.cpp` measured what happens when it is
- * spent badly — four rows ending at y=304 left the bottom third of the panel dead while the keys
- * were the hardest thing on it to hit. LVGL's map is four rows, so 242/4 is 60px a row, about 4.8 mm
- * on this 322 ppi glass against the 9-10 mm a touch target wants. That is still under target and it
- * is the best this panel can do with ten columns; the magnifier is what closes the rest of the gap.
+ * Four rows of 63 px and three columns of 112 px, with 8 px between keys: about 8.8 x 5 mm on this
+ * 322 ppi glass. The ten-column `lv_keyboard` this replaced had 27 to 32 px keys, 2.5 mm wide, and
+ * was reported from the first session on the physical unit as extremely hard to use. See
+ * `pulse_keypad_model.h` for the layout and why it takes two taps a letter.
  *
- * It ran to y=440 before, which is twelve pixels past the safe rectangle and straight into both
- * bottom corners — the same corner clearance that clipped the "Wi-Fi" heading, on the row carrying
- * the space bar and the OK key. It ends at 428 now and the rows lost a pixel each.
- *
- * The 36px between the hint line and the top row is where LVGL draws the popover for a pressed key,
- * and a keyboard flush against the hint would have the popover cover the text somebody is checking.
+ * It ends at 428, the safe rectangle's bottom. It once ran to 440, straight into both bottom corners,
+ * on the row that carries delete and submit.
  */
 constexpr int32_t INPUT_KB_X = space::sm;
 constexpr int32_t INPUT_KB_W = PANEL_W - 2 * INPUT_KB_X; /* 352 */
-constexpr int32_t INPUT_KB_Y = 186;
-constexpr int32_t INPUT_KB_H = PANEL_H - INSET - INPUT_KB_Y; /* 242 */
+constexpr int32_t INPUT_KB_Y = 152;
+constexpr int32_t INPUT_KB_H = PANEL_H - INSET - INPUT_KB_Y; /* 276 */
 
 /*
  * Hidden, which LVGL's flex reads as "not in the track at all" — checked, not assumed.
@@ -636,7 +639,7 @@ ChooserView buildChooser(lv_obj_t *parent, const char *title, const char *action
 		if (!has(text[i])) continue;
 		view.action[i] =
 		    makeButton(view.page, INSET + i * (CHOOSER_ACTION_W + CHOOSER_ACTION_GAP),
-		               CHOOSER_ACTION_Y, CHOOSER_ACTION_W, CHOOSER_ACTION_H, text[i], type::label());
+		               CHOOSER_ACTION_Y, CHOOSER_ACTION_W, CHOOSER_ACTION_H, text[i], type::body());
 	}
 	return view;
 }
@@ -666,8 +669,8 @@ InputView buildInput(lv_obj_t *parent, const char *placeholder)
 	InputView view;
 	view.page = makePage(parent);
 
-	view.title = makeLabel(view.page, type::title(), colour::ink, INSET, INPUT_TITLE_Y, SAFE_W,
-	                       LV_TEXT_ALIGN_LEFT);
+	view.title = makeLabel(view.page, type::title(), colour::ink, INSET, INPUT_TITLE_Y,
+	                       INPUT_TITLE_W, LV_TEXT_ALIGN_LEFT);
 	lv_label_set_text(view.title, "");
 	view.subtitle = makeLabel(view.page, type::body(), colour::ink_dim, INSET, INPUT_SUB_Y, SAFE_W,
 	                          LV_TEXT_ALIGN_LEFT);
@@ -714,103 +717,15 @@ InputView buildInput(lv_obj_t *parent, const char *placeholder)
 	                         INPUT_REVEAL_W, INPUT_FIELD_H, LV_SYMBOL_EYE_OPEN, type::heading(),
 	                         &view.reveal_label);
 
-	view.hint = makeLabel(view.page, type::label(), colour::ink_faint, INSET, INPUT_HINT_Y, SAFE_W,
-	                      LV_TEXT_ALIGN_LEFT);
-	lv_label_set_text(view.hint, LV_SYMBOL_OK "  joins      " LV_SYMBOL_KEYBOARD "  goes back");
+	view.cancel = makeButton(view.page, PANEL_W - INSET - INPUT_CANCEL_W, INPUT_CANCEL_Y,
+	                         INPUT_CANCEL_W, INPUT_CANCEL_H, LV_SYMBOL_CLOSE, type::heading(), nullptr);
 
-	view.keyboard = lv_keyboard_create(view.page);
-	/*
-	 * `lv_obj_set_align` before `lv_obj_set_pos`, and it is not decoration.
-	 *
-	 * `lv_keyboard`'s constructor aligns itself `LV_ALIGN_BOTTOM_MID` and defaults to 100% wide by 50%
-	 * tall — so a plain `set_pos` is read as an *offset from the bottom centre*, and the first render
-	 * put the keyboard at (8, 400) with most of it hanging off the panel. The simulator's tree dump
-	 * said `<< PAST ITS PARENT'S BOTTOM EDGE` before any pixel was looked at, which is the whole
-	 * reason that check is in it.
-	 */
-	lv_obj_set_align(view.keyboard, LV_ALIGN_TOP_LEFT);
+	view.keyboard = pulse_keypad::create(view.page, view.field);
 	lv_obj_set_pos(view.keyboard, INPUT_KB_X, INPUT_KB_Y);
 	lv_obj_set_size(view.keyboard, INPUT_KB_W, INPUT_KB_H);
-	lv_keyboard_set_textarea(view.keyboard, view.field);
-	lv_keyboard_set_popovers(view.keyboard, true);
-	lv_obj_set_style_bg_color(view.keyboard, hex(colour::ground), LV_PART_MAIN);
-	lv_obj_set_style_bg_opa(view.keyboard, LV_OPA_COVER, LV_PART_MAIN);
-	lv_obj_set_style_border_width(view.keyboard, 0, LV_PART_MAIN);
-	lv_obj_set_style_pad_all(view.keyboard, 2, LV_PART_MAIN);
-	/* Three pixels between keys rather than the theme's default. The first render clipped the "ABC"
-	 * and "1#" mode keys — they are the narrowest in the map and a 24px face does not fit three glyphs
-	 * inside them once the theme's gap and a 1px border have taken their share. Widening the keys is
-	 * the fix that keeps the face legible; shrinking the face would have cost every letter. */
-	lv_obj_set_style_pad_gap(view.keyboard, 3, LV_PART_MAIN);
-	lv_obj_set_style_bg_color(view.keyboard, hex(colour::raised), LV_PART_ITEMS);
-	lv_obj_set_style_bg_opa(view.keyboard, LV_OPA_COVER, LV_PART_ITEMS);
-	lv_obj_set_style_text_color(view.keyboard, hex(colour::ink), LV_PART_ITEMS);
-	lv_obj_set_style_text_font(view.keyboard, type::heading(), LV_PART_ITEMS);
-	lv_obj_set_style_border_color(view.keyboard, hex(colour::edge), LV_PART_ITEMS);
-	lv_obj_set_style_border_width(view.keyboard, 1, LV_PART_ITEMS);
-	lv_obj_set_style_radius(view.keyboard, radius::sm - 2, LV_PART_ITEMS);
-	/*
-	 * The control keys are `LV_STATE_CHECKED`, and styling only the default state leaves them wearing
-	 * the *stock theme* — which is `LV_THEME_DEFAULT_DARK 0`, so the first render had nine white keys
-	 * with black glyphs scattered through a dark keyboard. It looked like a rendering fault and was a
-	 * missing selector. They are darker than the letters here on purpose: shift, backspace and the
-	 * mode switch are not things somebody is aiming at while typing a passphrase.
-	 */
-	lv_obj_set_style_bg_color(view.keyboard, hex(colour::edge), LV_PART_ITEMS | LV_STATE_CHECKED);
-	lv_obj_set_style_text_color(view.keyboard, hex(colour::ink), LV_PART_ITEMS | LV_STATE_CHECKED);
-	lv_obj_set_style_border_color(view.keyboard, hex(colour::ink_dim),
-	                              LV_PART_ITEMS | LV_STATE_CHECKED);
-	/*
-	 * And a size down on the control keys, which is the actual fix for a thing that had only been
-	 * worked around.
-	 *
-	 * "ABC" and "1#" are three glyphs in a key the same width as one letter: ten columns across the
-	 * panel is about 32px a key, and three characters of Montserrat 24 is 39. The note above the gap
-	 * says widening the keys was the fix, and it was not — it bought two pixels and the "A" was still
-	 * cut off in the render, before this change and after it. `label` is 18 and three of those is 30,
-	 * which fits with room to spare. It is the right key to shrink for the reason its own styling
-	 * already gives: nobody is aiming at the mode switch while typing a passphrase.
-	 */
-	lv_obj_set_style_text_font(view.keyboard, type::label(), LV_PART_ITEMS | LV_STATE_CHECKED);
-	lv_obj_set_style_bg_color(view.keyboard, hex(colour::accent), LV_PART_ITEMS | LV_STATE_PRESSED);
-	lv_obj_set_style_text_color(view.keyboard, hex(colour::ground),
-	                            LV_PART_ITEMS | LV_STATE_PRESSED);
-	/*
-	 * The key under the finger is drawn a size and a half up, which is what makes LVGL's popover a
-	 * magnifier rather than a repeat: a press style applies to the popover too, so a larger face in
-	 * this one state enlarges precisely the glyph a fingertip is covering and nothing else. `shout`
-	 * against a `heading` base — bigger looked like a different widget appearing rather than the same
-	 * key growing, and on the top row it started to reach the hint line above the keyboard.
-	 */
-	lv_obj_set_style_text_font(view.keyboard, type::shout(), LV_PART_ITEMS | LV_STATE_PRESSED);
+	/* The size changed after the map was laid out, so lay it out again at the real size. */
+	pulse_keypad::reset(view.keyboard, nullptr);
 	return view;
-}
-
-lv_obj_t *makeMagnifier()
-{
-	/*
-	 * On `lv_layer_top()` rather than on a page, because it has to draw outside the keyboard and a
-	 * child is clipped to its parent — which is the constraint that makes a bigger popover impossible
-	 * inside the widget, and the reason this exists alongside one. LVGL's own popover redraws the
-	 * pressed key extended upward by exactly one key height, about 60px here, which on a panel held at
-	 * arm's length is barely a magnification and is still directly under the fingertip covering it.
-	 */
-	lv_obj_t *magnifier = lv_label_create(lv_layer_top());
-	lv_obj_set_size(magnifier, MAG_W, MAG_H);
-	lv_obj_set_style_bg_color(magnifier, hex(colour::accent), LV_PART_MAIN);
-	lv_obj_set_style_bg_opa(magnifier, LV_OPA_COVER, LV_PART_MAIN);
-	lv_obj_set_style_text_color(magnifier, hex(colour::ground), LV_PART_MAIN);
-	lv_obj_set_style_text_font(magnifier, type::display(), LV_PART_MAIN);
-	lv_obj_set_style_text_align(magnifier, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-	lv_obj_set_style_radius(magnifier, radius::md + 2, LV_PART_MAIN);
-	lv_obj_set_style_border_color(magnifier, hex(colour::ink), LV_PART_MAIN);
-	lv_obj_set_style_border_width(magnifier, 2, LV_PART_MAIN);
-	/* Vertically centred by padding rather than by alignment: the label owns a fixed box here and a
-	 * 48px glyph in a 124px box otherwise sits against the top edge. */
-	lv_obj_set_style_pad_top(magnifier, (MAG_H - 56) / 2, LV_PART_MAIN);
-	lv_obj_add_flag(magnifier, LV_OBJ_FLAG_HIDDEN);
-	lv_obj_remove_flag(magnifier, LV_OBJ_FLAG_CLICKABLE);
-	return magnifier;
 }
 
 /* --------------------------------------------------------------------------------- the charge --- */

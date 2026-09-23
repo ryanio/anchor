@@ -30,8 +30,9 @@
  *   - and entries past the sixth were collected into a list that could not scroll, so they were
  *     sorted, stored, and unreachable.
  *
- * `lv_keyboard`, `lv_textarea` and `lv_list` are tested code that already own hit-testing, scrolling,
- * shift state, password masking and text entry. Four of those seven cannot be written again here:
+ * `lv_buttonmatrix`, `lv_textarea` and `lv_list` are tested code that already own hit-testing,
+ * scrolling, password masking and text entry. (The keyboard was `lv_keyboard` until its 2.5 mm keys
+ * proved unusable on the glass; `pulse_keypad_model.h` is the layout that replaced it.) Four of those seven cannot be written again here:
  * LVGL invalidates what changed rather than being told to, a control exists exactly where it is
  * drawn because the object *is* the hit target, a label with a width ellipsizes instead of wrapping
  * onto its neighbour, and a list scrolls. The other three are this file's to get right, and the notes

@@ -718,6 +718,10 @@ function simCardputer(root: string, paths: DevicePaths, manifest: Toolchain, run
   assertShot(output);
 }
 
+function keypadTaps(points: string[]): string[] {
+  return points.flatMap((point) => ["--tap", point]);
+}
+
 function simEsp32(root: string, paths: DevicePaths, manifest: Toolchain, runner: CommandRunner): void {
   doctorEsp32(paths, manifest, runner);
   const output = join(paths.sim, "esp32");
@@ -740,22 +744,22 @@ function simEsp32(root: string, paths: DevicePaths, manifest: Toolchain, runner:
   // Exercise the real LVGL screens with scripted input. Fixture data and credentials only.
   const binary = join(root, "devices", "firmware", "esp32", "sim", "build", "pulse-lvgl-sim");
   const cases = [
-    { name: "explore", taps: "295,46", labels: ["Explore", "STONK  $0.24\nsolana | -4.58%"] },
-    { name: "token", taps: "295,46 135,148", labels: ["STONK", "Price\n$0.24"] },
+    { name: "explore", taps: "295,46", labels: ["Explore", "STONK  $0.24", "solana | -4.58%"] },
+    { name: "token", taps: "295,46 135,148", labels: ["STONK", "Price", "$0.24"] },
     {
       name: "lost-detail",
       thenFeed: "lost",
       taps: "295,46 135,148",
-      labels: ["STONK", "Price\n$0.24"],
+      labels: ["STONK", "Price", "$0.24"],
       extra: ["--expect-visible-prefix", "Saved / stale |"],
     },
     { name: "back", taps: "295,46 135,148 70,398", labels: ["Explore"] },
-    { name: "portfolio", taps: "295,46 180,398", labels: ["Portfolio", "Total | 6 of 6 wallets\n$3,125"] },
+    { name: "portfolio", taps: "295,46 180,398", labels: ["Portfolio", "Total | 6 of 6 wallets", "$3,125"] },
     {
       name: "partial",
       feed: "portfolio-partial",
       taps: "295,46 180,398",
-      labels: ["Portfolio", "Total | 4 of 6 wallets\n$3,033"],
+      labels: ["Portfolio", "Total | 4 of 6 wallets", "$3,033"],
     },
     { name: "wifi", taps: "295,46 295,398", labels: ["Wi-Fi", "Rescan", "Hidden"] },
     {
@@ -771,6 +775,59 @@ function simEsp32(root: string, paths: DevicePaths, manifest: Toolchain, runner:
       extra: ["--wait", "--tap", "130,185", "--tap", "90,320"],
       labels: ["Wi-Fi"],
       savedAfter: false,
+    },
+    // The keypad, end to end: a hidden network's name and then its passphrase, typed through
+    // groups, both cases, a symbol, and digits. The saved profile must hold exactly what was typed.
+    {
+      name: "keypad-chooser",
+      taps: "295,46 295,398",
+      extra: ["--wait", "--tap", "180,398", "--tap", "304,254"],
+      labels: ["Hidden network"],
+    },
+    {
+      name: "keypad-join",
+      taps: "295,46 295,398",
+      extra: [
+        "--wait",
+        "--tap",
+        "180,398",
+        // "Demo": D from def's upper row, then e, m, o. Next.
+        ...keypadTaps([
+          "184,183",
+          "49,290",
+          "184,183",
+          "184,195",
+          "184,254",
+          "64,195",
+          "184,254",
+          "304,195",
+          "319,396",
+        ]),
+        // "Pass-123": P, a, s, s; the symbol page's ". , - _" for "-"; letters, digits, 1 2 3. Join.
+        ...keypadTaps([
+          "304,254",
+          "49,290",
+          "64,183",
+          "64,195",
+          "304,254",
+          "319,195",
+          "304,254",
+          "319,195",
+          "139,396",
+          "64,183",
+          "229,219",
+          "49,396",
+          "49,396",
+          "64,183",
+          "184,183",
+          "304,183",
+          "319,396",
+        ]),
+        "--wait",
+        "--wait",
+      ],
+      labels: [],
+      nvsIncludes: "506173732d313233",
     },
     {
       name: "wifi-crowded",
@@ -805,6 +862,11 @@ function simEsp32(root: string, paths: DevicePaths, manifest: Toolchain, runner:
       ],
       { cwd: output, timeoutMs: 30_000 },
     );
+    if (scenario.nvsIncludes !== undefined) {
+      if (!readFileSync(join(output, `${scenario.name}.nvs`), "utf8").includes(scenario.nvsIncludes)) {
+        throw new Error(`${scenario.name}: the saved profile does not hold what was typed on the keypad`);
+      }
+    }
     if (scenario.savedAfter !== undefined) {
       const saved = readFileSync(join(output, `${scenario.name}.nvs`), "utf8").includes("44656d6f");
       if (saved !== scenario.savedAfter) {

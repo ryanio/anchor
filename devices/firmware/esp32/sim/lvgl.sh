@@ -154,6 +154,7 @@ if [ "$needs_build" = "1" ]; then
 		"$sketch/pulse_design.cpp" \
 		"$sketch/pulse_feed_view.cpp" \
 		"$sketch/pulse_explore.cpp" \
+		"$sketch/pulse_keypad.cpp" \
 		"$sketch/pulse_power.cpp" \
 		"$sketch/pulse_ui.cpp" \
 		"$sketch/pulse_wifi.cpp" \

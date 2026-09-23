@@ -582,7 +582,7 @@
 #define LV_FONT_MONTSERRAT_26 0
 #define LV_FONT_MONTSERRAT_28 1 /* ANCHOR: the title */
 #define LV_FONT_MONTSERRAT_30 0
-#define LV_FONT_MONTSERRAT_32 1 /* ANCHOR: the magnified key under a finger */
+#define LV_FONT_MONTSERRAT_32 1 /* ANCHOR: the keypad's group labels */
 #define LV_FONT_MONTSERRAT_34 0
 #define LV_FONT_MONTSERRAT_36 0
 #define LV_FONT_MONTSERRAT_38 0
@@ -590,7 +590,7 @@
 #define LV_FONT_MONTSERRAT_42 0
 #define LV_FONT_MONTSERRAT_44 0
 #define LV_FONT_MONTSERRAT_46 0
-#define LV_FONT_MONTSERRAT_48 1 /* ANCHOR: the keyboard magnifier */
+#define LV_FONT_MONTSERRAT_48 1 /* ANCHOR: the keypad's chosen letters */
 
 /*Demonstrate special features*/
 #define LV_FONT_MONTSERRAT_28_COMPRESSED 0  /*bpp = 3*/
@@ -701,7 +701,7 @@
 
 #define LV_USE_BUTTON        1
 
-#define LV_USE_BUTTONMATRIX  1 /* ANCHOR: what lv_keyboard is built out of; see LV_USE_KEYBOARD */
+#define LV_USE_BUTTONMATRIX  1 /* ANCHOR: the passphrase keypad, pulse_keypad.cpp */
 
 #define LV_USE_CALENDAR   0
 #if LV_USE_CALENDAR
@@ -731,7 +731,9 @@
 #define LV_USE_IMAGEBUTTON     0
 
 /*
- * ANCHOR: the keyboard, the text field and the list, for `pulse_wifi.cpp`.
+ * ANCHOR: the keyboard, the text field and the list, for `pulse_wifi.cpp`. The keyboard is now
+ * `pulse_keypad.cpp` on a plain `lv_buttonmatrix`, and `LV_USE_KEYBOARD` is off; the measurements
+ * below were taken with `lv_keyboard` and are kept as the record of that configuration.
  *
  * These four are on together because they are one feature: joining a Wi-Fi network from the glass.
  * `app/wifi_setup.cpp` did it with a hand-drawn key grid against Arduino_GFX and the simulator found
@@ -756,7 +758,7 @@
  * Flip these four back off and the 12,444 returns, which is the check that they are the thing being
  * priced rather than something that moved alongside them.
  */
-#define LV_USE_KEYBOARD   1 /* ANCHOR: the passphrase keyboard. Requires: lv_buttonmatrix, lv_textarea */
+#define LV_USE_KEYBOARD   0 /* ANCHOR: replaced by pulse_keypad, which is a plain lv_buttonmatrix; off so nothing grows back onto the ten-column map */
 
 #define LV_USE_LABEL      1
 #if LV_USE_LABEL
