@@ -215,6 +215,11 @@ void tick();
 // Why the trending list looks the way it does, whether or not it has rows.
 State state();
 
+// When the rows in `tokens` arrived, in `millis()`. False before the first successful fetch. The rows
+// stay on screen through a lost network or a failed refresh, so whoever draws them must say how old
+// they are; see common/freshness.h.
+bool listFetchedAt(uint32_t &at);
+
 // Open the depth behind one row, by index into `tokens`. Cheap and non blocking: it records what to
 // ask for and the worker does the blocking request. Reopening the item that
 // is already open keeps what was already fetched rather than asking again — somebody stepping Tab

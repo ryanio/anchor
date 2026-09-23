@@ -20,6 +20,15 @@ not prove internet access: the OpenSea request reports authentication, HTTP, or 
 separately. Hotel captive portals still require hardware testing; the iPhone hotspot is the planned
 fallback.
 
+The trending rows stay on screen when the network drops or a refresh fails, and the strip above them
+says how old they are: "live, just now" while the unit is fetching normally, and "stale, 4m ago" in
+the warning colour, followed by the reason, while it cannot refresh. An open token carries the age of
+its own reading, which stops advancing if the token leaves the list. The label counts in minutes
+because a changed label repaints the whole screen, so it repaints at most once a minute. The wording
+comes from `firmware/common/freshness.h`, which the ESP32 uses too. In the simulator,
+`ANCHOR_SIM_NO_HOST=1 ANCHOR_SIM_STATE=lost ANCHOR_SIM_LIST_AGE_MS=240000` shows a list that is four
+minutes old on a unit that has lost its network.
+
 Token identity is chain plus full address. The production comparator is shared with the ESP32;
 unusable identities are rejected rather than shortened into a different identity. Host tests cover
 cancellation, publication, and identity. Hardware tests must still prove typing and exit remain

@@ -52,6 +52,7 @@ constexpr uint32_t ACTIVITY_MS = 1900;
 
 uint32_t openedAt = 0;
 bool listed = false;
+uint32_t listedAt = 0;
 bool viewActive = false;
 bool detailOpen = false;
 
@@ -179,12 +180,15 @@ void fillDepth()
 
 // The three states this timeline never reaches on its own, on demand.
 //
-//   ANCHOR_SIM_STATE=disabled|nocreds|failed .pio/build/sim-anchor/program --keys "1"
+//   ANCHOR_SIM_STATE=disabled|nocreds|failed|lost .pio/build/sim-anchor/program --keys "1"
 //
 // A unit with no key compiled in, a unit nobody has given a network to, and a unit whose last fetch
 // was refused are exactly the screens a person at a venue is most likely to be holding, and none of
 // them can be arranged by waiting. AGENTS.md's rule about the panel's fifteen states applies to this
 // screen's six: a state nobody can look at is a state nobody has designed.
+//
+// `lost` is a unit that had a list and then lost its network, which is the case the rows' age exists
+// for: they stay, and the strip has to say how old they are.
 //
 // `failed` keeps the rows, because that is what the real module does — stale and labelled beats
 // absent and unexplained — so it is also the one way to see the strip carrying a warning over a
@@ -228,6 +232,10 @@ void tick()
 	}
 	if (!listed && since() >= FIRST_FETCH_MS && !forcedIs("disabled") && !forcedIs("nocreds")) {
 		listed = true;
+		// ANCHOR_SIM_LIST_AGE_MS pretends the list arrived that long ago, so a screenshot run of a few
+		// seconds can show a reading that is minutes old.
+		const char *offset = getenv("ANCHOR_SIM_LIST_AGE_MS");
+		listedAt = millis() - (offset != nullptr ? (uint32_t)strtoul(offset, nullptr, 10) : 0u);
 		fillList();
 	}
 	fillDepth();
@@ -250,7 +258,19 @@ State state()
 	if (forcedIs("failed")) {
 		return {Status::Failed, "OpenSea refused this unit's key"};
 	}
+	if (forcedIs("lost")) {
+		return {Status::Joining, "joining the saved network"};
+	}
 	return {Status::Online, "live from OpenSea"};
+}
+
+bool listFetchedAt(uint32_t &at)
+{
+	if (!listed) {
+		return false;
+	}
+	at = listedAt;
+	return true;
 }
 
 void openDetail(size_t index)

@@ -192,6 +192,7 @@ void shortAddress(const char *address, char *out, size_t n)
 Detail detailStore;
 
 bool everSucceeded = false;
+uint32_t fetchedAt = 0;
 uint32_t lastAttempt = 0;
 bool listFailed = false;
 const char *listReason = nullptr;
@@ -821,6 +822,7 @@ void applyResult(const RequestResult &result)
 		memcpy(tokens, result.tokenRows, sizeof(tokens));
 		tokenCount = result.count;
 		everSucceeded = true;
+		fetchedAt = millis();
 		listFailed = false;
 		listReason = nullptr;
 		return;
@@ -979,6 +981,15 @@ State state()
 	}
 	return {Status::Online, everSucceeded ? "live from OpenSea" : "waiting for the first fetch"};
 #endif
+}
+
+bool listFetchedAt(uint32_t &at)
+{
+	if (!everSucceeded) {
+		return false;
+	}
+	at = fetchedAt;
+	return true;
 }
 
 void openDetail(size_t index)

@@ -634,6 +634,11 @@ assuming it, so a machine without one shows the command exactly as before.
   host test checks that by search, and a simulator scenario types a network name and passphrase
   and checks that the saved profile holds exactly what was typed. Explore rows, the chooser status
   line and buttons, and Wi-Fi network rows are larger too. Not yet checked on the glass.
+- **The Cardputer says how old its trending rows are.** It kept the last list on screen through a
+  lost network or a failed refresh, with nothing saying how old it was. The strip now leads with
+  "live, just now" or, when the unit cannot refresh, "stale, 4m ago" in the warning colour before the
+  reason. An open token shows the age of its own reading. Both handhelds take the wording from one
+  shared, host-tested `firmware/common/freshness.h`.
 - **The ESP32 pulse display's systemd service opens on `portfolio` instead of `desktop`.** `desktop`
   is a page of desktop controls a touch-only ambient display can't do much with; `panel.json` itself
   is unchanged, so the Stream Deck and Cardputer still default to `desktop`. `--page portfolio` on
