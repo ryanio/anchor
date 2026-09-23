@@ -80,6 +80,21 @@ findings in [The ESP32 display](devices-esp32.md) remain required for this hardw
 - Preserve the 40 ms CST820 touch settle when the controller reports a momentary zero finger count
   during contact.
 
+## Firmware update on 2026-09-23
+
+The Waveshare unit (`3a:d3:f0`) received a private demo build from Anchor `c32682f`, with the same
+owner-selected read-only key as the 2026-09-22 build and the public demo address above. Before the
+key went into the build it was checked again: 401 with `BYPASS` without it, 200 with `MISS` with it.
+esptool confirmed the MAC and wrote only app0 at `0x10000` (1,737,840 bytes, hash verified on the
+device). Its first health line after reboot reported 158,024 bytes of internal heap free, a low of
+151,408, the LVGL pool 44% used, battery 100% on USB, and `trending=no-wifi`: no network is saved on
+this unit, consistent with the Wi-Fi list it showed on 2026-09-21.
+
+The Cardputer (`76:2e:80`) was not updated. Its port was present, but it sent no serial output in
+six seconds and did not answer esptool's default or USB-JTAG reset, so nothing was written. It still
+runs the `0716006` image. Whether it had hung after a night on USB, or was asleep in a way USB cannot
+wake, needs someone to look at the screen before power-cycling it.
+
 ## Size on the glass, 2026-09-22
 
 After the demo images were flashed, Ryan reported that the Waveshare unit is very small to read and
