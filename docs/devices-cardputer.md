@@ -24,7 +24,11 @@ The trending rows stay on screen when the network drops or a refresh fails, and 
 says how old they are: "live, just now" while the unit is fetching normally, and "stale" in the
 warning colour, followed by the reason, while it cannot refresh. After the first minute the stale
 label carries the age, as in "stale, 4m ago". An open token carries the age of
-its own reading, which stops advancing if the token leaves the list. The label counts in minutes
+its own reading, which stops advancing if the token leaves the list. Once a join to the saved network has failed, the reason reads "Wi-Fi not found: Setup" until the
+unit is online again, rather than "joining the saved network" forever. Flint reports `Failed` only
+between retries and `Joining` during each one, so the sentence is sticky to avoid flickering between
+the two. On 2026-09-23 the unit's saved network was out of range and Flint logged `NO_AP_FOUND` on
+every retry. The label counts in minutes
 because a changed label repaints the whole screen, so it repaints at most once a minute. The wording
 comes from `firmware/common/freshness.h`, which the ESP32 uses too. In the simulator,
 `ANCHOR_SIM_NO_HOST=1 ANCHOR_SIM_STATE=lost ANCHOR_SIM_LIST_AGE_MS=240000` shows a list that is four

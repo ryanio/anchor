@@ -180,7 +180,7 @@ void fillDepth()
 
 // The three states this timeline never reaches on its own, on demand.
 //
-//   ANCHOR_SIM_STATE=disabled|nocreds|failed|lost .pio/build/sim-anchor/program --keys "1"
+//   ANCHOR_SIM_STATE=disabled|nocreds|failed|lost|unreachable .pio/build/sim-anchor/program --keys "1"
 //
 // A unit with no key compiled in, a unit nobody has given a network to, and a unit whose last fetch
 // was refused are exactly the screens a person at a venue is most likely to be holding, and none of
@@ -260,6 +260,9 @@ State state()
 	}
 	if (forcedIs("lost")) {
 		return {Status::Joining, "joining the saved network"};
+	}
+	if (forcedIs("unreachable")) {
+		return {Status::Joining, "Wi-Fi not found: Setup"};
 	}
 	return {Status::Online, "live from OpenSea"};
 }

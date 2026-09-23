@@ -632,6 +632,8 @@ assuming it, so a machine without one shows the command exactly as before.
   cent now show three significant figures ("$0.000021", "$0.0000862"). Anything below $0.0000000001 says so rather than
   printing zeros. The ESP32 simulator's fixture prices are now numbers run through the same function,
   because its hand-typed strings were shapes the formatter could not produce and hid the bug.
+- **The Cardputer says when its saved Wi-Fi is not found** ("Wi-Fi not found: Setup") instead of
+  "joining the saved network" indefinitely, once a join has failed.
 - **The Cardputer prints a health line every minute while browsing**, with free, largest and lowest
   heap, the fetch worker's stack high-water mark, the last HTTP status, the list state and age, and
   battery.

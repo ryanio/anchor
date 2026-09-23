@@ -101,6 +101,10 @@ Detail detailStore;
 
 bool everSucceeded = false;
 uint32_t fetchedAt = 0;
+// A join to the saved network has failed since the unit was last online. Sticky until it is online
+// again, because between retries the network layer flips back to Joining every few seconds and a
+// sentence that followed it would flicker.
+bool joinFailing = false;
 uint32_t lastAttempt = 0;
 bool listFailed = false;
 const char *listReason = nullptr;
@@ -816,9 +820,15 @@ void tick()
 		return;
 	}
 	reportHealth();
+	if (net::online()) {
+		joinFailing = false;
+	} else if (net::state() == net::Wifi::Failed) {
+		joinFailing = true;
+	}
 	const uint32_t revision = net::revision();
 	if (revision != networkRevision) {
 		networkRevision = revision;
+		joinFailing = false;
 		listFetching = false;
 		lastAttempt = 0;
 		lastRequest = 0;
@@ -875,7 +885,12 @@ State state()
 		return {Status::NoCredentials, "no wi-fi yet: open Setup to join one"};
 	}
 	if (!net::online()) {
-		return {Status::Joining, "joining the saved network"};
+		// Said once a join has actually failed, which is almost always a network that is not in
+		// range: a phone hotspot that is off, or a unit carried away from where it was set up. Setup
+		// is where somebody holding it picks another. Short, because with rows on screen the strip
+		// leads with their age and leaves this 23 characters once that age reaches "stale, 59m ago".
+		return {Status::Joining,
+		        joinFailing ? "Wi-Fi not found: Setup" : "joining the saved network"};
 	}
 	if (listFetching) {
 		return {Status::Fetching, "asking OpenSea what is trending"};
