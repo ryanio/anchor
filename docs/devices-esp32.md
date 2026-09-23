@@ -29,6 +29,10 @@ state, after checking the request generation. Previous wallet totals are cleared
 list changes. Transport phases and response-body time are bounded; cancellation lets the worker
 unwind its own HTTP/TLS objects.
 
+Prices, volumes, changes and portfolio totals are formatted with the Cardputer's exact rules from
+`firmware/common/display_format.h`, and cached readings describe their age with
+`firmware/common/freshness.h`.
+
 Up to four successfully joined networks are remembered. Selecting a remembered network reuses its
 password. A failed replacement preserves and restores the previous good configuration. Wi-Fi
 association is separate from an OpenSea response, so connected Wi-Fi alone is not reported as

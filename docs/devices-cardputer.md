@@ -30,6 +30,10 @@ comes from `firmware/common/freshness.h`, which the ESP32 uses too. In the simul
 `ANCHOR_SIM_NO_HOST=1 ANCHOR_SIM_STATE=lost ANCHOR_SIM_LIST_AGE_MS=240000` shows a list that is four
 minutes old on a unit that has lost its network.
 
+Money formatting, the portfolio's decimal arithmetic, and the copy that cleans response text for
+drawing live in `firmware/common/display_format.h`, so both handhelds write the same price the same
+way. A host test pins their output.
+
 Token identity is chain plus full address. The production comparator is shared with the ESP32;
 unusable identities are rejected rather than shortened into a different identity. Host tests cover
 cancellation, publication, and identity. Hardware tests must still prove typing and exit remain
