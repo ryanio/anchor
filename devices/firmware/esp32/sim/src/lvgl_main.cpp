@@ -71,6 +71,8 @@ std::vector<Step> script;
 std::string shot_prefix;
 std::vector<std::string> expectedVisible;
 std::vector<std::string> expectedPrefixes;
+/* Substrings the firmware must have written to Serial after boot, such as the health line. */
+std::vector<std::string> expectedSerial;
 uint32_t gap_ms = 1200;
 /*
  * How long before the first scripted step. Two refresh periods would be enough to get a frame on
@@ -299,7 +301,8 @@ void usage() {
       "  --quiet             do not print the boot banner\n"
       "  --then-feed NAME    switch feed fixture as the next scripted step\n"
       "  --expect-visible T  fail unless exact label T is visible on the final screen (repeatable)\n"
-      "  --expect-visible-prefix T  require a visible label beginning with T (repeatable)\n");
+      "  --expect-visible-prefix T  require a visible label beginning with T (repeatable)\n"
+      "  --expect-serial T   fail unless the firmware printed T to Serial after boot (repeatable)\n");
 }
 
 }  // namespace
@@ -351,6 +354,8 @@ int main(int argc, char **argv) {
       quit_after_ms = (uint32_t)strtoul(argv[++i], nullptr, 10);
     } else if (strcmp(arg, "--expect-visible") == 0 && more) {
       expectedVisible.emplace_back(argv[++i]);
+    } else if (strcmp(arg, "--expect-serial") == 0 && more) {
+      expectedSerial.emplace_back(argv[++i]);
     } else if (strcmp(arg, "--expect-visible-prefix") == 0 && more) {
       expectedPrefixes.emplace_back(argv[++i]);
     } else if (strcmp(arg, "--feed") == 0 && more) {
@@ -432,6 +437,8 @@ int main(int argc, char **argv) {
     printf("--- boot banner ---\n%s-------------------\n", Serial.simText().c_str());
   }
 
+  /* Everything the firmware prints from here on is reported at the end, where a check can see it. */
+  const size_t banner_end = Serial.simText().size();
   const uint32_t started = millis();
   if (quit_after_ms == 0) quit_after_ms = lead_ms + (uint32_t)(script.size() + 1) * gap_ms + 2000;
 
@@ -520,6 +527,16 @@ int main(int argc, char **argv) {
            (unsigned)monitor.free_size, (unsigned)monitor.used_pct, (unsigned)monitor.frag_pct);
     printf("sim: lv_mem peak %u bytes, largest free block %u bytes\n",
            (unsigned)monitor.max_used, (unsigned)monitor.free_biggest_size);
+  }
+  const std::string after_boot = Serial.simText().substr(banner_end);
+  if (!after_boot.empty()) {
+    printf("--- serial after boot ---\n%s-------------------------\n", after_boot.c_str());
+  }
+  for (const auto &expected : expectedSerial) {
+    if (after_boot.find(expected) == std::string::npos) {
+      fprintf(stderr, "sim: expected serial output missing: %s\n", expected.c_str());
+      return 1;
+    }
   }
   lv_obj_t *active = lv_screen_active();
   lv_area_t viewport;

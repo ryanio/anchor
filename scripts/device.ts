@@ -829,6 +829,14 @@ function simEsp32(root: string, paths: DevicePaths, manifest: Toolchain, runner:
       labels: [],
       nvsIncludes: "506173732d313233",
     },
+    // The periodic health line an endurance run on the glass is read from. It first prints a
+    // minute after boot, so this run lasts just past that.
+    {
+      name: "health",
+      taps: "295,46",
+      extra: ["--quit-after", "61500", "--expect-serial", "anchor-pulse-lvgl: health up=6"],
+      labels: ["Explore"],
+    },
     {
       name: "wifi-crowded",
       networks: Array.from(

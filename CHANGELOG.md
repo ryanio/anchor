@@ -626,6 +626,10 @@ assuming it, so a machine without one shows the command exactly as before.
   gap, and what to delete when each is fixed.
 
 ### Changed
+- **The ESP32 prints a health line every minute** for endurance and battery runs: uptime, internal heap
+  (free, largest block, lowest since boot), PSRAM, the LVGL pool, the fetch worker's stack high-water
+  mark, the last HTTP status, both feed states and battery. The simulator gains `--expect-serial`
+  and a scenario that requires the line.
 - **The ESP32 Wi-Fi keyboard is a phone-style keypad with keys a finger can hit.** The panel is
   about 29 mm wide, and `lv_keyboard` gave it 27 to 32 px keys (about 2.5 mm), which the first
   physical session found extremely hard to use. Three columns of 112 x 63 px keys now hold letter

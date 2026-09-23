@@ -50,6 +50,22 @@ The tearing-activity probe counted 18 transitions in 150 ms; its historical bann
 34 to 36. That difference needs comparison with the visible panel before changing the driver. A
 startup banner and memory readings do not establish touch quality, frame rate, or network operation.
 
+## Health line for long runs
+
+Once a minute the `pulse/` firmware prints one line to Serial:
+
+```
+anchor-pulse-lvgl: health up=60s heap=... largest=... heap_min=... psram=... lv_free=... lv_largest=... lv_used=29% worker_stack_min=... http=200 trending=online portfolio=online battery=87% usb charging
+```
+
+`heap_min` is the lowest the internal heap has been since boot, and `worker_stack_min` is the fetch
+task's stack high-water mark (0 until the worker has run). A `lv_largest` that keeps falling means the
+LVGL pool is fragmenting. For an endurance run, keep a serial monitor attached and compare the first
+and last lines. The line prints only integers and fixed words, never text from the network. The
+simulator's `health` scenario runs past the first minute and requires the line
+(`--expect-serial`). The simulator's heap figures are fixed stand-ins, so only the board's numbers
+mean anything.
+
 ## Historical host transport design
 
 The sections below record the earlier USB/LAN display experiment. They do not describe the supported

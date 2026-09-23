@@ -330,6 +330,53 @@ constexpr uint32_t ROTATE_MS = 6000;
 
 static uint32_t last_feed_draw_ms = 0;
 
+/* ------------------------------------------------------------------------------ the health line --- */
+
+/*
+ * One line a minute on Serial, for endurance and battery runs.
+ *
+ * The boot banner reports memory once, before any TLS request has run, so it cannot show a leak or
+ * how close the fetch worker's stack comes to its limit. This line can: `heap_min` is the lowest the
+ * internal heap has ever been, `worker_stack_min` is the fetch task's high-water mark, and a
+ * `lv_largest` that keeps shrinking is fragmentation in the LVGL pool. Capture it with any serial
+ * monitor over a long session, then compare the first and last lines.
+ *
+ * Integers and compiled-in words only. Nothing that came off the network is printed here.
+ */
+static constexpr uint32_t HEALTH_MS = 60000;
+static uint32_t last_health_ms = 0;
+
+static const char *status_name(feed::Status status) {
+  switch (status) {
+    case feed::Status::Disabled: return "disabled";
+    case feed::Status::NoCredentials: return "no-wifi";
+    case feed::Status::Joining: return "joining";
+    case feed::Status::Online: return "online";
+    case feed::Status::Fetching: return "fetching";
+    case feed::Status::Failed: return "failed";
+    case feed::Status::NoWallets: return "no-wallets";
+  }
+  return "unknown";
+}
+
+static void report_health() {
+  lv_mem_monitor_t mem;
+  lv_mem_monitor(&mem);
+  const feed::Snapshot snap = feed::snapshot();
+  const pulse_power::Battery &battery = pulse_power::state();
+  Serial.printf(
+      "anchor-pulse-lvgl: health up=%lus heap=%u largest=%u heap_min=%u psram=%u lv_free=%u "
+      "lv_largest=%u lv_used=%u%% worker_stack_min=%lu http=%d trending=%s portfolio=%s "
+      "battery=%d%%%s\n",
+      (unsigned long)(millis() / 1000u), (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+      (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
+      (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL), (unsigned)ESP.getFreePsram(),
+      (unsigned)mem.free_size, (unsigned)mem.free_biggest_size, (unsigned)mem.used_pct,
+      (unsigned long)snap.workerStackFreeBytes, snap.lastHttpCode, status_name(snap.status),
+      status_name(snap.portfolioStatus), (int)battery.percent,
+      battery.usb ? (battery.charging ? " usb charging" : " usb") : "");
+}
+
 /*
  * Pull what the feed knows onto the screen.
  *
@@ -720,6 +767,11 @@ void loop() {
       refresh_feed();
     }
     refresh_age();
+  }
+
+  if (millis() - last_health_ms >= HEALTH_MS) {
+    last_health_ms = millis();
+    report_health();
   }
 
   delay(idle_for > 20u ? 20u : (idle_for < 1u ? 1u : idle_for));
