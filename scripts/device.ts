@@ -778,6 +778,14 @@ function simEsp32(root: string, paths: DevicePaths, manifest: Toolchain, runner:
       labels: ["Portfolio", "Total | 4 of 6 wallets", "$3,033"],
     },
     { name: "wifi", taps: "295,46 295,398", labels: ["Wi-Fi", "Rescan", "Hidden"] },
+    // Network names must be readable whole. At the larger row font the signal and security text
+    // once shared the name's line and cut "Skylark Cafe" to "Skylar...".
+    {
+      name: "wifi-names",
+      networks: "HomeNet:-42,Skylark Cafe:-58:open",
+      taps: "295,46 295,398",
+      labels: ["HomeNet", "Skylark Cafe", "-58 dBm  open"],
+    },
     {
       name: "forget-cancel",
       taps: "295,46 295,398",

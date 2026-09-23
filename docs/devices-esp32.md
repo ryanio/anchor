@@ -552,9 +552,10 @@ checks that the saved profile holds exactly that string. The simulated unit star
 `fixturepass` saved, so a keypad that typed the wrong characters fails the check.
 
 Text follows the same arithmetic. 20 px Montserrat is about 1.6 mm tall. Explore rows now read at
-28 px with a 20 px label, the chooser status line and buttons at 20 px, and Wi-Fi network rows at
-24 px with 20 px padding. In the simulator's tree dump a network row is now 67 px (5.3 mm) instead
-of 46 px. The crowded case, 32 scan results followed by the keypad, peaks at 107,888 bytes of the
+28 px with a 20 px label, the chooser status line and buttons at 20 px, and Wi-Fi network names at
+24 px with signal and security on a second 18 px line. In the simulator's tree dump a network row is
+now 76 px (6 mm) instead of 46 px. A first attempt kept signal and security on the name's line and
+cut "Skylark Cafe" to "Skylar...", so the `wifi-names` scenario now requires both names whole. The crowded case, 32 scan results followed by the keypad, peaks at 107,888 bytes of the
 128 KiB LVGL pool with a 23,384-byte largest free block.
 
 What the simulator cannot say: whether these sizes are enough on the glass, whether two taps a letter

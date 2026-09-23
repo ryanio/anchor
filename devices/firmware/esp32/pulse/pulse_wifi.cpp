@@ -455,18 +455,23 @@ void collectScan(int16_t found)
 void onNetworkPicked(lv_event_t *event);
 void onForgetPicked(lv_event_t *event);
 
+/* How far the signal line is indented: the Wi-Fi glyph plus the gap after it, measured below. */
+constexpr int32_t NETWORK_META_INDENT = 40;
+
 /*
  * A network row is a tap target, so it is taller and larger than a chooser's default.
  *
  * At the chooser's 20 px face and 12 px padding a row was 46 px, about 3.6 mm on this glass, which the
- * first physical session reported as too small to read or hit. 24 px text with 20 px padding makes it
- * 67 px (5.3 mm), measured from the simulator's tree dump.
+ * first physical session reported as too small to read or hit. The name is 24 px now. Signal and
+ * security sit on a second line under it (see `rebuildList`), because on one line at this size they
+ * left the name five characters and "HomeNet" read as "Home...".
  */
 void styleNetworkRow(lv_obj_t *row)
 {
 	styleChooserRow(row);
 	lv_obj_set_style_text_font(row, type::heading(), LV_PART_MAIN);
-	lv_obj_set_style_pad_ver(row, space::lg, LV_PART_MAIN);
+	lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW_WRAP);
+	lv_obj_set_style_pad_row(row, space::xs, LV_PART_MAIN);
 }
 
 /*
@@ -513,6 +518,10 @@ void rebuildList()
 		lv_obj_t *meta = lv_label_create(row);
 		lv_label_set_text(meta, detail);
 		lv_obj_set_style_text_font(meta, type::label(), LV_PART_MAIN);
+		/* A full-width item in a wrapping row starts a line of its own, indented to line up under the
+		 * name rather than under the icon. */
+		lv_obj_set_width(meta, LV_PCT(100));
+		lv_obj_set_style_pad_left(meta, NETWORK_META_INDENT, LV_PART_MAIN);
 		/*
 		 * `Warn` for an open network, not `Bad`.
 		 *
