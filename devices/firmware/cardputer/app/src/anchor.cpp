@@ -1020,6 +1020,17 @@ bool listIsStale(const standalone::State &st)
 	       st.status == standalone::Status::NoCredentials;
 }
 
+// "stale" alone for a reading under a minute old that cannot be refreshed, because "stale, just now"
+// contradicts itself; "stale, 4m ago" once there is an age worth saying.
+void staleLabel(const char *age, char *out, size_t n)
+{
+	if (strcmp(age, "just now") == 0) {
+		snprintf(out, n, "stale");
+	} else {
+		snprintf(out, n, "stale, %s", age);
+	}
+}
+
 // "just now" or "4m ago" for a reading that arrived at `at`, or empty when it never arrived.
 void ageLabel(bool dated, uint32_t at, char *out, size_t n)
 {
@@ -1098,7 +1109,11 @@ void drawBrowseStrip(const standalone::State &st, bool bodyHasRows)
 		if (age[0] != '\0') {
 			Seg &when = s.segs[s.segCount++];
 			const bool stale = listIsStale(st);
-			snprintf(when.text, sizeof(when.text), "%s%s", stale ? "stale, " : "", age);
+			if (stale) {
+				staleLabel(age, when.text, sizeof(when.text));
+			} else {
+				snprintf(when.text, sizeof(when.text), "%s", age);
+			}
 			when.color = stale ? palette[WARNING] : palette[INK_DIM];
 		}
 	} else if (st.status == standalone::Status::Online) {
@@ -1121,7 +1136,11 @@ void drawBrowseStrip(const standalone::State &st, bool bodyHasRows)
 		currentAgeLabel(age, sizeof(age));
 		const bool stale = listIsStale(st);
 		if (age[0] != '\0') {
-			snprintf(first.text, sizeof(first.text), "%s%s", stale ? "stale, " : "", age);
+			if (stale) {
+				staleLabel(age, first.text, sizeof(first.text));
+			} else {
+				snprintf(first.text, sizeof(first.text), "%s", age);
+			}
 			first.color = stale ? palette[WARNING] : palette[INK_DIM];
 			Seg &why = s.segs[s.segCount++];
 			takeText(why.text, sizeof(why.text), st.reason);

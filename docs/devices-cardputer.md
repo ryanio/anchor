@@ -21,8 +21,9 @@ separately. Hotel captive portals still require hardware testing; the iPhone hot
 fallback.
 
 The trending rows stay on screen when the network drops or a refresh fails, and the strip above them
-says how old they are: "live, just now" while the unit is fetching normally, and "stale, 4m ago" in
-the warning colour, followed by the reason, while it cannot refresh. An open token carries the age of
+says how old they are: "live, just now" while the unit is fetching normally, and "stale" in the
+warning colour, followed by the reason, while it cannot refresh. After the first minute the stale
+label carries the age, as in "stale, 4m ago". An open token carries the age of
 its own reading, which stops advancing if the token leaves the list. The label counts in minutes
 because a changed label repaints the whole screen, so it repaints at most once a minute. The wording
 comes from `firmware/common/freshness.h`, which the ESP32 uses too. In the simulator,
