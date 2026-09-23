@@ -97,7 +97,8 @@ actual LVGL screen, including partial portfolio coverage, a lost feed, and a 32-
 followed by keyboard input. Forget-network checks verify that cancellation preserves the saved profile
 and confirmation removes it. Text checks fail for hidden or fully clipped labels. Simulator assertions
 and draw-layer allocation failures stop the process; each interaction run also has a 30-second timeout.
-Simulator credentials and readings are fixtures. `sim esp32` also compiles and runs the trending
+Simulator credentials and readings are fixtures. `first-join` starts from a unit with nothing
+saved and joins a listed network through the keypad; `keypad-join` does the same for a hidden one. `sim esp32` also compiles and runs the trending
 reader both firmwares share against a captured live response, because that test needs the
 bootstrapped ArduinoJson.
 
