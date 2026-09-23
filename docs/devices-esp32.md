@@ -29,9 +29,11 @@ state, after checking the request generation. Previous wallet totals are cleared
 list changes. Transport phases and response-body time are bounded; cancellation lets the worker
 unwind its own HTTP/TLS objects.
 
-Prices, volumes, changes and portfolio totals are formatted with the Cardputer's exact rules from
-`firmware/common/display_format.h`, and cached readings describe their age with
-`firmware/common/freshness.h`.
+Trending rows are read with the Cardputer's reader, `firmware/common/trending_rows.h`, and prices,
+volumes, changes and portfolio totals are formatted with its rules from
+`firmware/common/display_format.h`. Cached readings describe their age with
+`firmware/common/freshness.h`. `sim esp32` runs the shared reader over a captured live trending
+response in `firmware/common/fixtures/`.
 
 Up to four successfully joined networks are remembered. Selecting a remembered network reuses its
 password. A failed replacement preserves and restores the previous good configuration. Wi-Fi

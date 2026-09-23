@@ -36,6 +36,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "../../common/trending_rows.h"
+
 #if __has_include("secrets.h")
 #include "secrets.h"
 #endif
@@ -93,93 +95,10 @@ bool parseDecimalMicros(const char *text, int64_t *out) {
 
 /* ---------------------------------------------------------------- the parser ------------------ */
 
-namespace {
-
-/*
- * The four fields this device draws, and nothing else.
- *
- * A trending-token row carries a dozen more — `address`, `chain`, `imageUrl`, `decimals`,
- * `openseaUrl`, `marketCapUsd`, `volume24h`, `holdersCount`, `isVerified`, `createdAt`,
- * `genesisDate` — measured against the live service on 2026-09-13 and recorded in
- * `devices/src/state/discovery.ts`'s `readTrendingTokens`. An ArduinoJson filter means the ones we
- * do not name are walked and discarded as they stream past rather than allocated, so the whole
- * payload never lands in RAM at once. That is the same pass `standalone.cpp` makes, and on this
- * board it matters more, not less: the 329,728-byte framebuffer already has PSRAM, and the JSON
- * document is built out of internal heap, which is the scarce one here.
- */
-/*
- * Both spellings, because this parser reads two different servers.
- *
- * The camelCase names came from `state/discovery.ts`, which is the host's model of this data — and
- * the host normalises. OpenSea itself answers in snake_case: measured against the live endpoint with
- * a real key on 2026-09-16, a trending row is `usd_price` (a string) and `price_change_24h` (a
- * number), alongside `image_url`, `market_cap_usd` and `volume_24h`.
- *
- * So the first version of this parsed nothing useful from the API it was actually pointed at. Symbol
- * and name matched by luck — they are one word in both dialects — and every price and change came
- * back missing, which `formatUsd` would have rendered as "--" on a panel showing eight tokens. It
- * would have looked like an upstream outage rather than a field name.
- *
- * `docs/upstream.md` already records this exact hazard: "every endpoint path in docs/tokens.md was
- * wrong until the generated types replaced them". A name taken from a model of an API is not a name
- * from the API.
- *
- * Both are named here rather than only the true one, because the module is documented to read the
- * service's envelope too — `anchor-service` hands over the normalised shape — and a filter that
- * accepts both costs two lines.
- */
-void fillRowFilter(JsonObject row) {
-	row["symbol"] = true;
-	row["name"] = true;
-	row["chain"] = true;
-	row["address"] = true;
-	row["usdPrice"] = true;
-	row["usd_price"] = true;
-	row["priceChange24h"] = true;
-	row["price_change_24h"] = true;
-	row["volume24h"] = true;
-	row["volume_24h"] = true;
-}
-
-bool copyIdentity(char *out, size_t n, const char *in) {
-	if (out == nullptr || n < 2 || in == nullptr || in[0] == '\0') return false;
-	size_t length = 0;
-	for (; in[length] != '\0'; length++) {
-		const unsigned char value = (unsigned char)in[length];
-		if (length + 1 >= n || value < 0x20 || value > 0x7e) return false;
-	}
-	memcpy(out, in, length + 1);
-	return true;
-}
-
-/*
- * A number that may have arrived as a string.
- *
- * `usdPrice` is a string on the wire — `"usdPrice": "0.24363121651577396"`, measured 2026-09-13,
- * the convention `state/discovery.ts`'s `usd()` documents and `docs/upstream.md` records OpenSea
- * closing over time (51 money fields are already strings; 24 are not yet). `priceChange24h` is a
- * plain number today. Reading either shape for either field costs four lines and means the day one
- * of those 24 flips to a string is a day nothing here breaks.
- *
- * Anything that is neither is NaN, not zero: see `formatUsd`.
- */
-double numberOf(JsonVariantConst value) {
-	if (value.is<double>()) {
-		return value.as<double>();
-	}
-	if (value.is<const char *>()) {
-		const char *text = value.as<const char *>();
-		if (text == nullptr || *text == '\0') {
-			return NAN;
-		}
-		char *end = nullptr;
-		const double parsed = strtod(text, &end);
-		return end == text ? NAN : parsed;
-	}
-	return NAN;
-}
-
-}  // namespace
+/* The row reader, its filter and its identity rule are `common/trending_rows.h`, shared with the
+ * Cardputer so both devices read one response into the same rows. The field names in both dialects
+ * are there too: the live API answers in snake_case, and a parser written from the host's camelCase
+ * model once read every price and change from it as missing. */
 
 size_t parseTrending(Stream &in, Token *out, size_t max, const char **err) {
 	if (out == nullptr || max == 0) {
@@ -199,8 +118,7 @@ size_t parseTrending(Stream &in, Token *out, size_t max, const char **err) {
 	 * puts the key back on the desktop where `docs/security.md` wants it.
 	 */
 	JsonDocument filter;
-	fillRowFilter(filter["tokens"][0].to<JsonObject>());
-	fillRowFilter(filter["data"]["tokens"][0].to<JsonObject>());
+	anchor_trending::fillFilter(filter);
 
 	/*
 	 * A nesting limit, because the input is hostile until proven otherwise.
@@ -219,50 +137,13 @@ size_t parseTrending(Stream &in, Token *out, size_t max, const char **err) {
 		return 0;
 	}
 
-	JsonArrayConst list = doc["tokens"].as<JsonArrayConst>();
-	if (list.isNull()) {
-		list = doc["data"]["tokens"].as<JsonArrayConst>();
-	}
+	JsonArrayConst list = anchor_trending::tokenList(doc);
 	if (list.isNull()) {
 		if (err != nullptr) *err = "no token list in the response";
 		return 0;
 	}
 
-	size_t count = 0;
-	for (JsonObjectConst entry : list) {
-		if (count >= max) {
-			break;
-		}
-		Token &token = out[count];
-		memset(&token, 0, sizeof(token));
-		copyBounded(token.symbol, sizeof(token.symbol), entry["symbol"] | "");
-		copyBounded(token.name, sizeof(token.name), entry["name"] | "");
-		if (!copyIdentity(token.chain, sizeof(token.chain), entry["chain"] | "") ||
-		    !copyIdentity(token.address, sizeof(token.address), entry["address"] | "")) {
-			continue;
-		}
-		/*
-		 * A row with neither a symbol nor a name is unshowable, so it is dropped rather than drawn
-		 * as a blank line with a price beside it. Same judgement `readTrendingTokens` makes when it
-		 * drops a row with no address: a row that cannot be identified is not a row.
-		 */
-		if (token.symbol[0] == '\0' && token.name[0] == '\0') {
-			continue;
-		}
-		/* Whichever dialect answered. See `fillRowFilter` for why there are two. */
-		JsonVariantConst price = entry["usdPrice"];
-		if (price.isNull()) price = entry["usd_price"];
-		JsonVariantConst change_field = entry["priceChange24h"];
-		if (change_field.isNull()) change_field = entry["price_change_24h"];
-		JsonVariantConst volume_field = entry["volume24h"];
-		if (volume_field.isNull()) volume_field = entry["volume_24h"];
-		formatUsd(numberOf(price), token.price, sizeof(token.price));
-		formatBigUsd(numberOf(volume_field), token.volume, sizeof(token.volume));
-		const double change = numberOf(change_field);
-		formatPercent(change, token.change, sizeof(token.change));
-		token.changePositive = isfinite(change) && change >= 0.0;
-		count++;
-	}
+	const size_t count = anchor_trending::readRows(list, out, max);
 	if (count == 0 && err != nullptr) {
 		*err = "the trending list came back empty";
 	}

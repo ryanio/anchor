@@ -741,6 +741,22 @@ function simEsp32(root: string, paths: DevicePaths, manifest: Toolchain, runner:
     { env: { ...process.env, ANCHOR_GFX_DIR: gfx, ANCHOR_LVGL_DIR: lvgl } },
   );
   assertShot(output);
+  // The trending reader both firmwares share, over a captured live response. It needs ArduinoJson,
+  // which bootstrap installs and the plain unit-test job does not have, so it runs here.
+  const trendingTest = join(output, "trending-rows");
+  runner.run("c++", [
+    "-std=c++17",
+    "-Wall",
+    "-Wextra",
+    "-Werror",
+    `-I${join(paths.arduinoUser, "libraries", "ArduinoJson", "src")}`,
+    join(root, "devices", "firmware", "common", "trending_rows_test.cpp"),
+    "-o",
+    trendingTest,
+  ]);
+  runner.run(trendingTest, [
+    join(root, "devices", "firmware", "common", "fixtures", "trending-2026-09-23.json"),
+  ]);
   // Exercise the real LVGL screens with scripted input. Fixture data and credentials only.
   const binary = join(root, "devices", "firmware", "esp32", "sim", "build", "pulse-lvgl-sim");
   const cases = [

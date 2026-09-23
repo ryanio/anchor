@@ -13,6 +13,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "../../../common/trending_rows.h"
+
 #include "net.h"
 
 #if __has_include("secrets.h")
@@ -220,47 +222,12 @@ const char *reasonForHttp(int code)
 	return "OpenSea returned an unexpected status";
 }
 
-// A number that may have arrived as a string.
-//
-// Measured against the live API on 2026-09-17, in one response each: `usd_price` is a string
-// ("0.6601682669434535"), `price_change_24h` and `volume_24h` are plain numbers, a holder's
-// `usd_value` and `quantity` are strings, `percentage_held` is a number, and a swap's `amount_usd`
-// is a string. `docs/upstream.md` records OpenSea closing that gap over time — 51 money fields are
-// strings already and 24 are not yet — so reading either shape for either field costs four lines and
-// means the day one of those 24 flips is a day nothing here breaks.
-//
-// Anything that is neither is NaN rather than zero: see `formatUsd`.
-double numberOf(JsonVariantConst value)
-{
-	if (value.is<double>()) {
-		return value.as<double>();
-	}
-	if (value.is<const char *>()) {
-		const char *text = value.as<const char *>();
-		if (text == nullptr || *text == '\0') {
-			return NAN;
-		}
-		char *end = nullptr;
-		const double parsed = strtod(text, &end);
-		return end == text ? NAN : parsed;
-	}
-	return NAN;
-}
+// Numbers that may arrive as strings, and fields in either dialect: common/trending_rows.h, where the
+// measurements behind both are recorded.
+using anchor_trending::either;
+using anchor_trending::numberOf;
 
-// Whichever dialect answered.
-//
-// The live API speaks snake_case: `usd_price`, `price_change_24h`, `image_url`, `owner_address`,
-// `swap_events`. The camelCase names are `devices/src/state/discovery.ts`'s, which is the *host's*
-// model of the same data, and the host normalises. That cost real time on the ESP32 — a parser
-// written from the host's field names matched `symbol` and `name` by luck, because they are one word
-// in both dialects, and returned nothing for every price and change, which would have looked like an
-// upstream outage rather than a field name. Reading both costs one line per field and keeps this
-// module honest if a unit is ever pointed at anchor-service on the LAN instead of at the public API.
-JsonVariantConst either(JsonObjectConst entry, const char *snake, const char *camel)
-{
-	JsonVariantConst value = entry[snake];
-	return value.isNull() ? entry[camel] : value;
-}
+
 
 // ------------------------------------------------------------------ one request
 
@@ -385,23 +352,13 @@ bool request(const char *url, JsonDocument &filter, JsonDocument &doc,
 
 bool fetchTrending(const RequestJob &job, RequestResult &result)
 {
-	// Keep only the seven fields this device reads. A trending row carries fifteen (measured
-	// 2026-09-17: address, chain, name, symbol, image_url, usd_price, decimals, opensea_url,
-	// market_cap_usd, volume_24h, price_change_24h, holders_count, is_verified, created_at,
-	// genesis_date) and a filter means the rest are walked and discarded as they stream past rather
-	// than allocated, so the payload never lands whole in RAM.
+	// Keep only the seven fields a row is read from, in either dialect and either envelope. A trending
+	// row carries fifteen (measured 2026-09-17: address, chain, name, symbol, image_url, usd_price,
+	// decimals, opensea_url, market_cap_usd, volume_24h, price_change_24h, holders_count,
+	// is_verified, created_at, genesis_date) and a filter means the rest are walked and discarded as
+	// they stream past rather than allocated, so the payload never lands whole in RAM.
 	JsonDocument filter;
-	JsonObject row = filter["tokens"][0].to<JsonObject>();
-	row["symbol"] = true;
-	row["name"] = true;
-	row["address"] = true;
-	row["chain"] = true;
-	row["usd_price"] = true;
-	row["usdPrice"] = true;
-	row["price_change_24h"] = true;
-	row["priceChange24h"] = true;
-	row["volume_24h"] = true;
-	row["volume24h"] = true;
+	anchor_trending::fillFilter(filter);
 
 	JsonDocument doc;
 	const char *err = nullptr;
@@ -410,41 +367,17 @@ bool fetchTrending(const RequestJob &job, RequestResult &result)
 		return false;
 	}
 
-	JsonArrayConst list = doc["tokens"].as<JsonArrayConst>();
+	JsonArrayConst list = anchor_trending::tokenList(doc);
 	if (list.isNull()) {
 		result.reason = "no token list in the response";
 		return false;
 	}
 
 	// Parsed into a staging table and copied over in one go, so a draw that lands mid parse sees the
-	// previous list whole rather than one token's symbol against another's price.
+	// previous list whole rather than one token's symbol against another's price. The reader is shared
+	// with the ESP32 (common/trending_rows.h), so both devices read one response into the same rows.
 	memset(result.tokenRows, 0, sizeof(result.tokenRows));
-	size_t count = 0;
-	for (JsonObjectConst entry : list) {
-		if (count >= MAX_TOKENS) {
-			break;
-		}
-		Token &t = result.tokenRows[count];
-		copyBounded(t.symbol, sizeof(t.symbol), entry["symbol"] | "");
-		copyBounded(t.name, sizeof(t.name), entry["name"] | "");
-		if (!copyTokenIdentity(t.chain, sizeof(t.chain), entry["chain"] | "") ||
-		    !copyTokenIdentity(t.address, sizeof(t.address), entry["address"] | "")) {
-			continue;
-		}
-		// A row with no way to name it is not a row. The same judgement `readTrendingTokens` makes
-		// when it drops a row with no address, and drawing a blank line with a price beside it is
-		// worse than showing seven tokens instead of eight.
-		if (t.symbol[0] == '\0' && t.name[0] == '\0') {
-			continue;
-		}
-		formatUsd(numberOf(either(entry, "usd_price", "usdPrice")), t.price, sizeof(t.price));
-		formatBigUsd(numberOf(either(entry, "volume_24h", "volume24h")), t.volume,
-		             sizeof(t.volume));
-		const double change = numberOf(either(entry, "price_change_24h", "priceChange24h"));
-		formatPercent(change, t.change, sizeof(t.change));
-		t.changePositive = isfinite(change) && change >= 0.0;
-		count++;
-	}
+	const size_t count = anchor_trending::readRows(list, result.tokenRows, MAX_TOKENS);
 	if (count == 0) {
 		result.reason = "the trending list came back empty";
 		return false;

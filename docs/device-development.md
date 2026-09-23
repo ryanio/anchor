@@ -97,7 +97,9 @@ actual LVGL screen, including partial portfolio coverage, a lost feed, and a 32-
 followed by keyboard input. Forget-network checks verify that cancellation preserves the saved profile
 and confirmation removes it. Text checks fail for hidden or fully clipped labels. Simulator assertions
 and draw-layer allocation failures stop the process; each interaction run also has a 30-second timeout.
-Simulator credentials and readings are fixtures.
+Simulator credentials and readings are fixtures. `sim esp32` also compiles and runs the trending
+reader both firmwares share against a captured live response, because that test needs the
+bootstrapped ArduinoJson.
 
 The normal build preserves local firmware behavior. If there is no untracked `secrets.h`, the
 OpenSea network reader compiles to its explicit disabled state. In CI, `CI=true` also runs a second,
