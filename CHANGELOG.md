@@ -627,8 +627,9 @@ assuming it, so a machine without one shows the command exactly as before.
 
 ### Changed
 - **Sub-cent token prices read as prices.** Both handhelds formatted every price under a dollar to
-  four places, so a token at $0.000021 showed as "$0.0000". Prices under a cent now show three
-  significant figures ("$0.000021", "$0.00123"). Anything below $0.0000000001 says so rather than
+  four places, so a token at $0.000021 showed as "$0.0000". On 2026-09-23, 10 of the live top 20
+  trending tokens were under a cent, and Agrippa at $0.0000862 showed as "$0.0001". Prices under a
+  cent now show three significant figures ("$0.000021", "$0.0000862"). Anything below $0.0000000001 says so rather than
   printing zeros. The ESP32 simulator's fixture prices are now numbers run through the same function,
   because its hand-typed strings were shapes the formatter could not produce and hid the bug.
 - **The ESP32 prints a health line every minute** for endurance and battery runs: uptime, internal heap
