@@ -98,6 +98,12 @@ the Anchor profile banner and began joining its saved network, with no panic in 
 capture. What the old image was showing before the replug was not recorded, so whether it had hung
 remains open.
 
+Later the same night both units were updated again, to `ad4668c`, for the readable Wi-Fi network
+rows on the ESP32 and the health line on the Cardputer. The same MAC and flash-size checks passed, and
+only app0 was written (ESP32 1,737,856 bytes, Cardputer 1,196,944, both hashes verified). The ESP32's
+first health line matched the earlier one, and the Cardputer again began joining its saved network with
+no panic. The `c32682f` images stay in the private cache as the previous known-good build.
+
 ## Size on the glass, 2026-09-22
 
 After the demo images were flashed, Ryan reported that the Waveshare unit is very small to read and
