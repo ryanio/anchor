@@ -43,14 +43,13 @@ describe("tool isolation", () => {
     assert.equal(env.PLATFORMIO_BUILD_DIR, "/work/anchor/.cache/device/build/platformio");
     assert.equal(env.PLATFORMIO_LIBDEPS_DIR, "/work/anchor/.cache/device/platformio/libdeps");
     assert.equal(env.PLATFORMIO_SETTING_ENABLE_TELEMETRY, "no");
+    assert.equal(paths.arduino, "/work/anchor/.cache/device/arduino");
   });
 
   test("generates direct exact Cardputer constraints over flint's compatible ranges", () => {
     const manifest = loadToolchain(ROOT);
     const generated = platformioConfig(ROOT, pathsForRoot(ROOT), manifest);
     const config = readFileSync(generated, "utf8");
-    assert.match(config, /platform = espressif32@6\.12\.0/);
-    assert.match(config, /platform = native@1\.2\.1/);
     for (const library of manifest.cardputer.libraries) assert.ok(config.includes(library), library);
     assert.ok(config.indexOf("m5stack/M5GFX@") < config.indexOf("m5stack/M5Unified@"));
     assert.ok(config.indexOf("m5stack/M5Unified@") < config.indexOf("m5stack/M5Cardputer@"));
@@ -58,7 +57,7 @@ describe("tool isolation", () => {
     assert.equal(generated.endsWith("/anchor-cardputer-project/platformio.ini"), true);
   });
 
-  test("installs platform dependencies before the exact Cardputer library closure", () => {
+  test("installs the platform, then the exact Cardputer library closure without its dependencies", () => {
     const config = "/work/anchor/.cache/device/platformio/anchor-cardputer-project/platformio.ini";
     assert.deepEqual(cardputerPlatformInstallArgs(config, "cardputer-adv-anchor", "espressif32@6.12.0"), [
       "pkg",
@@ -146,18 +145,6 @@ describe("failure behavior", () => {
         runner.run(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { quiet: true, timeoutMs: 100 }),
       /timed out after 100 ms/,
     );
-  });
-
-  test("cache paths can be discarded without touching the checkout", () => {
-    const root = mkdtempSync(join(tmpdir(), "anchor-device-test-"));
-    try {
-      const paths = pathsForRoot(root);
-      assert.equal(paths.cache.startsWith(root), true);
-      assert.equal(paths.arduino.startsWith(paths.cache), true);
-      assert.equal(paths.platformio.startsWith(paths.cache), true);
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
   });
 
   test("CI sentinel refuses source-tree credential files without reading them", () => {

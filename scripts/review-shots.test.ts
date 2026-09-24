@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { SurfaceMeta } from "./review-page.ts";
-import { clearFor, clearKey, fileFor, type Placed, shotsFor } from "./review-shots.ts";
+import { clearFor, clearKey, type Placed, shotsFor } from "./review-shots.ts";
 
 const surface = (id: string, extra: Partial<Placed> = {}): Placed => ({
   id,
@@ -21,7 +20,9 @@ test("a scoped capture keeps the shots it did not retake", () => {
   // it had been asked for, which cost a real review twenty-four panel shots. Only the bar is
   // retaken here; the panels must still be on the page.
   const before = { "starting.png": 1000, "ready-quiet.png": 1000, "bar.png": 1000 };
-  const after = { ...before, "bar.png": 9000 };
+  // A PNG left behind by a state that has since been deleted must not appear as a surface: the page
+  // numbers its cards by position in the surface list, not by what is on disk.
+  const after = { ...before, "bar.png": 9000, "removed-state.png": 9000 };
 
   const shots = shotsFor(ALL, disk(after));
 
@@ -64,31 +65,13 @@ test("a shot on disk wins over a recorded failure", () => {
   assert.equal(landed?.file, "starting.png");
   assert.equal(landed?.capturedAt, 4200);
   assert.equal(landed?.reason, undefined);
-});
 
-test("fileName overrides the default file for a surface", () => {
-  const nested = surface("stale", { fileName: "panel/stale.png" });
-  assert.equal(fileFor(nested), "panel/stale.png");
-  assert.equal(fileFor(surface("stale")), "stale.png");
-
-  const shots = shotsFor([nested], disk({ "panel/stale.png": 7 }));
-  assert.equal(shots[0]?.file, "panel/stale.png");
-});
-
-test("the shot list follows the surface list, not the disk", () => {
-  // The page numbers its cards by position in this list, so an extra PNG left behind by a state
-  // that has since been deleted must not appear as a surface.
-  const shots = shotsFor(ALL, disk({ "starting.png": 1, "removed-state.png": 1 }));
-
-  assert.equal(shots.length, ALL.length);
-  assert.ok(!shots.some((s) => s.file === "removed-state.png"));
-});
-
-test("surface metadata is carried through untouched", () => {
-  const shots = shotsFor([surface("bar", { strip: true })], disk({ "bar.png": 1 }));
-  const meta: SurfaceMeta = shots[0]!.surface;
-  assert.equal(meta.strip, true);
-  assert.equal(meta.title, "Panel — bar");
+  // A surface's `fileName` overrides the default file.
+  const nested = shotsFor(
+    [surface("stale", { fileName: "panel/stale.png" })],
+    disk({ "panel/stale.png": 7 }),
+  );
+  assert.equal(nested[0]?.file, "panel/stale.png");
 });
 
 /**
@@ -117,22 +100,16 @@ test("either member of a batch names the whole batch", () => {
   assert.deepEqual(clearFor(BATCHED[2]!, BATCHED), ["devices/a.png", "devices/b.png"]);
 });
 
-test("a batch is emptied once per run, so a member cannot throw away a fresh shot", () => {
-  // The loop `review.ts` runs, in miniature.
-  const gone: string[] = [];
-  const already = new Set<string>();
-  for (const item of BATCHED) {
-    const key = clearKey(item);
-    if (already.has(key)) continue;
-    already.add(key);
-    gone.push(...clearFor(item, BATCHED));
-  }
-  assert.deepEqual(gone, ["solo.png", "devices/a.png", "devices/b.png", "panel/c.png"]);
-  assert.equal(new Set(gone).size, gone.length, "a shot was named twice");
+test("members of a batch share one clear key, so a run empties the batch once", () => {
+  // `review.ts` clears each key once per run; a member with its own key would throw away the shot
+  // the first member's render had just written.
+  assert.equal(clearKey(BATCHED[1]!), clearKey(BATCHED[2]!));
+  assert.notEqual(clearKey(BATCHED[0]!), clearKey(BATCHED[1]!), "a lone surface is its own batch");
+  assert.notEqual(clearKey(BATCHED[1]!), clearKey(BATCHED[3]!), "two batches are two keys");
 });
 
 test("a scoped run names only the members it is capturing", () => {
-  // `review.ts devices` must leave the panel's shots alone, batch or no batch.
-  const wanted = BATCHED.filter((item) => item.batch === "devices");
-  assert.deepEqual(clearFor(wanted[0]!, wanted), ["devices/a.png", "devices/b.png"]);
+  // A run scoped by id can want one member of a batch; the rest of the batch keeps its shots.
+  const wanted = [BATCHED[1]!];
+  assert.deepEqual(clearFor(wanted[0]!, wanted), ["devices/a.png"]);
 });

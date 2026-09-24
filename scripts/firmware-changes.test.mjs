@@ -5,12 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
-import {
-  affectsFirmware,
-  classifyFirmwareChanges,
-  classifyGitRange,
-  firmwareTargetsForPath,
-} from "./firmware-changes.mjs";
+import { classifyFirmwareChanges, classifyGitRange, firmwareTargetsForPath } from "./firmware-changes.mjs";
 
 const workflowPath = fileURLToPath(new URL("../.github/workflows/ci.yml", import.meta.url));
 
@@ -51,7 +46,7 @@ describe("firmware path classification", () => {
       ".gitmodules",
       ".github/workflows/ci.yml",
     ]) {
-      assert.equal(affectsFirmware(path), true, path);
+      assert.equal(classifyFirmwareChanges([path]).run, true, path);
     }
   });
 
@@ -66,14 +61,8 @@ describe("firmware path classification", () => {
       "devices/src/panel.ts",
       "devices/package-lock.json",
     ]) {
-      assert.equal(affectsFirmware(path), false, path);
+      assert.equal(classifyFirmwareChanges([path]).run, false, path);
     }
-  });
-
-  test("builds for unknown files instead of creating a silent coverage hole", () => {
-    assert.equal(affectsFirmware("new-build-system/config.toml"), true);
-    assert.deepEqual(firmwareTargetsForPath("new-build-system/config.toml"), ["cardputer", "esp32"]);
-    assert.deepEqual(classifyFirmwareChanges([]), { run: false, relevant: [] });
   });
 
   test("selects only the target whose private inputs changed", () => {
@@ -92,6 +81,7 @@ describe("firmware path classification", () => {
       relevant: ["devices/firmware/esp32/pulse/pulse.ino"],
     });
     assert.deepEqual(classifyFirmwareChanges([paths[0]], "esp32"), { run: false, relevant: [] });
+    assert.deepEqual(classifyFirmwareChanges([]), { run: false, relevant: [] });
   });
 
   test("selects both targets for shared, tooling, root, and unknown inputs", () => {

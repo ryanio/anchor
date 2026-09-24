@@ -36,10 +36,6 @@ const UNRELATED_FILES = new Set([
   "LICENSE",
 ]);
 
-export function affectsFirmware(path) {
-  return firmwareTargetsForPath(path).length > 0;
-}
-
 export function firmwareTargetsForPath(path) {
   if (path.startsWith("devices/firmware/cardputer/")) return ["cardputer"];
   if (path.startsWith("devices/firmware/esp32/")) return ["esp32"];
