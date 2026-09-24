@@ -15,8 +15,8 @@
  * none of them easier to hit, and the report from the first physical session was that the keyboard was
  * extremely hard to use. No map of a full keyboard fits this width at a usable size.
  *
- * So the keypad is a phone keypad. Three columns and four rows, each key about 114 x 66 px (8.9 x
- * 5.2 mm). Letters come in the groups printed on a telephone. Tapping a group replaces the grid with
+ * So the keypad is a phone keypad. Three columns and four rows inside the 20 px safe inset, each key
+ * 104 x 63 px (8.2 x 5 mm). Letters come in the groups printed on a telephone. Tapping a group replaces the grid with
  * that group's letters, lower case above upper case, three or four to a row and 60 px or more wide.
  * The second tap types the letter and brings the grid back. That is two taps a letter, and both are
  * on targets a thumb can hit, which is the trade this screen needs: a passphrase is typed once per

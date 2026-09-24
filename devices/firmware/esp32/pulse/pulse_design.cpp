@@ -146,18 +146,19 @@ constexpr int32_t INPUT_FIELD_H = 52;
 constexpr int32_t INPUT_REVEAL_W = 64;
 constexpr int32_t INPUT_FIELD_W = SAFE_W - INPUT_REVEAL_W - space::sm; /* 256 */
 /*
- * The keypad: 352 wide at x=8, 276 tall from y=152 to the safe bottom at 428.
+ * The keypad: the safe width, 328 at x=20, 276 tall from y=152 to the safe bottom at 428.
  *
- * Four rows of 63 px and three columns of 112 px, with 8 px between keys: about 8.8 x 5 mm on this
+ * Four rows of 63 px and three columns of 104 px, with 8 px between keys: about 8.2 x 5 mm on this
  * 322 ppi glass. The ten-column `lv_keyboard` this replaced had 27 to 32 px keys, 2.5 mm wide, and
  * was reported from the first session on the physical unit as extremely hard to use. See
  * `pulse_keypad_model.h` for the layout and why it takes two taps a letter.
  *
- * It ends at 428, the safe rectangle's bottom. It once ran to 440, straight into both bottom corners,
- * on the row that carries delete and submit.
+ * It started 8 px from each side, inherited from that keyboard, and the second physical session
+ * reported the rounded corners cutting part of the display off: the bottom row's outer keys reached
+ * into both corners. It now keeps the same 20 px inset as every other screen.
  */
-constexpr int32_t INPUT_KB_X = space::sm;
-constexpr int32_t INPUT_KB_W = PANEL_W - 2 * INPUT_KB_X; /* 352 */
+constexpr int32_t INPUT_KB_X = INSET;
+constexpr int32_t INPUT_KB_W = SAFE_W; /* 328 */
 constexpr int32_t INPUT_KB_Y = 152;
 constexpr int32_t INPUT_KB_H = PANEL_H - INSET - INPUT_KB_Y; /* 276 */
 

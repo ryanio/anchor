@@ -815,18 +815,14 @@ function simEsp32(root: string, paths: DevicePaths, manifest: Toolchain, runner:
         "--wait",
         "--tap",
         "180,398",
-        // "Demo": D from def's upper row, then e, m, o. Next.
-        ...keypadTaps([
-          "184,183",
-          "49,290",
-          "184,183",
-          "184,195",
-          "184,254",
-          "64,195",
-          "184,254",
-          "304,195",
-          "319,396",
-        ]),
+        // "Demo": D from def's upper row, then e, m, o, and a stray e removed with a slow 700 ms press
+        // on delete, which must remove exactly one character. Delete once fired on press and repeated
+        // from 400 ms, so that press removed three, the name became "De" and the join failed. Next.
+        ...keypadTaps(["184,183", "49,290", "184,183", "184,195", "184,254", "64,195", "184,254", "304,195"]),
+        ...keypadTaps(["184,183", "184,195"]),
+        "--hold",
+        "226,396,700",
+        ...keypadTaps(["319,396"]),
         // "Pass-123": P, a, s, s; the symbol page's ". , - _" for "-"; letters, digits, 1 2 3. Join.
         ...keypadTaps([
           "304,254",

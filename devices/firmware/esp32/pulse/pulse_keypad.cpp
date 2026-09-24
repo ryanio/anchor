@@ -13,6 +13,19 @@ lv_obj_t *keys = nullptr;
 lv_obj_t *field = nullptr;
 
 /*
+ * Delete on release, and repeat only on a deliberate hold.
+ *
+ * Delete used to fire the moment a finger landed and repeat from LVGL's 400 ms long press, so a tap
+ * that lingered a little deleted two or three characters, and the first physical session reported it
+ * as glitchy. Now a tap deletes once when the finger lifts, like every other key. Holding repeats,
+ * but only after `HOLD_BEFORE_REPEAT` of LVGL's 100 ms repeat events (about 0.8 s), and a release
+ * that ends a repeat deletes nothing more.
+ */
+constexpr uint8_t HOLD_BEFORE_REPEAT = 4;
+uint8_t holdRepeats = 0;
+bool erasedWhileHeld = false;
+
+/*
  * Push the model's current layout into the matrix.
  *
  * The whole control map is written every time. `lv_buttonmatrix_set_map` keeps the previous control
@@ -27,10 +40,10 @@ void apply()
 	static lv_buttonmatrix_ctrl_t ctrl[MAX_KEYS];
 	lv_buttonmatrix_set_map(keys, model.map());
 	for (size_t i = 0; i < model.keyCount(); i++) {
-		uint32_t bits = 1; /* width: one unit */
-		if (!model.repeats(i)) {
-			bits |= LV_BUTTONMATRIX_CTRL_NO_REPEAT | LV_BUTTONMATRIX_CTRL_CLICK_TRIG;
-		}
+		/* Every key fires on release. Only delete keeps LVGL's repeat events, which `onValue` turns into
+		 * a deliberate hold. */
+		uint32_t bits = 1 | LV_BUTTONMATRIX_CTRL_CLICK_TRIG; /* width: one unit */
+		if (!model.repeats(i)) bits |= LV_BUTTONMATRIX_CTRL_NO_REPEAT;
 		/* CHECKED is only a style selector here: control keys are drawn darker, and nothing on this
 		 * keypad is checkable. */
 		if (model.control(i)) bits |= LV_BUTTONMATRIX_CTRL_CHECKED;
@@ -43,11 +56,35 @@ void apply()
 	                           LV_PART_ITEMS);
 }
 
+/* A new press starts a new hold. Reset here rather than on release, because a finger that slides off
+ * the key ends the press with no release event on it. */
+void onPressed(lv_event_t *event)
+{
+	(void)event;
+	holdRepeats = 0;
+	erasedWhileHeld = false;
+}
+
 void onValue(lv_event_t *event)
 {
 	(void)event;
 	const uint32_t id = lv_buttonmatrix_get_selected_button(keys);
 	if (id == LV_BUTTONMATRIX_BUTTON_NONE) return;
+	if (model.kind(id) == KeyKind::Backspace) {
+		/* The same event arrives for a repeat while held and for the release; the pointer's state says
+		 * which. */
+		lv_indev_t *indev = lv_indev_active();
+		const bool held = indev != nullptr && lv_indev_get_state(indev) == LV_INDEV_STATE_PRESSED;
+		if (held) {
+			if (++holdRepeats <= HOLD_BEFORE_REPEAT) return;
+			erasedWhileHeld = true;
+		} else if (erasedWhileHeld) {
+			erasedWhileHeld = false;
+			return;
+		}
+		lv_textarea_delete_char(field);
+		return;
+	}
 	const bool choosing = model.choosing();
 	const Page page = model.page();
 	const Action action = model.press(id);
@@ -102,6 +139,7 @@ lv_obj_t *create(lv_obj_t *parent, lv_obj_t *textarea)
 	lv_obj_set_style_text_color(keys, hex(colour::ground), LV_PART_ITEMS | LV_STATE_PRESSED);
 
 	lv_obj_add_event_cb(keys, onValue, LV_EVENT_VALUE_CHANGED, nullptr);
+	lv_obj_add_event_cb(keys, onPressed, LV_EVENT_PRESSED, nullptr);
 	apply();
 	return keys;
 }

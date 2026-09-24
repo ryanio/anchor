@@ -39,6 +39,7 @@
 #include "sim_touch.h"
 
 #include "lvgl.h"
+#include "src/widgets/buttonmatrix/lv_buttonmatrix_private.h"
 
 #include "pulse_companion.h"
 #include "pulse_power.h"
@@ -83,6 +84,8 @@ uint32_t gap_ms = 1200;
 uint32_t lead_ms = 1500;
 uint32_t quit_after_ms = 0;
 bool quiet = false;
+/* Report drawing past the rounded corners without failing, for surveying a layout. */
+bool allow_corners = false;
 int shot_index = 0;
 
 /*
@@ -149,6 +152,108 @@ bool visibleText(lv_obj_t *obj, const std::string &expected, lv_area_t viewport,
     if (visibleText(lv_obj_get_child(obj, i), expected, area, prefix)) return true;
   }
   return false;
+}
+
+/*
+ * Everything drawn must sit on the glass, and the glass has rounded corners.
+ *
+ * The radius has never been measured: `docs/devices-esp32.md` records a heading at (12, 20) clipping
+ * and one at (20, 20) not, which for a circular corner puts the radius between about 55 and 68 px.
+ * 60 is the estimate used here until someone measures a unit. The second physical session reported
+ * the corners cutting off the display, and the keypad's outer keys, 8 px from each side, were the
+ * first thing this check found.
+ */
+constexpr int CORNER_R = 60;
+
+bool onGlass(int x, int y) {
+  const int w = 368, h = 448;
+  if (x < 0 || y < 0 || x >= w || y >= h) return false;
+  const int cx = x < CORNER_R ? CORNER_R : (x > w - 1 - CORNER_R ? w - 1 - CORNER_R : x);
+  const int cy = y < CORNER_R ? CORNER_R : (y > h - 1 - CORNER_R ? h - 1 - CORNER_R : y);
+  const int dx = x - cx, dy = y - cy;
+  return dx * dx + dy * dy <= CORNER_R * CORNER_R;
+}
+
+/* A rounded rectangle's outermost drawn point toward a corner is 0.29 of its radius in from the box. */
+bool boxOnGlass(const lv_area_t &a, int32_t radius) {
+  const int32_t shortest = lv_area_get_width(&a) < lv_area_get_height(&a) ? lv_area_get_width(&a)
+                                                                         : lv_area_get_height(&a);
+  if (radius > shortest / 2) radius = shortest / 2;
+  const int k = (int)(radius * 29 / 100);
+  return onGlass(a.x1 + k, a.y1 + k) && onGlass(a.x2 - k, a.y1 + k) && onGlass(a.x1 + k, a.y2 - k) &&
+         onGlass(a.x2 - k, a.y2 - k);
+}
+
+bool clip(lv_area_t &area, const lv_area_t &viewport) {
+  area.x1 = area.x1 > viewport.x1 ? area.x1 : viewport.x1;
+  area.y1 = area.y1 > viewport.y1 ? area.y1 : viewport.y1;
+  area.x2 = area.x2 < viewport.x2 ? area.x2 : viewport.x2;
+  area.y2 = area.y2 < viewport.y2 ? area.y2 : viewport.y2;
+  return area.x1 <= area.x2 && area.y1 <= area.y2;
+}
+
+void offGlass(lv_obj_t *obj, lv_area_t viewport, std::vector<std::string> &found) {
+  if (lv_obj_has_flag(obj, LV_OBJ_FLAG_HIDDEN)) return;
+  lv_area_t area;
+  lv_obj_get_coords(obj, &area);
+  lv_area_t box = area;
+  if (!clip(box, viewport)) return;
+  const bool full = lv_area_get_width(&area) >= 360 && lv_area_get_height(&area) >= 440;
+  const int32_t radius = lv_obj_get_style_radius(obj, LV_PART_MAIN);
+  char where[160];
+  if (lv_obj_check_type(obj, &lv_label_class)) {
+    const char *text = lv_label_get_text(obj);
+    if (text != nullptr && text[0] != '\0') {
+      /* The text, not the label's box: a centred label is often far wider than what it says. */
+      lv_point_t size;
+      lv_text_get_size(&size, text, lv_obj_get_style_text_font(obj, LV_PART_MAIN),
+                       lv_obj_get_style_text_letter_space(obj, LV_PART_MAIN),
+                       lv_obj_get_style_text_line_space(obj, LV_PART_MAIN), lv_obj_get_content_width(obj),
+                       LV_TEXT_FLAG_NONE);
+      lv_area_t ink = box;
+      const lv_text_align_t align = lv_obj_get_style_text_align(obj, LV_PART_MAIN);
+      const int32_t spare = lv_area_get_width(&box) - size.x;
+      if (spare > 0) {
+        if (align == LV_TEXT_ALIGN_CENTER) {
+          ink.x1 += spare / 2;
+          ink.x2 = ink.x1 + size.x;
+        } else if (align == LV_TEXT_ALIGN_RIGHT) {
+          ink.x1 = ink.x2 - size.x;
+        } else {
+          ink.x2 = ink.x1 + size.x;
+        }
+      }
+      if (size.y < lv_area_get_height(&ink)) ink.y2 = ink.y1 + size.y;
+      if (!boxOnGlass(ink, 0)) {
+        snprintf(where, sizeof(where), "label \"%.40s\" at (%d,%d)-(%d,%d)", text, (int)ink.x1,
+                 (int)ink.y1, (int)ink.x2, (int)ink.y2);
+        found.emplace_back(where);
+      }
+    }
+  } else if (lv_obj_check_type(obj, &lv_buttonmatrix_class)) {
+    const lv_buttonmatrix_t *matrix = (const lv_buttonmatrix_t *)obj;
+    const int32_t keyRadius = lv_obj_get_style_radius(obj, LV_PART_ITEMS);
+    for (uint32_t i = 0; i < matrix->btn_cnt; i++) {
+      lv_area_t key = matrix->button_areas[i];
+      lv_area_move(&key, area.x1, area.y1);
+      if (clip(key, viewport) && !boxOnGlass(key, keyRadius)) {
+        snprintf(where, sizeof(where), "key %u at (%d,%d)-(%d,%d)", (unsigned)i, (int)key.x1,
+                 (int)key.y1, (int)key.x2, (int)key.y2);
+        found.emplace_back(where);
+      }
+    }
+  } else if (!full && (lv_obj_get_style_bg_opa(obj, LV_PART_MAIN) > LV_OPA_TRANSP ||
+                       lv_obj_get_style_border_width(obj, LV_PART_MAIN) > 0)) {
+    if (!boxOnGlass(box, radius)) {
+      snprintf(where, sizeof(where), "object at (%d,%d)-(%d,%d)", (int)box.x1, (int)box.y1,
+               (int)box.x2, (int)box.y2);
+      found.emplace_back(where);
+    }
+  }
+  /* Children are clipped to this object, so what they draw beyond it never reaches the glass. */
+  for (uint32_t i = 0; i < lv_obj_get_child_count(obj); ++i) {
+    offGlass(lv_obj_get_child(obj, i), box, found);
+  }
 }
 
 void describe() {
@@ -299,6 +404,7 @@ void usage() {
       "  --join-fail         every join fails, whatever was typed\n"
       "  --open-wifi         open Wi-Fi setup immediately, as the hold gesture would\n"
       "  --companion         open the companion screen after setup\n"
+      "  --allow-corners     report drawing past the rounded corners without failing\n"
       "  --no-psram          refuse the SPIRAM allocation, to exercise the smaller draw buffer\n"
       "  --quiet             do not print the boot banner\n"
       "  --then-feed NAME    switch feed fixture as the next scripted step\n"
@@ -370,6 +476,8 @@ int main(int argc, char **argv) {
     } else if (strcmp(arg, "--battery") == 0 && more) {
       parseBattery(argv[++i]);
       power_wired = true;
+    } else if (strcmp(arg, "--allow-corners") == 0) {
+      allow_corners = true;
     } else if (strcmp(arg, "--companion") == 0) {
       open_companion = true;
     } else if (strcmp(arg, "--open-wifi") == 0) {
@@ -549,6 +657,15 @@ int main(int argc, char **argv) {
   lv_obj_get_coords(active, &viewport);
   /* The top layer too: the power confirmation draws there, over whichever screen is home. */
   lv_obj_t *overlay = lv_layer_top();
+  {
+    std::vector<std::string> found;
+    offGlass(active, viewport, found);
+    offGlass(overlay, viewport, found);
+    for (const auto &item : found) {
+      fprintf(stderr, "sim: drawn past the rounded corner (radius %d): %s\n", CORNER_R, item.c_str());
+    }
+    if (!found.empty() && !allow_corners) return 1;
+  }
   for (const auto &expected : expectedVisible) {
     if (!visibleText(active, expected, viewport) && !visibleText(overlay, expected, viewport)) {
       fprintf(stderr, "sim: expected visible label missing: %s\n", expected.c_str());

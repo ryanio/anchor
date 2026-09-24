@@ -125,7 +125,7 @@ TLS, the fetch worker's stack, or memory under network load; that soak still nee
 
 After the demo images were flashed, Ryan reported that the Waveshare unit is very small to read and
 that its Wi-Fi keyboard is extremely hard to use. The keyboard had 27 to 32 px keys, about 2.5 mm on
-this panel. A three-column keypad with 112 x 63 px keys and larger Explore and Wi-Fi text replaced
+this panel. A three-column keypad with 104 x 63 px keys and larger Explore and Wi-Fi text replaced
 it in the source; see
 [the ESP32 notes](devices-esp32.md#the-panel-is-29-mm-wide-so-size-for-a-fingertip-not-for-pixels).
 The units still run the `0716006` demo images until they are reflashed, so this change has not been

@@ -584,9 +584,9 @@ which is 2.1 to 2.5 mm against the 8 to 10 mm a fingertip needs. A magnifier abo
 which key was pressed but did not make the keys any easier to hit. No full keyboard fits this width at a
 usable size, so `pulse/pulse_keypad_model.h` replaces it with a phone-style keypad:
 
-- Three columns and four rows, each key 112 x 63 px (8.8 x 5 mm).
+- Three columns and four rows inside the 20 px safe inset, each key 104 x 63 px (8.2 x 5 mm).
 - Letters in telephone groups. Tapping a group shows that group's letters, lower case above upper
-  case, at 48 px on keys 82 px wide or more; the second tap types the letter and returns to the grid.
+  case, at 48 px on keys 76 px wide or more; the second tap types the letter and returns to the grid.
 - Digits are one tap each on their own page. The 32 ASCII symbols are in nine groups on a third page,
   one tap from the letters.
 
@@ -595,6 +595,15 @@ digits in two. `host/keypad.cpp` checks that by search rather than by listing ca
 `keypad-join` scenario types a hidden network name and the passphrase `Pass-123` by coordinates and
 checks that the saved profile holds exactly that string. The simulated unit starts with
 `fixturepass` saved, so a keypad that typed the wrong characters fails the check.
+
+The second physical session found two more things. Delete fired the moment a finger landed and
+repeated from LVGL's 400 ms long press, so a tap that lingered deleted two or three characters. It
+now deletes once on release like every other key, and repeats only after a hold of about 0.8 s. The
+`keypad-join` scenario removes a stray letter with a 700 ms press and requires exactly one deletion;
+with the old behaviour that press removed three and the join failed. The keypad also started 8 px
+from each side, inherited from `lv_keyboard`, and the rounded corners cut off its bottom row's outer
+keys. It now uses the 20 px safe inset, and the simulator checks every screen's final frame against
+the rounded outline (see below).
 
 Text follows the same arithmetic. 20 px Montserrat is about 1.6 mm tall. Explore rows now read at
 28 px with a 20 px label, the chooser status line and buttons at 20 px, and Wi-Fi network names at
@@ -606,6 +615,16 @@ cut "Skylark Cafe" to "Skylar...", so the `wifi-names` scenario now requires bot
 What the simulator cannot say: whether these sizes are enough on the glass, whether two taps a letter
 is acceptable to the people using it, and how the CST820 behaves on the larger keys. Those need a
 unit in the hand, and the result belongs in this section.
+
+### Nothing may be drawn past the rounded corners, and the simulator checks it
+
+Every scenario's final frame is checked against a rounded outline of the panel: each visible label's
+text, each opaque or bordered object, and each keypad key must fall inside it. The corner radius is
+an estimate of 60 px, from the heading that clipped at (12, 20) and the one that did not at (20, 20),
+which bound a circular corner to about 55 to 68 px. Measure a unit and replace the estimate in
+`sim/src/lvgl_main.cpp` (`CORNER_R`). With the keypad back at 8 px the check reports exactly the two
+bottom-corner keys, which is its control. `--allow-corners` reports without failing, for surveying a
+layout.
 
 ### The AXP2101 is how this board is switched off, and the register map came from two vendor drivers
 

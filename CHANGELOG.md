@@ -635,6 +635,11 @@ assuming it, so a machine without one shows the command exactly as before.
   gap, and what to delete when each is fixed.
 
 ### Changed
+- **ESP32 delete deletes once per tap, and the keypad stays off the rounded corners.** Delete fired on
+  touch and repeated from 400 ms, so a slightly long tap removed two or three characters; it now acts
+  on release and repeats only after a hold of about 0.8 s. The keypad moved in to the 20 px safe
+  inset because its bottom corner keys were cut off. The simulator now fails any screen that draws
+  past the panel's rounded outline.
 - **Sub-cent token prices read as prices.** Both handhelds formatted every price under a dollar to
   four places, so a token at $0.000021 showed as "$0.0000". On 2026-09-23, 10 of the live top 20
   trending tokens were under a cent, and Agrippa at $0.0000862 showed as "$0.0001". Prices under a
@@ -652,7 +657,7 @@ assuming it, so a machine without one shows the command exactly as before.
   and a scenario that requires the line.
 - **The ESP32 Wi-Fi keyboard is a phone-style keypad with keys a finger can hit.** The panel is
   about 29 mm wide, and `lv_keyboard` gave it 27 to 32 px keys (about 2.5 mm), which the first
-  physical session found extremely hard to use. Three columns of 112 x 63 px keys now hold letter
+  physical session found extremely hard to use. Three columns of 104 x 63 px keys now hold letter
   groups, and a tap on a group shows its letters at 48 px, lower case above upper case. Digits and
   all 32 ASCII symbols have their own pages, so every printable character is within three taps. A
   host test checks that by search, and a simulator scenario types a network name and passphrase
