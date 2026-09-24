@@ -112,6 +112,11 @@ MAC and 16 MB flash confirmed, app0 only, 1,743,184 bytes, hash verified. Its fi
 reported 157,712 bytes of internal heap free, a low of 151,096, the LVGL pool 46% used, and battery
 74% on USB, down from 100% before the unplug. The Cardputer stays on `f674c1d`, which is current for it.
 
+Ryan then reported the keypad's delete as glitchy and the rounded corners cutting off part of the
+display, while the bigger keys were much better. The unit received `2f04061` with the fixes (app0
+only, 1,743,312 bytes, hash verified); its first health line reported 157,704 bytes free, a low of
+148,184 and the LVGL pool 47% used. It still had no Wi-Fi saved.
+
 ## Idle soak, 2026-09-23
 
 A read-only serial logger recorded the Waveshare unit on `ad4668c` from 15:09 to 22:29, when both
