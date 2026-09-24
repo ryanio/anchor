@@ -11,6 +11,9 @@ import { EMPTY_SNAPSHOT } from "./state/desktop.ts";
 
 const OFFLINE = { reachable: false, detail: "not running", hasWallet: false, primaryChain: "" };
 
+// The packaged file, by path: with no path `loadConfig` prefers the user's own devices.json.
+const SHIPPED = new URL("../config/panel.json", import.meta.url).pathname;
+
 const minimal = { pages: [{ name: "desktop", keys: [{ index: 0, label: "x" }] }] };
 
 describe("parseConfig", () => {
@@ -88,7 +91,7 @@ describe("parseConfig", () => {
 
 describe("the packaged default config", () => {
   test("loads and defines the shipped pages", () => {
-    const { config } = loadConfig();
+    const { config } = loadConfig(SHIPPED);
     assert.deepEqual(
       config.pages.map((page) => page.name),
       ["desktop", "portfolio", "chains", "gallery", "tokens", "nfts", "browse-tokens", "browse-nfts"],
@@ -100,7 +103,7 @@ describe("the packaged default config", () => {
     // of background. A page with *no* keys is a different thing: it is not for a keyed device at
     // all — `tokens`/`nfts` exist only for a screen's `pulseDetail`, and a Stream Deck showing one
     // would get eight blank tiles, which `Panel.build` already handles by clearing them.
-    const { config } = loadConfig();
+    const { config } = loadConfig(SHIPPED);
     for (const page of config.pages) {
       if (page.keys.length === 0) continue;
       assert.equal(page.keys.length, 8, `${page.name} uses ${page.keys.length} of 8 keys`);
@@ -108,7 +111,7 @@ describe("the packaged default config", () => {
   });
 
   test("every data-backed key names a source the panel can read", () => {
-    const { config } = loadConfig();
+    const { config } = loadConfig(SHIPPED);
     for (const page of config.pages) {
       for (const key of page.keys) {
         if (key.source === "") continue;
@@ -122,7 +125,7 @@ describe("the packaged default config", () => {
   });
 
   test("every strip segment names a source the panel can read", () => {
-    const { config } = loadConfig();
+    const { config } = loadConfig(SHIPPED);
     for (const page of config.pages) {
       for (const segment of page.segments) {
         assert.ok(segment.source in SEGMENT_SOURCES, `${page.name}: unknown segment ${segment.source}`);
@@ -131,7 +134,7 @@ describe("the packaged default config", () => {
   });
 
   test("every icon is a private-use glyph, so no config carries a literal replacement char", () => {
-    const { config } = loadConfig();
+    const { config } = loadConfig(SHIPPED);
     const icons: string[] = [];
     for (const page of config.pages) {
       for (const key of page.keys) if (key.icon) icons.push(key.icon);
@@ -157,7 +160,7 @@ describe("the packaged default config", () => {
      * somebody looked at the hardware and said so. A config that cannot draw a key is a config
      * error, and it should fail here rather than on the desk.
      */
-    const { config } = loadConfig();
+    const { config } = loadConfig(SHIPPED);
     for (const page of config.pages) {
       for (const key of page.keys) {
         if (key.source !== "") continue;
@@ -182,7 +185,7 @@ describe("the packaged default config", () => {
       "theme",
       "noop",
     ]);
-    const { config } = loadConfig();
+    const { config } = loadConfig(SHIPPED);
     for (const page of config.pages) {
       for (const key of page.keys) {
         if (key.action === "") continue;
@@ -202,7 +205,7 @@ describe("the packaged default config", () => {
     // A panel is not a website: there is no back button, no url bar and no way out of a page that
     // links only to pages that link back to it. This exact loop shipped once — desktop -> money ->
     // chains -> money — and the only way home was a swipe nobody had been told about.
-    const { config } = loadConfig();
+    const { config } = loadConfig(SHIPPED);
     const home = config.pages[0]?.name ?? "";
     const edges = new Map(
       config.pages.map((page) => [
@@ -228,7 +231,7 @@ describe("the packaged default config", () => {
   });
 
   test("every page target referenced by a `page` action exists", () => {
-    const { config } = loadConfig();
+    const { config } = loadConfig(SHIPPED);
     const names = new Set(config.pages.map((page) => page.name));
     for (const page of config.pages) {
       for (const key of page.keys) {

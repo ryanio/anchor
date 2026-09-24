@@ -31,9 +31,10 @@ export interface ActionContext {
 // A key press must not touch the real desktop from a test. `dispatch` reaches a real browser, a
 // real volume, a real theme — none of it behind a flag a test author has to remember, because the
 // first time this went unmocked it opened a fake NFT's URL in a real Chromium window, repeatedly,
-// every time the suite ran. `spawn` and `execFile` are the only two exits to the outside world this
-// file has, so redirecting both here is what makes every test safe by construction rather than by
-// each test remembering to route around them.
+// every time the suite ran. `spawn` and `execFile` are the only exits to the outside world this
+// file has, and `state/hypr.ts` runs `hyprctl` through the same `execFile` shape, so redirecting
+// all of them here is what makes every test safe by construction rather than by each test
+// remembering to route around them.
 //
 // Narrowed to the one shape each call site actually uses, rather than `typeof spawn`/`typeof
 // execFile` — both are overloaded for callers this file is not, and a fake that only has to satisfy
@@ -50,15 +51,17 @@ let spawnImpl: SpawnFn = (command, args) => realSpawn(command, args, { detached:
 let execFileImpl: ExecFileFn = (command, args, callback) =>
   realExecFile(command, args, { encoding: "utf8", timeout: 5000 }, callback);
 
-/** Test-only. Replaces both exits to the real world; returns a restorer for `after`/`afterEach`. */
+/** Test-only. Replaces every exit to the real world, `hyprctl` included; returns a restorer. */
 export function useFakeProcesses(spawnFake: SpawnFn, execFileFake: ExecFileFn): () => void {
   const previousSpawn = spawnImpl;
   const previousExecFile = execFileImpl;
+  const previousHypr = hypr.replaceExecFile(execFileFake);
   spawnImpl = spawnFake;
   execFileImpl = execFileFake;
   return () => {
     spawnImpl = previousSpawn;
     execFileImpl = previousExecFile;
+    hypr.replaceExecFile(previousHypr);
   };
 }
 

@@ -1212,7 +1212,7 @@ describe("keys that show something can open it", () => {
   test("every key on every shipped page can do something when pressed", () => {
     // "All buttons should have a click that does something useful" — a key with neither a
     // configured action nor a source that supplies one is a dead key.
-    const { config: shipped } = loadConfig();
+    const { config: shipped } = loadConfig(new URL("../config/panel.json", import.meta.url).pathname);
     for (const page of shipped.pages) {
       for (const key of page.keys) {
         const dynamic = key.source === "" ? null : readKeySource(key.source, withLinks)?.action;

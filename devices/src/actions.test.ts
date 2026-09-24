@@ -1,13 +1,29 @@
 /**
  * Action parsing and state resolution.
  *
- * These run no commands. What they pin down is the vocabulary: which verbs exist, that an unknown
- * one is refused rather than guessed at, and — most importantly — that no verb here can move value.
+ * These run no real commands. What they pin down is the vocabulary: which verbs exist, that an
+ * unknown one is refused rather than guessed at, and — most importantly — that no verb here can move value.
  */
 
 import assert from "node:assert/strict";
-import { describe, test } from "node:test";
-import { dispatch, resolveActive, tokenize } from "./actions.ts";
+import { after, before, beforeEach, describe, test } from "node:test";
+import { dispatch, resolveActive, tokenize, useFakeProcesses } from "./actions.ts";
+
+// Every exit to the real world is faked for the whole file; `ran` records what would have run.
+const ran: string[][] = [];
+let restore: () => void;
+before(() => {
+  const child = { on: () => {}, unref: () => {} };
+  restore = useFakeProcesses(
+    () => child,
+    (command, args, callback) => {
+      ran.push([command, ...args]);
+      callback(null, "ok", "");
+      return child;
+    },
+  );
+});
+after(() => restore());
 
 const SNAPSHOT = {
   workspace: 4,
@@ -67,6 +83,8 @@ describe("dispatch", () => {
     assert.equal(dispatch("volume loud", context), false);
     assert.equal(dispatch("exec", context), false);
     assert.equal(dispatch("page", context), false);
+    assert.equal(dispatch("workspace", context), false);
+    assert.equal(dispatch("hypr", context), false);
   });
 
   test("the vocabulary contains no verb that can sign or spend", () => {
@@ -98,20 +116,21 @@ describe("resolveActive", () => {
 });
 
 describe("workspace actions speak Hyprland 0.56's Lua", () => {
+  // Hyprland wraps the argument in `return hl.dispatch(...)`, so the old argv form
+  // `dispatch("workspace", "3")` became the Lua syntax error `hl.dispatch(workspace 3)`. The fake
+  // records what would have reached `hyprctl`; a real one would switch workspace or close a window.
   const context = { setPage: () => {} };
+  beforeEach(() => {
+    ran.length = 0;
+  });
 
-  test("`workspace N` is a known verb", () => {
+  test("`workspace N` focuses the workspace through a Lua dispatcher", () => {
     assert.equal(dispatch("workspace 3", context), true);
+    assert.deepEqual(ran, [["hyprctl", "dispatch", 'hl.dsp.focus({ workspace = "3" })']]);
   });
 
-  test("`workspace` with no target is refused rather than defaulted", () => {
-    assert.equal(dispatch("workspace", context), false);
-  });
-
-  test("raw `hypr` still passes a Lua expression through", () => {
-    // Hyprland wraps the argument in `return hl.dispatch(...)`, so the old argv form
-    // `dispatch("workspace", "3")` became the Lua syntax error `hl.dispatch(workspace 3)`.
+  test("raw `hypr` passes its Lua expression through unchanged", () => {
     assert.equal(dispatch("hypr hl.dsp.window.close()", context), true);
-    assert.equal(dispatch("hypr", context), false);
+    assert.deepEqual(ran, [["hyprctl", "dispatch", "hl.dsp.window.close()"]]);
   });
 });

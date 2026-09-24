@@ -26,9 +26,22 @@ export function available(): boolean {
   return runtimeDir() !== null;
 }
 
+type ExecFileCallback = (error: Error | null, stdout: string, stderr: string) => void;
+type ExecFileFn = (command: string, args: readonly string[], callback: ExecFileCallback) => unknown;
+
+let execFileImpl: ExecFileFn = (command, args, callback) =>
+  execFile(command, args, { encoding: "utf8", timeout: 5000 }, callback);
+
+/** Test-only, reached through `useFakeProcesses` in actions.ts. Returns the runner it replaced. */
+export function replaceExecFile(fake: ExecFileFn): ExecFileFn {
+  const previous = execFileImpl;
+  execFileImpl = fake;
+  return previous;
+}
+
 function ctl(args: readonly string[]): Promise<string | null> {
   return new Promise((resolve) => {
-    execFile("hyprctl", args, { encoding: "utf8", timeout: 5000 }, (error, stdout) => {
+    execFileImpl("hyprctl", args, (error, stdout) => {
       resolve(error ? null : stdout.trim());
     });
   });
