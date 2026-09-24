@@ -1144,12 +1144,6 @@ function statusDetail(state, nowMs, settings) {
   }
 }
 
-/** The bar tooltip's first line. Never a stack trace, never a raw upstream message. */
-function statusSummary(state, nowMs, settings) {
-  const detail = statusDetail(state, nowMs, settings);
-  return detail === "" ? "Anchor" : `Anchor — ${detail}`;
-}
-
 // -------------------------------------------------------------------------------------------
 // The portfolio, broken down
 // -------------------------------------------------------------------------------------------
@@ -1965,34 +1959,23 @@ if (typeof module !== "undefined") {
   module.exports = {
     STATUS,
     DEFAULT_SETTINGS,
-    TIMEFRAMES,
     sanitize,
-    sanitizeSymbol,
-    shortAddress,
-    isSafeSlug,
-    isSafeAddress,
     collectionUrl,
     accountUrl,
-    incrementDigits,
     roundDecimal,
-    trimZeros,
     formatUnits,
-    compactDecimal,
     groupDigits,
     formatMoney,
-    padFraction,
     formatChange,
     relativeAge,
     countdown,
     toMillis,
-    relativeLuminance,
     contrastRatio,
     dimAlpha,
     hexToRgb,
     parseThemeColors,
     panelSurfaces,
     ACTION,
-    SERVICE_UNIT,
     configFilePath,
     actionArgv,
     parseUnitState,
@@ -2000,33 +1983,23 @@ if (typeof module !== "undefined") {
     curlArgs,
     parseResponse,
     ageSeconds,
-    isStale,
     emptyState,
-    credentials,
     apiKeyRejected,
     setupSteps,
     walletList,
-    collectionNames,
-    displayName,
     BAR_ITEMS,
     optionalSummary,
     setupProgress,
     statusOf,
     statusDetail,
-    statusSummary,
     numberToDecimal,
     readPortfolio,
     addDecimals,
     sumDecimals,
     balanceRows,
     portfolioBreakdown,
-    walletValues,
-    missingWallets,
     provenance,
-    BREAKDOWNS,
     paymentAmount,
-    eventList,
-    isIncomingOffer,
     deadlines,
     offerCount,
     activityCount,

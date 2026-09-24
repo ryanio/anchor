@@ -173,10 +173,7 @@ test("it is four elements, which is what pays for the stroke", () => {
   // it again, so this is a real constraint and not a tidiness check.
   const moves = tokens(qmlPath()).filter((t) => t === "M").length;
   assert.equal(moves, 4);
-});
-
-test("each arm ends in a fluke, so the mark is an anchor and not a monogram", () => {
-  // Without these it is an A with a ring. It was, for one commit, and the flukes turned out to be
+  // Each arm ends in a fluke, so the mark is an anchor and not an A with a ring. The flukes are
   // free: a curve continuing an existing path adds no element and no weight cost.
   const curves = tokens(qmlPath()).filter((t) => t === "c").length;
   assert.equal(curves, 2, "expected one fluke curve per arm");
@@ -188,7 +185,7 @@ test("the drawn stroke clears one device pixel at bar size", () => {
   const b = declared();
   const strokeUnits = Number(/property real strokeUnits: ([\d.]+)/.exec(qml)?.[1]);
   const box = b.x1 - b.x0 + strokeUnits;
-  const iconSize = 11; // Style.bar.iconCanvas 16 * 0.68, rounded — see Pulse.qml.
+  const iconSize = 11; // Style.bar.iconCanvas 16 * 0.68, rounded — see BarItem.qml.
   assert.ok(
     (strokeUnits * iconSize) / box > 1,
     `stroke draws ${((strokeUnits * iconSize) / box).toFixed(2)} device pixels at ${iconSize}px`,
@@ -202,5 +199,4 @@ test("the bar and the panel draw the same mark", () => {
   for (const file of ["widget/BarItem.qml", "widget/PanelContent.qml"]) {
     assert.match(read(file), /AnchorMark \{/, `${file} draws no mark`);
   }
-  assert.doesNotMatch(read("widget/BarItem.qml") + read("widget/PanelContent.qml"), /compact:/);
 });

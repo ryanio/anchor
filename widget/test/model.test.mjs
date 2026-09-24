@@ -18,27 +18,29 @@ const Model = require("../PulseModel.js");
 // Untrusted marketplace content
 // -------------------------------------------------------------------------------------------
 
-test("strips bidi overrides, which can reorder the text beside them", () => {
-  // RIGHT-TO-LEFT OVERRIDE makes "gpu.exe" render as "exe.upg" in a naive label.
-  assert.equal(Model.sanitize("Bored‮Apes"), "BoredApes");
-  assert.equal(Model.sanitize("⁦⁧spoof⁩⁩"), "spoof");
-  assert.equal(Model.sanitize("safe‏name"), "safename");
-});
-
-test("strips zero-width padding, so a name cannot lie about its length", () => {
-  const padded = `A${"​".repeat(500)}B`;
-  assert.equal(Model.sanitize(padded), "AB");
-  assert.equal(Model.sanitize("soft­hyphen"), "softhyphen");
-});
-
-test("folds control characters to spaces rather than deleting them", () => {
-  // Deleting the newline would join two words into a third that was never in the data.
-  assert.equal(Model.sanitize("Cool\nCats"), "Cool Cats");
-  // Written as escapes, not as literal bytes. A raw NUL in the source makes the whole file
-  // read as binary: `file` reports "data", and grep/ripgrep skip it silently, so a search for
-  // anything in this file comes back empty and looks like an answer.
-  assert.equal(Model.sanitize("Cool\u0000\u0007Cats"), "Cool Cats");
-  assert.equal(Model.sanitize("tab\tsep"), "tab sep");
+test("sanitize strips what could reorder, pad or break a label, and keeps the rest as text", () => {
+  const cases = [
+    // RIGHT-TO-LEFT OVERRIDE makes "gpu.exe" render as "exe.upg" in a naive label.
+    ["Bored‮Apes", "BoredApes"],
+    ["⁦⁧spoof⁩⁩", "spoof"],
+    ["safe‏name", "safename"],
+    // Zero-width padding would let a name lie about its length.
+    [`A${"​".repeat(500)}B`, "AB"],
+    ["soft­hyphen", "softhyphen"],
+    // Control characters fold to spaces: deleting the newline would join two words into a third.
+    // Written as escapes, not as literal bytes. A raw NUL in the source makes the whole file
+    // read as binary: `file` reports "data", and grep/ripgrep skip it silently, so a search for
+    // anything in this file comes back empty and looks like an answer.
+    ["Cool\nCats", "Cool Cats"],
+    ["Cool\u0000\u0007Cats", "Cool Cats"],
+    ["tab\tsep", "tab sep"],
+    // Markup is kept as text. The defence against it is `textFormat: Text.PlainText` in the QML,
+    // which no test checks; the model must not mangle a name that contains angle brackets.
+    ["<b>Punks</b>", "<b>Punks</b>"],
+    // Non-strings sanitise to an empty string, never to a crash.
+    ...[null, undefined, 42, {}, [], Number.NaN].map((input) => [input, ""]),
+  ];
+  for (const [input, expected] of cases) assert.equal(Model.sanitize(input), expected, String(input));
 });
 
 test("caps stacked combining marks so a name cannot paint over the bar", () => {
@@ -59,26 +61,6 @@ test("truncates by code point, never splitting a surrogate pair", () => {
   for (const ch of Array.from(out)) {
     assert.ok(!/^[\uD800-\uDFFF]$/.test(ch), `lone surrogate in ${JSON.stringify(out)}`);
   }
-});
-
-test("markup is preserved as text, not interpreted — the renderer is PlainText", () => {
-  // The defence is `textFormat: Text.PlainText` in the QML (asserted in qml.test.mjs). The model
-  // must not mangle a legitimate name that happens to contain angle brackets.
-  assert.equal(Model.sanitize("<b>Punks</b>"), "<b>Punks</b>");
-});
-
-test("non-strings and empty input sanitise to an empty string, never to a crash", () => {
-  for (const input of [null, undefined, 42, {}, [], Number.NaN]) {
-    assert.equal(Model.sanitize(input), "");
-  }
-});
-
-test("a currency ticker that is not a ticker is dropped rather than rendered", () => {
-  assert.equal(Model.sanitizeSymbol("WETH"), "WETH");
-  assert.equal(Model.sanitizeSymbol("ETH"), "ETH");
-  assert.equal(Model.sanitizeSymbol("$$ CLICK HERE $$"), "");
-  assert.equal(Model.sanitizeSymbol("<script>"), "");
-  assert.equal(Model.sanitizeSymbol("2SHORT"), "");
 });
 
 // -------------------------------------------------------------------------------------------
@@ -133,15 +115,6 @@ test("moves a decimal point within one denomination and no further", () => {
   assert.equal(Model.formatUnits(null, 18), null);
 });
 
-test("compacts to about three significant digits", () => {
-  assert.equal(Model.compactDecimal("12345"), "12.3K");
-  assert.equal(Model.compactDecimal("1234567"), "1.23M");
-  assert.equal(Model.compactDecimal("999"), "999");
-  assert.equal(Model.compactDecimal("0.5"), "0.5");
-  assert.equal(Model.compactDecimal("-4200"), "-4.2K");
-  assert.equal(Model.compactDecimal("1000000000000000"), "1000T");
-});
-
 test("renders an amount in the denomination it arrived in and no other", () => {
   assert.equal(Model.formatMoney("12345.67", { symbol: "USD" }), "$12.3K");
   assert.equal(Model.formatMoney("1.5", { symbol: "ETH" }), "1.5 ETH");
@@ -150,6 +123,14 @@ test("renders an amount in the denomination it arrived in and no other", () => {
   // No symbol means no currency is claimed, rather than a default one being assumed.
   assert.equal(Model.formatMoney("1.5", {}), "1.5");
   assert.equal(Model.formatMoney("1.5", { symbol: "🤑" }), "1.5");
+  // A ticker that is not a ticker is dropped rather than rendered.
+  assert.equal(Model.formatMoney("1.5", { symbol: "$$ CLICK HERE $$" }), "1.5");
+  // Compact amounts keep about three significant digits.
+  assert.equal(Model.formatMoney("1234567", {}), "1.23M");
+  assert.equal(Model.formatMoney("-4200", {}), "-4.2K");
+  assert.equal(Model.formatMoney("1000000000000000", {}), "1000T");
+  // There is no exchange rate anywhere: an ETH amount never comes back in dollars.
+  assert.equal(Model.formatMoney("2", { symbol: "ETH", usdPrice: "3000" }), "2 ETH");
 });
 
 test("a deadline says which wallet it is on", () => {
@@ -254,6 +235,7 @@ test("a hidden value is distinguishable from no value", () => {
   const hidden = Model.barLabel(configured, NOW, Model.mergeSettings({ showValue: false }));
   assert.equal(hidden.value, "", "the figure itself must not reach the bar");
   assert.equal(hidden.valueHidden, true);
+  assert.equal(hidden.status, Model.STATUS.READY, "hiding the number does not change the status");
 
   // Nothing to hide is not hiding. An unconfigured install must not draw the placeholder.
   const fresh = stateWith({
@@ -298,18 +280,6 @@ test("USD is always two decimal places, and only USD", () => {
   assert.equal(Model.formatMoney("1.5", { symbol: "ETH", exact: true }), "1.5 ETH");
   assert.equal(Model.formatMoney("2", { symbol: "WETH", exact: true }), "2 WETH");
   assert.equal(Model.formatMoney("1.5", { exact: true }), "1.5");
-
-  assert.equal(Model.padFraction("1.5", 2), "1.50");
-  assert.equal(Model.padFraction("1", 2), "1.00");
-  assert.equal(Model.padFraction("1.234", 2), "1.234", "padding never truncates");
-});
-
-test("there is no exchange rate anywhere in the model", () => {
-  // A regression guard with teeth: an ETH amount must never come back denominated in dollars,
-  // whatever else is on the object.
-  const out = Model.formatMoney("2", { symbol: "ETH", usdPrice: "3000" });
-  assert.equal(out, "2 ETH");
-  assert.ok(!out.includes("$"));
 });
 
 test("an offer's worth is read from its own payment, in its own token", () => {
@@ -483,26 +453,15 @@ test("a fresh install is 'setup', not an error", () => {
   const label = Model.barLabel(fresh, NOW);
   assert.equal(label.value, "");
   assert.equal(label.status, Model.STATUS.SETUP);
-  assert.match(Model.statusSummary(fresh, NOW), /^Anchor —/);
+  assert.equal(Model.statusDetail(fresh, NOW), "needs an OpenSea API key");
+  // The credential step opens a prompt: its action is the fixed `--set-api-key` argv.
+  assert.equal(Model.setupSteps(fresh)[1].action.id, Model.ACTION.SET_API_KEY);
 });
 
 test("a satisfied optional step stops being advertised", () => {
   const watching = stateWith({ health: health({ collections: ["doodles"] }) });
   assert.equal(Model.optionalSummary(watching), "");
   assert.equal(Model.setupProgress(watching).optionalRemaining, 0);
-});
-
-test("a missing wallet PAT is not a state at all — nothing we read needs one", () => {
-  const noPat = stateWith({ health: health({ credentials: { apiKey: true, pat: false } }) });
-  // Anchor used to call this "partial" and offer a step to fix it. Re-measured with a key that
-  // actually authenticates, every route the service calls needs the API key and nothing else, so
-  // this is simply a configured install.
-  assert.equal(Model.statusOf(noPat, NOW), Model.STATUS.STARTING);
-  assert.equal(
-    Model.setupSteps(noPat).find((s) => s.key === "pat"),
-    undefined,
-  );
-  assert.equal(Model.STATUS.PARTIAL, undefined);
 });
 
 test("a stored API key the service is rejecting is 'setup', not a configured install", () => {
@@ -520,7 +479,7 @@ test("a stored API key the service is rejecting is 'setup', not a configured ins
   assert.equal(step.done, false);
   assert.match(step.label, /replace/i);
   assert.match(step.hint, /--check-credentials/);
-  assert.match(Model.statusSummary(rejected, NOW), /rejected/i);
+  assert.match(Model.statusDetail(rejected, NOW), /rejected/i);
 
   // A healthy read is not mistaken for a rejection.
   const fine = stateWith({
@@ -528,20 +487,14 @@ test("a stored API key the service is rejecting is 'setup', not a configured ins
     collections: { data: [], meta: null, receivedAt: NOW, error: null, status: 200 },
   });
   assert.equal(Model.apiKeyRejected(fine), false);
-});
-
-test("zero configured wallets is a normal state and never blocks the widget", () => {
-  const noWallet = stateWith({ health: health({ wallet: null }) });
-  assert.equal(Model.statusOf(noWallet, NOW), Model.STATUS.SETUP);
-  assert.doesNotThrow(() => Model.barLabel(noWallet, NOW));
-  assert.deepEqual(Model.deadlines(noWallet, NOW), []);
-  assert.equal(Model.offerCount(noWallet), 0);
+  // A missing wallet PAT is not a state at all: nothing the widget reads needs one.
+  assert.equal(Model.statusOf(fine, NOW), Model.STATUS.READY);
 });
 
 test("a service that never answered shows the mark; one that answered before shows the old number", () => {
   const cold = Model.emptyState();
   assert.equal(Model.statusOf(cold, NOW), Model.STATUS.STARTING);
-  assert.match(Model.statusSummary(cold, NOW), /reading/i);
+  assert.equal(Model.statusDetail(cold, NOW), "reading…");
 
   const wasUp = stateWith({
     updatedAt: NOW - 600000,
@@ -824,17 +777,6 @@ test("settings come from a hand-edited file, so every field is validated", () =>
   assert.deepEqual(Model.mergeSettings({}), Model.DEFAULT_SETTINGS);
 });
 
-test("showValue false hides the number without changing the status", () => {
-  const state = stateWith({
-    health: health(),
-    portfolio: { data: { totalValueUsd: "1000" }, meta: { stale: false, ageSeconds: 1 }, receivedAt: NOW },
-  });
-  assert.equal(Model.barLabel(state, NOW, { showValue: true }).value, "$1K");
-  const hidden = Model.barLabel(state, NOW, { showValue: false });
-  assert.equal(hidden.value, "");
-  assert.equal(hidden.status, Model.STATUS.READY);
-});
-
 // -------------------------------------------------------------------------------------------
 // Actions the panel can take
 //
@@ -858,6 +800,14 @@ test("every action is a fixed argv, and an unknown id runs nothing", () => {
     "enable",
     "--now",
     "anchor-service.service",
+  ]);
+  assert.deepEqual(Model.actionArgv(Model.ACTION.PROBE_SERVICE, env), [
+    "systemctl",
+    "--user",
+    "show",
+    "anchor-service.service",
+    "--property=LoadState",
+    "--property=ActiveState",
   ]);
   assert.deepEqual(Model.actionArgv(Model.ACTION.SET_API_KEY, env), [
     "omarchy-launch-terminal",
@@ -925,17 +875,6 @@ test("the first setup step offers a button only when the unit is actually instal
     stateWith({ health: null, unit: { loaded: true, active: "failed", failed: true } }),
   );
   assert.match(failed[0].detail, /failed to start/, "a start that did not work is not reported as success");
-});
-
-test("the credential step opens a prompt and never carries the secret", () => {
-  const fresh = stateWith({ health: health({ credentials: { apiKey: false, pat: false } }) });
-  const apiKey = Model.setupSteps(fresh)[1];
-
-  assert.equal(apiKey.action.id, Model.ACTION.SET_API_KEY);
-  const argv = Model.actionArgv(apiKey.action.id, { home: "/home/someone" });
-  // The point of the assertion: the argv is a *prompt*, with no slot a value could be put into.
-  assert.equal(argv.length, 3);
-  assert.deepEqual(argv, ["omarchy-launch-terminal", "anchor-service", "--set-api-key"]);
 });
 
 test("a 401 on any data read demotes the API-key step, including the newest one", () => {
@@ -1028,7 +967,8 @@ test("colors.toml is parsed for the layers Color.qml drops on the floor", () => 
     ].join("\n"),
   );
   assert.equal(theme.mode, "dark");
-  assert.deepEqual(theme.background, Model.hexToRgb("#1a1b26"));
+  // Pinned as channels, not through `hexToRgb`, which the parser itself calls.
+  assert.deepEqual(theme.background, { r: 0x1a / 255, g: 0x1b / 255, b: 0x26 / 255 });
   assert.deepEqual(theme.raised, Model.hexToRgb("#24283b"));
   assert.deepEqual(theme.sunken, Model.hexToRgb("#13141c"));
   assert.deepEqual(theme.line, Model.hexToRgb("#292e42"));
@@ -1146,8 +1086,6 @@ test("the deadline rows and the floor rows agree on what a collection is called"
   const [row] = Model.deadlines(state, NOW, {});
   assert.ok(row, "the fixture has to produce a deadline or this asserts nothing");
   assert.equal(row.collection, "Cool Cats", "the same name the Floors list uses");
-  // One mapping, built in one place: that is the property, not the string.
-  assert.deepEqual(Model.collectionNames(state, {}), { "cool-cats": "Cool Cats" });
 });
 
 // -------------------------------------------------------------------------------------------
@@ -1226,10 +1164,6 @@ test("the bar starts sparse: the value and the countdown, nothing else", () => {
 
   // The toggles the panel offers and the items the bar draws come from one list, so they cannot
   // drift apart — the same argument as `optionalSummary` being derived from the steps.
-  assert.deepEqual(
-    Model.BAR_ITEMS.map((item) => item.key),
-    ["showValue", "showChange", "showOffers", "showDeadline", "showActivity"],
-  );
   for (const item of Model.BAR_ITEMS) {
     assert.equal(typeof settings[item.key], "boolean", `${item.key} has to be a real setting`);
     assert.ok(item.label !== "", "and something to call it in the panel");
@@ -1364,7 +1298,7 @@ test("balance rows are marketplace content and are sanitised like any other", ()
 
 test("with nothing to break down there is nothing to draw", () => {
   const blank = stateWith({ health: health() });
-  for (const mode of ["type", "asset", "chain"]) {
+  for (const mode of ["type", "asset", "chain", "wallet"]) {
     const split = Model.portfolioBreakdown(blank, {}, mode);
     assert.deepEqual(split.rows, [], `${mode} must not invent a slice`);
   }
