@@ -22,20 +22,14 @@ describe("readTokens", () => {
     ],
   };
 
-  test("sorts by USD value, largest first", () => {
+  test("keeps only what OpenSea classified OK, sorted by USD value, largest first", () => {
+    // An unfiltered "top tokens" list on an airdropped-at wallet is a list of scams shown with
+    // Anchor's authority behind it. The highest `usdValue` here is the spam entry, deliberately, and
+    // the exact list below also excludes the low-value and warning entries.
     assert.deepEqual(
       readTokens(balances).map((t) => t.symbol),
       ["ETH", "USDC"],
     );
-  });
-
-  test("drops everything OpenSea has not classified OK", () => {
-    // An unfiltered "top tokens" list on an airdropped-at wallet is a list of scams shown with
-    // Anchor's authority behind it. The highest `usdValue` here is the spam entry, deliberately.
-    const symbols = readTokens(balances).map((t) => t.symbol);
-    for (const excluded of ["SCAMCOIN", "DUST", "RISKY"]) {
-      assert.equal(symbols.includes(excluded), false, `${excluded} must not be shown`);
-    }
   });
 
   test("survives junk rather than throwing", () => {

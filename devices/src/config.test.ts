@@ -5,8 +5,9 @@
 
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
+import { dispatch, useFakeProcesses } from "./actions.ts";
 import { ConfigError, loadConfig, parseConfig } from "./config.ts";
-import { readKeySource, SEGMENT_SOURCES } from "./panel.ts";
+import { BROWSE_PAGES, ROTATING_PAGES, readKeySource, SEGMENT_SOURCES } from "./panel.ts";
 import { EMPTY_SNAPSHOT } from "./state/desktop.ts";
 
 const OFFLINE = { reachable: false, detail: "not running", hasWallet: false, primaryChain: "" };
@@ -90,12 +91,12 @@ describe("parseConfig", () => {
 });
 
 describe("the packaged default config", () => {
-  test("loads and defines the shipped pages", () => {
-    const { config } = loadConfig(SHIPPED);
-    assert.deepEqual(
-      config.pages.map((page) => page.name),
-      ["desktop", "portfolio", "chains", "gallery", "tokens", "nfts", "browse-tokens", "browse-nfts"],
-    );
+  test("ships every page the panel names in code", () => {
+    // `panel.ts` treats these names specially; a config without one leaves that behaviour unreachable.
+    const names = new Set(loadConfig(SHIPPED).config.pages.map((page) => page.name));
+    for (const name of [...ROTATING_PAGES, ...BROWSE_PAGES.keys()]) {
+      assert.ok(names.has(name), `${name} is named in panel.ts but not shipped`);
+    }
   });
 
   test("every page with keys at all fills the whole device", () => {
@@ -173,31 +174,31 @@ describe("the packaged default config", () => {
     }
   });
 
-  test("every page action names a verb the dispatcher knows", () => {
-    const known = new Set([
-      "omarchy",
-      "hypr",
-      "workspace",
-      "exec",
-      "page",
-      "volume",
-      "brightness",
-      "theme",
-      "noop",
-    ]);
-    const { config } = loadConfig(SHIPPED);
-    for (const page of config.pages) {
-      for (const key of page.keys) {
-        if (key.action === "") continue;
-        assert.ok(known.has(key.action.split(" ")[0] ?? ""), `${page.name}/${key.label}: ${key.action}`);
+  test("every page action is one the dispatcher accepts", () => {
+    // Dispatched for real, against faked processes: a verb the dispatcher dropped, or an argument
+    // it refuses, is a dead key.
+    const child = { on: () => {}, unref: () => {} };
+    const restore = useFakeProcesses(
+      () => child,
+      (_command, _args, callback) => {
+        callback(null, "", "");
+        return child;
+      },
+    );
+    try {
+      const context = { setPage: () => {} };
+      for (const page of loadConfig(SHIPPED).config.pages) {
+        for (const key of page.keys) {
+          if (key.action === "") continue;
+          assert.equal(dispatch(key.action, context), true, `${page.name}/${key.label}: ${key.action}`);
+        }
+        for (const dial of page.dials) {
+          if (dial.press === "") continue;
+          assert.equal(dispatch(dial.press, context), true, `${page.name} dial ${dial.index}: ${dial.press}`);
+        }
       }
-      for (const dial of page.dials) {
-        if (dial.press === "") continue;
-        assert.ok(
-          known.has(dial.press.split(" ")[0] ?? ""),
-          `${page.name} dial ${dial.index}: ${dial.press}`,
-        );
-      }
+    } finally {
+      restore();
     }
   });
 

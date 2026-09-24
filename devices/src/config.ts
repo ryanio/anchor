@@ -224,7 +224,7 @@ export function parseConfig(raw: unknown): PanelConfig {
   };
 }
 
-export function userConfigPath(): string {
+function userConfigPath(): string {
   const base = process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config");
   return join(base, "anchor", "devices.json");
 }

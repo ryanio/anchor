@@ -36,7 +36,7 @@ describe("readTrendingTokens", () => {
     ],
   };
 
-  test("reads usdPrice as a string, like every other money field in this codebase", () => {
+  test("parses the usdPrice string into a number", () => {
     const [only] = readTrendingTokens(data);
     assert.equal(only?.symbol, "STONK");
     assert.equal(only?.chain, "solana");

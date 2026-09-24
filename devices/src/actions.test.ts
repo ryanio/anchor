@@ -34,10 +34,6 @@ const SNAPSHOT = {
 };
 
 describe("tokenize", () => {
-  test("splits on whitespace", () => {
-    assert.deepEqual(tokenize("omarchy toggle nightlight"), ["omarchy", "toggle", "nightlight"]);
-  });
-
   test("keeps a quoted argument together", () => {
     assert.deepEqual(tokenize('omarchy reminder 15 "Pickup Jack"'), [
       "omarchy",

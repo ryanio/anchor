@@ -10,7 +10,7 @@
  * network call.
  */
 
-import { get, isEnvelope, metaOf } from "./service.ts";
+import { get, isEnvelope } from "./service.ts";
 
 function str(value: unknown): string | null {
   return typeof value === "string" && value !== "" ? value : null;
@@ -334,7 +334,3 @@ export async function collectionDetail(
   onPartial?.({ holders });
   return { holders };
 }
-
-// `metaOf` is re-exported for a future caller that wants provenance on a trending list the way
-// `state/anchor.ts` already shows it on the portfolio — unused today, kept rather than duplicated.
-export { metaOf };
