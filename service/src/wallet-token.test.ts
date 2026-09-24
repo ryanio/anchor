@@ -25,8 +25,9 @@ function jwt(claims: Record<string, unknown>): string {
 }
 
 describe("walletFromToken", () => {
-  test("reads the top-level wallet claim", () => {
+  test("reads the top-level wallet claim, on either kind of chain", () => {
     assert.equal(walletFromToken(jwt({ wallet: EVM }), ETHEREUM).address, EVM);
+    assert.equal(walletFromToken(jwt({ wallet: SOL }), SOLANA).address, SOL);
   });
 
   test("declines an absent token", () => {
@@ -59,10 +60,6 @@ describe("walletFromToken", () => {
     assert.equal(result.address, null);
     assert.match(result.detail, /does not match configured chains/);
     assert.match(result.detail, /solana/);
-  });
-
-  test("accepts a Solana wallet on a Solana config", () => {
-    assert.equal(walletFromToken(jwt({ wallet: SOL }), SOLANA).address, SOL);
   });
 
   test("no failure detail ever contains the token", () => {

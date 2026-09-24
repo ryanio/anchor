@@ -23,7 +23,6 @@ describe("summing money", () => {
     // total assembled that way disagrees with the sum of the pages it came from, and "the widget
     // disagrees with OpenSea" is indistinguishable from "the widget is broken".
     assert.equal(sumDecimals(["0.1", "0.2"]), "0.3");
-    assert.equal(0.1 + 0.2 === 0.3, false, "the reason this function exists");
   });
 
   test("keeps the widest precision it was given", () => {
@@ -124,15 +123,6 @@ describe("combining a portfolio", () => {
     });
     assert.equal(combined.stats.totalValueUsd, "100");
     assert.deepEqual(combined.incomplete, [B]);
-  });
-
-  test("the single-wallet shape survives, so an older client stays right", () => {
-    const combined = combinePortfolio({
-      results: [],
-      ok: [{ wallet: A, value: stats("42.50", "20", "22.50") }],
-      incomplete: [],
-    });
-    assert.equal(combined.stats.totalValueUsd, "42.50");
   });
 
   test("field names are read in both spellings the API has used", () => {

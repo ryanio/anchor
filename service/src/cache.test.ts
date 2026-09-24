@@ -1,13 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { describe, test } from "node:test";
-import { Cache } from "./cache.ts";
-
-function tempCache(): Cache {
-  return new Cache(join(mkdtempSync(join(tmpdir(), "anchor-test-")), "cache.sqlite"));
-}
+import { tempCache } from "./fixtures.ts";
 
 describe("Cache", () => {
   test("returns null for a key that was never written", () => {
@@ -30,13 +23,8 @@ describe("Cache", () => {
     const entry = c.get("k");
     assert.ok(entry);
     assert.equal(entry.stale, true);
-  });
-
-  test("stale entries are still readable — we serve stale rather than nothing", () => {
-    const c = tempCache();
-    c.put("k", { v: 42 }, 0);
-    const entry = c.get<{ v: number }>("k");
-    assert.deepEqual(entry?.data, { v: 42 });
+    // Still readable: we serve stale rather than nothing.
+    assert.deepEqual(entry.data, 1);
   });
 
   test("writing the same key replaces rather than duplicates", () => {

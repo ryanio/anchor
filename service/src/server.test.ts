@@ -46,28 +46,9 @@ describe("read-only gate", () => {
       assert.match((await json<{ error: string }>(res)).error, /read-only/i);
     });
   }
-
-  test("GET is allowed", async () => {
-    assert.equal((await fetch(`${base}/health`)).status, 200);
-  });
 });
 
 describe("routing", () => {
-  test("/health reports config without touching the network", async () => {
-    const body = await json<{
-      ok: boolean;
-      chains: string[];
-      primaryChain: string;
-      credentials: { apiKey: boolean; pat: boolean };
-    }>(await fetch(`${base}/health`));
-    assert.equal(body.ok, true);
-    assert.deepEqual(body.chains, ["ethereum", "solana"]);
-    // Path-scoped endpoints take one chain; /health says which, so nobody has to guess.
-    assert.equal(body.primaryChain, "ethereum");
-    // Answers "why is everything 401" in one glance.
-    assert.deepEqual(body.credentials, { apiKey: true, pat: false });
-  });
-
   test("unknown routes 404 with the route list", async () => {
     const res = await fetch(`${base}/nope`);
     assert.equal(res.status, 404);

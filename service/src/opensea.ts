@@ -409,10 +409,6 @@ export class OpenSeaClient {
     return this.#chains[0] ?? "ethereum";
   }
 
-  get chains(): readonly ChainIdentifier[] {
-    return this.#chains;
-  }
-
   /**
    * The SDK fixes both credentials at construction, so a refreshed wallet JWT means a new instance.
    * That happens about twice a day; the constructor only allocates.

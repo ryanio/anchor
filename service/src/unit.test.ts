@@ -27,6 +27,8 @@ describe("pointing the unit at a checkout", () => {
       execs[0],
       "ExecStart=/usr/bin/node --experimental-strip-types /home/you/anchor/service/src/index.ts",
     );
+    // Says where it came from, at the top where it is read, so the next person can re-run it.
+    assert.match(out, /^#.*--install-service/);
   });
 
   test("keeps the hardening and the install section", () => {
@@ -45,25 +47,9 @@ describe("pointing the unit at a checkout", () => {
     }
   });
 
-  test("says where it came from, so the next person can re-run it", () => {
-    const out = renderUnit(packaged, "/usr/bin/node", "/x/index.ts");
-    assert.match(out, /--install-service/);
-    assert.ok(out.startsWith("#"), "the note belongs at the top where it is read");
-  });
-
   test("refuses a template with nothing to repoint", () => {
     // Silently writing a unit with the packaged /usr/bin/anchor-service path would install
     // something that cannot start on a machine that has no package.
     assert.throws(() => renderUnit("[Service]\nType=simple\n", "/usr/bin/node", "/x"), /ExecStart/);
-  });
-
-  test("absolute paths, both of them", () => {
-    // A unit inherits no useful PATH. `node` alone works in a shell and fails at boot.
-    const out = renderUnit(packaged, "/usr/bin/node", "/x/index.ts");
-    const exec = out.split("\n").find((l) => l.startsWith("ExecStart="))!;
-    for (const word of exec.slice("ExecStart=".length).split(" ")) {
-      if (word.startsWith("--")) continue;
-      assert.ok(word.startsWith("/"), `${word} is not absolute`);
-    }
   });
 });

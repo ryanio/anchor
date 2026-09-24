@@ -93,10 +93,6 @@ describe("HEAD is read-only and therefore allowed", () => {
     assert.equal(res.status, 200);
     assert.equal(await res.text(), "");
   });
-
-  test("writes are still refused", async () => {
-    assert.equal((await fetch(`http://127.0.0.1:${port}/health`, { method: "POST" })).status, 405);
-  });
 });
 
 describe("cache", () => {

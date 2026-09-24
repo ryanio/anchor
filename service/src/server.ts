@@ -492,4 +492,4 @@ function isCredentialError(err: unknown): boolean {
   );
 }
 
-export { HOST, hostAllowed, ROUTES };
+export { HOST };

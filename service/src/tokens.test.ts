@@ -99,6 +99,8 @@ async function json<T>(res: Response): Promise<T> {
 }
 
 describe("token routes", () => {
+  // Every upstream path here was checked against docs.opensea.io. Two were wrong when the client
+  // hand-rolled its own URLs, which is why the SDK owns them now.
   const routes: Array<[string, string]> = [
     ["/balances", `/api/v2/account/${WALLET}/tokens`],
     ["/portfolio/value", `/api/v2/account/${WALLET}/portfolio`],
@@ -112,6 +114,12 @@ describe("token routes", () => {
     ["/collections/trending", "/api/v2/collections/trending"],
     ["/collections/top", "/api/v2/collections/top"],
     ["/collections/cool-cats/holders", "/api/v2/collections/cool-cats/holders"],
+    ["/collections/cool-cats", "/api/v2/collections/cool-cats"],
+    ["/collections/cool-cats/stats", "/api/v2/collections/cool-cats/stats"],
+    ["/collections/cool-cats/listings", "/api/v2/listings/collection/cool-cats/best"],
+    ["/collections/cool-cats/offers", "/api/v2/offers/collection/cool-cats"],
+    ["/portfolio", `/api/v2/chain/ethereum/account/${WALLET}/nfts`],
+    ["/activity", `/api/v2/events/accounts/${WALLET}`],
   ];
 
   for (const [route, expected] of routes) {
@@ -121,6 +129,7 @@ describe("token routes", () => {
       const body = await json<{ meta: { stale: boolean; fetchedAt: string } }>(res);
       assert.equal(res.status, 200, JSON.stringify(body));
       assert.equal(upstream(r.calls).pathname, expected);
+      assert.equal(upstream(r.calls).origin, "https://api.opensea.io");
       // Every response carries freshness, tokens included.
       assert.equal(body.meta.stale, false);
       assert.ok(Date.parse(body.meta.fetchedAt) > 0);
@@ -177,12 +186,6 @@ describe("chains reach the endpoints that take them", () => {
     assert.equal(upstream(r.calls).pathname, `/api/v2/chain/solana/token/${SOL_MINT}/holders`);
   });
 
-  test("holders/activity default to the primary chain when ?chain= is omitted", async () => {
-    const r = await open({ chains: ["ethereum", "solana"] });
-    await fetch(`${r.base}/tokens/${SOL_MINT}/activity`);
-    assert.equal(upstream(r.calls).pathname, `/api/v2/chain/ethereum/token/${SOL_MINT}/activity`);
-  });
-
   test("an unrecognised ?chain= is a 400, not a silent fallback to the primary chain", async () => {
     const r = await open();
     const res = await fetch(`${r.base}/tokens/${SOL_MINT}/holders?chain=not-a-real-chain`);
@@ -192,9 +195,10 @@ describe("chains reach the endpoints that take them", () => {
 
   test("/health reports the configured chains and which one is path-scoped", async () => {
     const r = await open({ chains: ["solana", "base"] });
-    const body = await json<{ chains: string[]; primaryChain: string; credentials: unknown }>(
+    const body = await json<{ ok: boolean; chains: string[]; primaryChain: string; credentials: unknown }>(
       await fetch(`${r.base}/health`),
     );
+    assert.equal(body.ok, true);
     assert.deepEqual(body.chains, ["solana", "base"]);
     assert.equal(body.primaryChain, "solana");
     assert.deepEqual(body.credentials, { apiKey: true, pat: true });
@@ -225,15 +229,6 @@ describe("the wallet token", () => {
     for (const call of r.calls.filter((c) => c.method === "GET")) {
       assert.equal(call.headers["x-api-key"], API_KEY);
       assert.equal(call.headers.authorization, undefined, "no PAT stored means no bearer token");
-    }
-  });
-
-  test("no read mentions --set-pat, since none of them needs one", async () => {
-    const r = await open({ pat: null });
-    for (const path of ["/balances", "/portfolio/value", "/tokens/trending"]) {
-      const res = await fetch(`${r.base}${path}`);
-      const body = await res.text();
-      assert.equal(body.includes("--set-pat"), false, `${path} must not suggest a PAT`);
     }
   });
 

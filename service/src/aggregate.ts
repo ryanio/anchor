@@ -106,7 +106,7 @@ export function sumDecimals(values: readonly (string | null | undefined)[]): str
 }
 
 /** The first present value under any of these keys, as a decimal string. */
-export function pickDecimal(source: unknown, keys: readonly string[]): string | null {
+function pickDecimal(source: unknown, keys: readonly string[]): string | null {
   if (source === null || typeof source !== "object") return null;
   for (const key of keys) {
     const raw = (source as Record<string, unknown>)[key];
@@ -171,7 +171,7 @@ export interface CombinedPortfolio {
  * fabricated zero when either input is missing or the start would be zero — a portfolio that began
  * at nothing has no percentage, and inventing one would be a number nobody could check.
  */
-export function percentageOf(change: string | null, end: string | null): string | null {
+function percentageOf(change: string | null, end: string | null): string | null {
   if (change === null || end === null) return null;
   const moved = Number.parseFloat(change);
   const finished = Number.parseFloat(end);
@@ -214,7 +214,7 @@ export function combinePortfolio(fanned: Fanned<unknown>): CombinedPortfolio {
 }
 
 /** Pull a list out of a response that might be the list, or might wrap it under a known key. */
-export function listOf(value: unknown, keys: readonly string[]): readonly unknown[] {
+function listOf(value: unknown, keys: readonly string[]): readonly unknown[] {
   if (Array.isArray(value)) return value;
   if (value === null || typeof value !== "object") return [];
   for (const key of keys) {
