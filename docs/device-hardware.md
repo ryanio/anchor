@@ -104,6 +104,15 @@ only app0 was written (ESP32 1,737,856 bytes, Cardputer 1,196,944, both hashes v
 first health line matched the earlier one, and the Cardputer again began joining its saved network with
 no panic. The `c32682f` images stay in the private cache as the previous known-good build.
 
+## Idle soak, 2026-09-23
+
+A read-only serial logger recorded the Waveshare unit on `ad4668c` from 15:09 to 22:29, when both
+units were unplugged. Its once-a-minute health line appeared 441 times, reaching `up=26521s` (7 h
+22 min) with no reboot, and every line reported the same memory: 158,024 bytes of internal heap free,
+a lowest-ever of 149,108, and 67,512 bytes free in the LVGL pool. So the idle firmware neither leaks nor
+fragments. The unit had no Wi-Fi saved throughout (`trending=no-wifi`), so this says nothing about
+TLS, the fetch worker's stack, or memory under network load; that soak still needs a saved network.
+
 ## Size on the glass, 2026-09-22
 
 After the demo images were flashed, Ryan reported that the Waveshare unit is very small to read and
