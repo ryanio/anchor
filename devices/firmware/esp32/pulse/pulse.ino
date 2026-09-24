@@ -46,10 +46,10 @@
 #include "pulse_explore.h"
 #include "pulse_companion.h"
 
-/* The companion is a prototype under review, so a unit boots to the ambient readout unless this is
- * set. The simulator opens it with `--companion`. */
+/* The companion is the home screen. Set this to 0 to boot to the ambient readout instead. With the
+ * companion home that readout is not shown; Explore's Portfolio page carries the same figures. */
 #ifndef PULSE_COMPANION_HOME
-#define PULSE_COMPANION_HOME 0
+#define PULSE_COMPANION_HOME 1
 #endif
 #include "pulse_power.h"
 #include "pulse_ui.h"
@@ -753,6 +753,8 @@ void setup() {
   pulse_ui::onExplore(pulse_explore::open);
   pulse_companion::begin(pulse_explore::open, pulse_wifi::open);
 #if PULSE_COMPANION_HOME
+  /* The same hold-for-Wi-Fi the ambient screen has, on the glass behind the character. */
+  pulse_wifi::attachOpenGesture(pulse_companion::surface());
   pulse_companion::open();
 #endif
   pulse_wifi::attachOpenGesture(pulse_ui::surface());

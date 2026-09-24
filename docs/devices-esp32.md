@@ -56,10 +56,13 @@ The tearing-activity probe counted 18 transitions in 150 ms; its historical bann
 34 to 36. That difference needs comparison with the visible panel before changing the driver. A
 startup banner and memory readings do not establish touch quality, frame rate, or network operation.
 
-## The companion (prototype)
+## The companion
 
-`pulse/pulse_companion.{h,cpp}` draws a character on its own screen: a glowing rounded body with two
-eyes and a mouth that blinks, breathes, and reacts to the readings. It was inspired by
+`pulse/pulse_companion.{h,cpp}` draws a character on its own screen, and that screen is home: a
+glowing rounded body with two eyes and a mouth that blinks, breathes, and reacts to the readings.
+Open eyes carry a catch-light, a happy face blushes and hops now and then, a worried one has smaller
+lowered eyes and a sweat drop, a sleepy one lets a "z" drift up, a lost one a "?", and a tap gives a
+moment of delight before it returns to what the readings say. It was inspired by
 character-led devices like Meta's Muse Charm and is our own drawing. There is no AI in it. The mood
 and wording are in `pulse/pulse_companion_model.h`, tested by `host/companion.cpp`:
 
@@ -74,9 +77,13 @@ and wording are in `pulse/pulse_companion_model.h`, tested by `host/companion.cp
 A tap steps through what it can say, "Your wallets: $3,125 (6 of 6) / +3.54% today" and then the top
 trending token, using only strings the feed already formatted. Explore opens from its header.
 
-It is not the home screen yet. A unit boots to the ambient readout unless the firmware is built
-with `PULSE_COMPANION_HOME=1`. The simulator opens it with `--companion`, and the `companion`,
-`companion-tap`, `companion-return` and `companion-crowded` scenarios cover it.
+A unit boots to it unless the firmware is built with `PULSE_COMPANION_HOME=0`, which restores the
+ambient readout. The home screen's two gestures came with it: holding empty glass opens Wi-Fi
+setup, and holding the battery chip asks to power off. The companion has its own battery chip from
+`pulse_ui::addBatteryChip`, and the confirmation now draws on LVGL's top layer so it appears over
+whichever screen is showing. The simulator's visible-text check searches that layer too. The
+`companion`, `companion-tap`, `companion-return`, `companion-crowded` and `power-from-home`
+scenarios cover it.
 
 Two constraints came out of building it:
 
@@ -84,8 +91,10 @@ Two constraints came out of building it:
   LVGL wrote through a null pointer. The glow is two translucent rounded layers instead.
 - **Its objects exist only while it is on screen.** Built at boot, or built once and kept, it made
   the 32-network Wi-Fi scan run out of LVGL pool and crash. It now deletes its children when another
-  screen replaces it and rebuilds them on return. With it as home, the crowded scan peaks at
-  110,728 bytes with a 22,400-byte largest free block. Removing that deletion makes
+  screen replaces it and rebuilds them on return. With it as home, and with its catch-lights,
+  cheeks and sweat drop, the crowded scan peaks at 112,048 bytes with an 18,496-byte largest free
+  block: more than twice the 7,872-byte draw layer that first ran the pool out, and less headroom than
+  before the companion, so the next thing added to it should be measured against this scenario. Removing that deletion makes
   `companion-crowded` segfault again, which is the control for the fix.
 
 Curves are crescents, a dark circle with a body-coloured circle laid over it, because arcs are not

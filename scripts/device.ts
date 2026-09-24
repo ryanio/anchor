@@ -899,8 +899,9 @@ function simEsp32(root: string, paths: DevicePaths, manifest: Toolchain, runner:
       labels: ["Connected", "HomeNet"],
       nvsIncludes: "70617373776f7264",
     },
-    // The companion prototype, which only the simulator opens as a home screen for now: it says the
-    // portfolio first, and a tap on the character moves it on to the top trending token.
+    // The companion is the home screen. It says the portfolio first, and a tap on the character
+    // moves it on to the top trending token. `--companion` is kept so these still open it in a
+    // build with PULSE_COMPANION_HOME=0.
     {
       name: "companion",
       taps: "20,440",
@@ -925,6 +926,14 @@ function simEsp32(root: string, paths: DevicePaths, manifest: Toolchain, runner:
       taps: "295,46 295,398",
       extra: ["--companion", "--wait", "--tap", "180,398"],
       labels: ["Hidden network"],
+    },
+    // Switching the unit off has to work from whatever screen is home. The chip is the companion's
+    // own, and the confirmation draws on the top layer over it.
+    {
+      name: "power-from-home",
+      taps: "",
+      extra: ["--battery", "82", "--hold", "270,410,3500", "--wait"],
+      labels: ["Power off?", "Power off", "Cancel"],
     },
     {
       name: "companion-tap",

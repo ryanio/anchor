@@ -185,6 +185,11 @@ lv_obj_t *surface();
  */
 void setBattery(const pulse_power::Battery &battery);
 
+/* A second battery chip on another screen, such as the companion's, kept up to date by `setBattery`
+ * and carrying the same hold that asks to power off. One extra chip is supported; the confirmation
+ * draws on the top layer, so it appears over whichever screen is showing. */
+void addBatteryChip(lv_obj_t *parent, int32_t x, int32_t y);
+
 /*
  * Make a long press on the battery chip offer to switch the unit off.
  *

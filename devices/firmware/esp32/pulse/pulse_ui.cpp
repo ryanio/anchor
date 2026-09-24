@@ -37,6 +37,8 @@ pulse_power::Battery battery_state;
  * chip so that it covers the chip while it is up — a hold cannot be started again on a target that
  * is behind the screen asking about the last one. */
 StatusView confirm_view;
+BatteryView extra_battery;
+bool have_extra_battery = false;
 lv_obj_t *confirm_cancel = nullptr;
 lv_obj_t *confirm_accept = nullptr;
 lv_timer_t *confirm_timeout = nullptr;
@@ -342,7 +344,9 @@ void build(const Screen &screen)
 	 * it, and opaque so nothing behind it is readable through it — a "Power off?" that could be read
 	 * as part of a portfolio would be the worst possible version of this screen.
 	 */
-	confirm_view = buildStatus(frame, true);
+	/* On the top layer, so the question can be asked over whichever screen is home. It lived inside
+	 * this screen's frame while this was the only screen with a battery chip. */
+	confirm_view = buildStatus(lv_layer_top(), true);
 	lv_obj_set_style_bg_color(confirm_view.page, hex(colour::ground), LV_PART_MAIN);
 	lv_obj_set_style_bg_opa(confirm_view.page, LV_OPA_COVER, LV_PART_MAIN);
 	/* Clickable, so a touch meant for a button that misses it lands here and not on the frame
@@ -409,7 +413,6 @@ lv_obj_t *surface()
 void setBattery(const pulse_power::Battery &battery)
 {
 	battery_state = battery;
-	if (frame == nullptr) return;
 
 	BatteryCopy copy;
 	/*
@@ -426,7 +429,20 @@ void setBattery(const pulse_power::Battery &battery)
 	copy.usb = battery.usb;
 	copy.millivolts = battery.millivolts;
 	copy.estimated = battery.percent_estimated;
-	applyBattery(battery_view, copy);
+	if (frame != nullptr) applyBattery(battery_view, copy);
+	if (have_extra_battery) applyBattery(extra_battery, copy);
+}
+
+void addBatteryChip(lv_obj_t *parent, int32_t x, int32_t y)
+{
+	if (parent == nullptr || have_extra_battery) return;
+	extra_battery = buildBattery(parent, x, y);
+	have_extra_battery = true;
+	lv_obj_add_event_cb(extra_battery.chip, onBatteryHold, LV_EVENT_LONG_PRESSED, nullptr);
+	lv_obj_add_event_cb(extra_battery.chip, onBatteryHold, LV_EVENT_LONG_PRESSED_REPEAT, nullptr);
+	lv_obj_add_event_cb(extra_battery.chip, onBatteryHold, LV_EVENT_RELEASED, nullptr);
+	lv_obj_add_event_cb(extra_battery.chip, onBatteryHold, LV_EVENT_PRESS_LOST, nullptr);
+	setBattery(battery_state);
 }
 
 void attachPowerGesture(PowerOffFn on_confirm)

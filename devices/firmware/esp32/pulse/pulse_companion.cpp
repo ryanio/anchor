@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "pulse_design.h"
+#include "pulse_ui.h"
 
 namespace pulse_companion {
 namespace {
@@ -37,6 +38,7 @@ constexpr int32_t EYE_GAP = 22; /* between the two eyes */
 constexpr int32_t EYE_LEFT_X = (BODY_W - 2 * EYE_W - EYE_GAP) / 2;
 constexpr int32_t EYE_RIGHT_X = EYE_LEFT_X + EYE_W + EYE_GAP;
 constexpr int32_t LOOK = 10; /* px the eyes travel when looking around */
+constexpr int32_t GLINT = 10; /* the catch-light in an open eye */
 
 constexpr int32_t MOUTH_Y = 104;
 constexpr int32_t STROKE = 7;
@@ -51,13 +53,19 @@ constexpr uint32_t FEATURE_COLOUR = colour::ground;
 
 lv_obj_t *screen = nullptr;
 lv_obj_t *previous = nullptr;
+lv_obj_t *stage = nullptr; /* everything that is built and deleted with the screen's visits */
 lv_obj_t *bob = nullptr;  /* breathes */
 lv_obj_t *body = nullptr; /* bounces inside `bob` when tapped */
 lv_obj_t *eyes[2] = {nullptr, nullptr};
 lv_obj_t *eyeCovers[2] = {nullptr, nullptr};
 lv_obj_t *mouth = nullptr;
 lv_obj_t *mouthCover = nullptr;
-lv_obj_t *snore = nullptr;
+lv_obj_t *thought = nullptr; /* "z" while asleep, "?" while lost */
+lv_obj_t *glints[2] = {nullptr, nullptr};
+lv_obj_t *blush[2] = {nullptr, nullptr};
+lv_obj_t *sweat = nullptr;
+lv_timer_t *hopper = nullptr;
+lv_timer_t *delight = nullptr;
 lv_obj_t *head = nullptr;
 lv_obj_t *sub = nullptr;
 lv_timer_t *blinker = nullptr;
@@ -71,6 +79,10 @@ size_t lineIndex = 0;
 bool eyesOpen = true; /* whether the current mood blinks */
 int32_t eyeHeight = EYE_H;
 int32_t eyeOffset = 0;
+/* The current mood's open-eye size and how far the eyes sit below their usual line. A blink closes
+ * from, and returns to, this size, so it cannot undo a mood's look. */
+int32_t eyeBase = EYE_H;
+int32_t eyeDrop = 0;
 bool populated = false; /* whether the screen's children exist; see `depopulate` */
 
 /* Copies of what `update` was handed. The feed's strings live only for the call, and a tap needs to
@@ -147,9 +159,21 @@ void crescent(lv_obj_t *feature, lv_obj_t *cover, int32_t x, int32_t y, int32_t 
 /* Open eyes are solid ovals; their height is what a blink animates, around their centre. */
 void placeOpenEyes()
 {
-	const int32_t top = EYE_Y + (EYE_H - eyeHeight) / 2;
+	const int32_t top = EYE_Y + eyeDrop + (eyeBase - eyeHeight) / 2;
 	solid(eyes[0], eyeCovers[0], EYE_LEFT_X + eyeOffset, top, EYE_W, eyeHeight);
 	solid(eyes[1], eyeCovers[1], EYE_RIGHT_X + eyeOffset, top, EYE_W, eyeHeight);
+	/* A catch-light in each eye, which is most of what makes a drawn eye look alive. It hides while
+	 * the eye is nearly shut in a blink. */
+	const int32_t xs[2] = {EYE_LEFT_X, EYE_RIGHT_X};
+	for (int i = 0; i < 2; i++) {
+		if (glints[i] == nullptr) continue;
+		lv_obj_set_pos(glints[i], xs[i] + eyeOffset + EYE_W - GLINT - 6, top + 7);
+		if (eyeHeight > 24) {
+			lv_obj_remove_flag(glints[i], LV_OBJ_FLAG_HIDDEN);
+		} else {
+			lv_obj_add_flag(glints[i], LV_OBJ_FLAG_HIDDEN);
+		}
+	}
 }
 
 void setEyeHeight(void *, int32_t height)
@@ -170,7 +194,7 @@ void blink(lv_timer_t *)
 	lv_anim_t anim;
 	lv_anim_init(&anim);
 	lv_anim_set_exec_cb(&anim, setEyeHeight);
-	lv_anim_set_values(&anim, EYE_H, 6);
+	lv_anim_set_values(&anim, eyeBase, 6);
 	lv_anim_set_duration(&anim, 90);
 	lv_anim_set_playback_duration(&anim, 110);
 	lv_anim_start(&anim);
@@ -194,17 +218,19 @@ void lookAround(bool on)
 
 /* ----------------------------------------------------------------------------------- the moods -- */
 
-void snoring(bool on)
+/* A glyph drifting up and fading from the top right of the head: "z" asleep, "?" lost. */
+void thinking(const char *glyph)
 {
-	lv_anim_delete(snore, nullptr);
-	if (!on) {
-		lv_obj_add_flag(snore, LV_OBJ_FLAG_HIDDEN);
+	lv_anim_delete(thought, nullptr);
+	if (glyph == nullptr) {
+		lv_obj_add_flag(thought, LV_OBJ_FLAG_HIDDEN);
 		return;
 	}
-	lv_obj_remove_flag(snore, LV_OBJ_FLAG_HIDDEN);
+	lv_label_set_text(thought, glyph);
+	lv_obj_remove_flag(thought, LV_OBJ_FLAG_HIDDEN);
 	lv_anim_t rise;
 	lv_anim_init(&rise);
-	lv_anim_set_var(&rise, snore);
+	lv_anim_set_var(&rise, thought);
 	lv_anim_set_exec_cb(&rise, [](void *obj, int32_t y) { lv_obj_set_y((lv_obj_t *)obj, y); });
 	lv_anim_set_values(&rise, BODY_Y - 4, BODY_Y - 44);
 	lv_anim_set_duration(&rise, 2200);
@@ -212,7 +238,7 @@ void snoring(bool on)
 	lv_anim_start(&rise);
 	lv_anim_t fade;
 	lv_anim_init(&fade);
-	lv_anim_set_var(&fade, snore);
+	lv_anim_set_var(&fade, thought);
 	lv_anim_set_exec_cb(&fade, [](void *obj, int32_t opa) {
 		lv_obj_set_style_text_opa((lv_obj_t *)obj, (lv_opa_t)opa, LV_PART_MAIN);
 	});
@@ -222,13 +248,32 @@ void snoring(bool on)
 	lv_anim_start(&fade);
 }
 
+void show(lv_obj_t *obj, bool visible)
+{
+	if (obj == nullptr) return;
+	if (visible) {
+		lv_obj_remove_flag(obj, LV_OBJ_FLAG_HIDDEN);
+	} else {
+		lv_obj_add_flag(obj, LV_OBJ_FLAG_HIDDEN);
+	}
+}
+
 void express(Mood mood)
 {
-	eyeHeight = EYE_H;
+	eyeBase = mood == Mood::Worried ? EYE_H - 8 : EYE_H;
+	eyeDrop = mood == Mood::Worried ? 8 : 0;
+	eyeHeight = eyeBase;
 	eyesOpen = mood == Mood::Content || mood == Mood::Curious || mood == Mood::Worried ||
 	           mood == Mood::Lost;
 	lookAround(mood == Mood::Curious || mood == Mood::Lost);
-	snoring(mood == Mood::Sleepy);
+	thinking(mood == Mood::Sleepy ? "z" : mood == Mood::Lost ? "?" : nullptr);
+	show(blush[0], mood == Mood::Happy);
+	show(blush[1], mood == Mood::Happy);
+	show(sweat, mood == Mood::Worried);
+	if (!eyesOpen) {
+		show(glints[0], false);
+		show(glints[1], false);
+	}
 
 	/* The mouth is centred; `d` is its circle, and the cover's shift sets how deep the curve is. */
 	const auto mouthAt = [](int32_t d, int32_t y, int32_t shift) {
@@ -242,8 +287,9 @@ void express(Mood mood)
 			mouthAt(72, 74, -18);
 			break;
 		case Mood::Worried:
+			/* Smaller eyes looking down, a sweat drop, and a frown kept high enough that its cover
+			 * stays inside the body's rounded bottom. */
 			placeOpenEyes();
-			/* Kept high enough that the cover stays inside the body's rounded bottom. */
 			mouthAt(44, 100, 12);
 			break;
 		case Mood::Curious:
@@ -291,6 +337,15 @@ void setBounce(void *, int32_t y)
 	lv_obj_set_y(body, HALO / 2 + y);
 }
 
+/* A tap is a small delight: the happy face for a moment, then back to whatever the readings say. */
+void endDelight(lv_timer_t *)
+{
+	delight = nullptr;
+	if (populated) express(moodFor(stored.inputs));
+}
+
+void hop(int32_t height);
+
 void onTap(lv_event_t *)
 {
 	if (!stored.inputs.wifiConfigured && wifiAction != nullptr) {
@@ -299,14 +354,32 @@ void onTap(lv_event_t *)
 	}
 	lineIndex++;
 	say();
+	express(Mood::Happy);
+	drawnOnce = false; /* so the next update restores the real mood even if it matches */
+	if (delight != nullptr) lv_timer_delete(delight);
+	delight = lv_timer_create(endDelight, 900, nullptr);
+	lv_timer_set_repeat_count(delight, 1);
+	hop(BOUNCE);
+}
+
+void hop(int32_t height)
+{
 	lv_anim_t anim;
 	lv_anim_init(&anim);
 	lv_anim_set_exec_cb(&anim, setBounce);
-	lv_anim_set_values(&anim, 0, -BOUNCE);
+	lv_anim_set_values(&anim, 0, -height);
 	lv_anim_set_duration(&anim, 140);
 	lv_anim_set_playback_duration(&anim, 260);
 	lv_anim_set_path_cb(&anim, lv_anim_path_ease_out);
 	lv_anim_start(&anim);
+}
+
+/* A happy companion hops now and then without being asked. */
+void onHop(lv_timer_t *)
+{
+	if (populated && drawn == Mood::Happy && delight == nullptr && lv_screen_active() == screen) {
+		hop(BOUNCE / 2);
+	}
 }
 
 void onExplore(lv_event_t *)
@@ -343,9 +416,14 @@ void depopulate()
 	lv_anim_delete(nullptr, setEyeHeight);
 	lv_anim_delete(nullptr, setEyeOffset);
 	lv_anim_delete(nullptr, setBounce);
-	lv_obj_clean(screen);
-	bob = body = mouth = mouthCover = snore = head = sub = nullptr;
+	if (delight != nullptr) {
+		lv_timer_delete(delight);
+		delight = nullptr;
+	}
+	lv_obj_clean(stage);
+	bob = body = mouth = mouthCover = thought = head = sub = sweat = nullptr;
 	eyes[0] = eyes[1] = eyeCovers[0] = eyeCovers[1] = nullptr;
+	glints[0] = glints[1] = blush[0] = blush[1] = nullptr;
 	populated = false;
 }
 
@@ -368,7 +446,24 @@ void build()
 	lv_obj_remove_flag(screen, LV_OBJ_FLAG_SCROLLABLE);
 	lv_obj_add_event_cb(screen, onScreen, LV_EVENT_SCREEN_LOAD_START, nullptr);
 	lv_obj_add_event_cb(screen, onScreen, LV_EVENT_SCREEN_UNLOADED, nullptr);
+
+	/* The stage holds what is built per visit. It is clickable so a tap or hold on empty glass lands
+	 * on it, which is where `pulse_wifi::attachOpenGesture` listens, as it does on the ambient screen. */
+	stage = plain(screen);
+	lv_obj_set_pos(stage, 0, 0);
+	lv_obj_set_size(stage, PANEL_W, PANEL_H);
+	lv_obj_set_style_bg_opa(stage, LV_OPA_TRANSP, LV_PART_MAIN);
+	lv_obj_set_style_radius(stage, 0, LV_PART_MAIN);
+	lv_obj_add_flag(stage, LV_OBJ_FLAG_CLICKABLE);
+
+	/* The battery chip stays for the whole life of the screen, because it carries the hold that
+	 * switches the unit off, and that gesture must exist on whatever screen is home. */
+	constexpr int32_t BATTERY_X = PANEL_W - space::md - space::lg - BATTERY_W;
+	constexpr int32_t BATTERY_Y = PANEL_H - INSET - BATTERY_H;
+	pulse_ui::addBatteryChip(screen, BATTERY_X, BATTERY_Y);
+
 	blinker = lv_timer_create(blink, 3900, nullptr);
+	hopper = lv_timer_create(onHop, 4700, nullptr);
 }
 
 void populate()
@@ -379,7 +474,7 @@ void populate()
 	/* Breathing moves `bob`; a tap moves `body` inside it, so the two never fight over one y. */
 	/* `bob` is big enough for the glow, because a child is clipped to its parent's rectangle and a
 	 * glow clipped to the body's box renders as a square. */
-	bob = plain(screen);
+	bob = plain(stage);
 	lv_obj_set_style_bg_opa(bob, LV_OPA_TRANSP, LV_PART_MAIN);
 	lv_obj_set_pos(bob, BODY_X - HALO / 2, BODY_Y - HALO / 2);
 	lv_obj_set_size(bob, BODY_W + HALO, BODY_H + HALO);
@@ -430,21 +525,45 @@ void populate()
 		lv_obj_add_flag(cover, LV_OBJ_FLAG_HIDDEN);
 	}
 
-	snore = lv_label_create(screen);
-	lv_label_set_text(snore, "z");
-	lv_obj_set_style_text_font(snore, type::title(), LV_PART_MAIN);
-	lv_obj_set_style_text_color(snore, hex(colour::ink_dim), LV_PART_MAIN);
-	lv_obj_set_pos(snore, BODY_X + BODY_W - 10, BODY_Y);
-	lv_obj_add_flag(snore, LV_OBJ_FLAG_HIDDEN);
+	/* Catch-lights over the eyes, cheeks under them, and a sweat drop at the temple. */
+	for (int i = 0; i < 2; i++) {
+		glints[i] = plain(body);
+		lv_obj_set_size(glints[i], GLINT, GLINT);
+		lv_obj_set_style_radius(glints[i], LV_RADIUS_CIRCLE, LV_PART_MAIN);
+		lv_obj_set_style_bg_color(glints[i], hex(BODY_COLOUR), LV_PART_MAIN);
+		lv_obj_set_style_bg_opa(glints[i], LV_OPA_COVER, LV_PART_MAIN);
+		lv_obj_add_flag(glints[i], LV_OBJ_FLAG_HIDDEN);
 
-	head = makeLabel(screen, type::heading(), colour::ink, INSET, HEAD_Y, SAFE_W,
+		blush[i] = plain(body);
+		lv_obj_set_size(blush[i], 34, 16);
+		lv_obj_set_pos(blush[i], i == 0 ? EYE_LEFT_X - 18 : EYE_RIGHT_X + EYE_W - 16, EYE_Y + 50);
+		lv_obj_set_style_radius(blush[i], LV_RADIUS_CIRCLE, LV_PART_MAIN);
+		lv_obj_set_style_bg_color(blush[i], hex(colour::bad), LV_PART_MAIN);
+		lv_obj_set_style_bg_opa(blush[i], LV_OPA_40, LV_PART_MAIN);
+		lv_obj_add_flag(blush[i], LV_OBJ_FLAG_HIDDEN);
+	}
+	sweat = plain(body);
+	lv_obj_set_size(sweat, 14, 20);
+	lv_obj_set_pos(sweat, EYE_RIGHT_X + EYE_W + 8, EYE_Y - 14);
+	lv_obj_set_style_radius(sweat, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+	lv_obj_set_style_bg_color(sweat, hex(0x7DCFFF), LV_PART_MAIN);
+	lv_obj_set_style_bg_opa(sweat, LV_OPA_COVER, LV_PART_MAIN);
+	lv_obj_add_flag(sweat, LV_OBJ_FLAG_HIDDEN);
+
+	thought = lv_label_create(stage);
+	lv_obj_set_style_text_font(thought, type::title(), LV_PART_MAIN);
+	lv_obj_set_style_text_color(thought, hex(colour::ink_dim), LV_PART_MAIN);
+	lv_obj_set_pos(thought, BODY_X + BODY_W - 10, BODY_Y);
+	lv_obj_add_flag(thought, LV_OBJ_FLAG_HIDDEN);
+
+	head = makeLabel(stage, type::heading(), colour::ink, INSET, HEAD_Y, SAFE_W,
 	                 LV_TEXT_ALIGN_CENTER);
-	sub = makeLabel(screen, type::body(), colour::ink_dim, INSET, SUB_Y, SAFE_W,
+	sub = makeLabel(stage, type::body(), colour::ink_dim, INSET, SUB_Y, SAFE_W,
 	                LV_TEXT_ALIGN_CENTER);
 	lv_label_set_long_mode(head, LV_LABEL_LONG_DOT);
 	lv_label_set_long_mode(sub, LV_LABEL_LONG_DOT);
 
-	lv_obj_t *explore = makeButton(screen, PANEL_W - INSET - 108, 24, 108, 44, "Explore",
+	lv_obj_t *explore = makeButton(stage, PANEL_W - INSET - 108, 24, 108, 44, "Explore",
 	                               type::label());
 	lv_obj_add_event_cb(explore, onExplore, LV_EVENT_CLICKED, nullptr);
 
@@ -473,6 +592,12 @@ void open()
 	if (screen == nullptr || active()) return;
 	previous = lv_screen_active();
 	lv_screen_load(screen);
+}
+
+lv_obj_t *surface()
+{
+	build();
+	return stage;
 }
 
 bool active()

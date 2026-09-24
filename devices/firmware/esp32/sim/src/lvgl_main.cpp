@@ -547,14 +547,17 @@ int main(int argc, char **argv) {
   lv_obj_t *active = lv_screen_active();
   lv_area_t viewport;
   lv_obj_get_coords(active, &viewport);
+  /* The top layer too: the power confirmation draws there, over whichever screen is home. */
+  lv_obj_t *overlay = lv_layer_top();
   for (const auto &expected : expectedVisible) {
-    if (!visibleText(active, expected, viewport)) {
+    if (!visibleText(active, expected, viewport) && !visibleText(overlay, expected, viewport)) {
       fprintf(stderr, "sim: expected visible label missing: %s\n", expected.c_str());
       return 1;
     }
   }
   for (const auto &expected : expectedPrefixes) {
-    if (!visibleText(active, expected, viewport, true)) {
+    if (!visibleText(active, expected, viewport, true) &&
+        !visibleText(overlay, expected, viewport, true)) {
       fprintf(stderr, "sim: expected visible label prefix missing: %s\n", expected.c_str());
       return 1;
     }

@@ -21,6 +21,10 @@ void begin(Action openExplore, Action openWifi);
 void open();
 bool active();
 
+/* The empty glass behind the character, for gestures such as the Wi-Fi hold that belong on the home
+ * screen. Builds the screen if it is not built yet. */
+lv_obj_t *surface();
+
 /* Called on each feed refresh with the latest readings. Cheap when nothing changed. */
 void update(const Inputs &inputs);
 
