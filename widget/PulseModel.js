@@ -1999,6 +1999,7 @@ if (typeof module !== "undefined") {
     balanceRows,
     portfolioBreakdown,
     provenance,
+    BREAKDOWNS,
     paymentAmount,
     deadlines,
     offerCount,
