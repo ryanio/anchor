@@ -104,6 +104,14 @@ only app0 was written (ESP32 1,737,856 bytes, Cardputer 1,196,944, both hashes v
 first health line matched the earlier one, and the Cardputer again began joining its saved network with
 no panic. The `c32682f` images stay in the private cache as the previous known-good build.
 
+## Companion build, 2026-09-24
+
+After the replug, both chips identified as before (`3a:d3:f0` on `/dev/cu.usbmodem2101`, `76:2e:80`
+on `/dev/cu.usbmodem101`). The Waveshare unit received `46fd583`, which boots to the companion:
+MAC and 16 MB flash confirmed, app0 only, 1,743,184 bytes, hash verified. Its first health line
+reported 157,712 bytes of internal heap free, a low of 151,096, the LVGL pool 46% used, and battery
+74% on USB, down from 100% before the unplug. The Cardputer stays on `f674c1d`, which is current for it.
+
 ## Idle soak, 2026-09-23
 
 A read-only serial logger recorded the Waveshare unit on `ad4668c` from 15:09 to 22:29, when both
