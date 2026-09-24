@@ -13,8 +13,9 @@
 
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
+import { useFakeProcesses } from "./actions.ts";
 import { loadConfig } from "./config.ts";
-import { keySlot, SCREEN_SLOT, STRIP_SLOT } from "./panel.ts";
+import { keySlot, SCREEN_SLOT } from "./panel.ts";
 import { buildFrame, CASES, DEVICES, deviceCases, STATES } from "./review.ts";
 import { EMPTY_PORTFOLIO } from "./state/anchor.ts";
 import { deviceTokens } from "./tokens.ts";
@@ -90,15 +91,6 @@ describe("a frame built for a case", () => {
     return found;
   };
 
-  test("fills every paintable key the device has", () => {
-    const entry = caseNamed("deck-plus");
-    const frame = buildFrame(entry, config, TOKENS);
-    for (const slot of entry.device.capabilities.slots) {
-      if (slot.paintable) assert.ok(frame.has(slot.id), `${slot.id} was left unpainted`);
-    }
-    assert.ok(frame.has(STRIP_SLOT));
-  });
-
   test("a screen device gets a grid of cells, on a page pulseDetail does not claim", () => {
     // Not the "pulse-amoled" case: that one is on the portfolio page, which is `pulseDetail`'s and
     // renders as "detail" on purpose. "pulse-grid" is the desktop page, which is a set of things to
@@ -116,7 +108,26 @@ describe("a frame built for a case", () => {
    */
   test("a held key is raised, and nothing was dispatched to make it so", () => {
     const entry = caseNamed("pressed-key");
-    const frame = buildFrame(entry, config, TOKENS);
+    let ran = 0;
+    const child = { on: () => {}, unref: () => {} };
+    const restore = useFakeProcesses(
+      () => {
+        ran++;
+        return child;
+      },
+      (_command, _args, callback) => {
+        ran++;
+        callback(new Error("fake"), "", "");
+        return child;
+      },
+    );
+    let frame: ReturnType<typeof buildFrame>;
+    try {
+      frame = buildFrame(entry, config, TOKENS);
+    } finally {
+      restore();
+    }
+    assert.equal(ran, 0, "building the review frame must not run the key's action");
     const surface = frame.get(keySlot(entry.spec.pressedKey ?? 0));
     assert.equal(surface?.kind, "tile");
     assert.equal(surface?.kind === "tile" ? surface.emphasis : "", "raised");
@@ -130,22 +141,5 @@ describe("a frame built for a case", () => {
     // backlight, and a frame with a portfolio still in it would be the bug.
     assert.equal(buildFrame(caseNamed("blank-deck"), config, TOKENS).size, 0);
     assert.equal(buildFrame(caseNamed("blank-pulse"), config, TOKENS).size, 0);
-  });
-
-  test("the gallery's ambient view carries the piece's own name, never a slot fallback", () => {
-    // The regression this guards: the source used to blank a piece's name once artwork arrived, and
-    // a consumer that fell through to a generic label read "Key 2" instead of what the piece was.
-    // `pulseDetail`'s gallery branch is the current place that could reintroduce it — its title falls
-    // back to "Untitled" for a piece with no name, never to the slot it happened to land in.
-    const frame = buildFrame(caseNamed("pulse-gallery"), config, TOKENS);
-    const surface = frame.get(SCREEN_SLOT);
-    assert.equal(surface?.kind, "detail");
-    if (surface?.kind !== "detail") return;
-    assert.notEqual(surface.title, "");
-    assert.equal(
-      /^Key \d+$/.test(surface.title),
-      false,
-      `title fell back to a slot number: ${surface.title}`,
-    );
   });
 });

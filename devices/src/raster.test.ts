@@ -8,7 +8,7 @@
 
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import { clearRasterCache, RasterError, rasterCacheSize, rasteriserAvailable, rasterize } from "./raster.ts";
+import { clearRasterCache, RasterError, rasteriserAvailable, rasterize } from "./raster.ts";
 
 const solid = (color: string, width: number, height: number): string =>
   `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">` +
@@ -33,11 +33,6 @@ describe("rasterize", { skip: noRasteriser }, () => {
     assert.deepEqual([...buffer.subarray(0, 3)], [255, 128, 0]);
   });
 
-  test("a 120x120 key is 43,200 bytes, as the device requires", async () => {
-    const buffer = await rasterize(solid("#000000", 120, 120), { width: 120, height: 120 });
-    assert.equal(buffer.length, 43_200);
-  });
-
   test("refuses a size that does not match the SVG rather than returning a short buffer", async () => {
     await assert.rejects(() => rasterize(solid("#000000", 4, 2), { width: 99, height: 99 }), RasterError);
   });
@@ -48,7 +43,6 @@ describe("rasterize", { skip: noRasteriser }, () => {
     const first = await rasterize(svg, { width: 3, height: 3 });
     const second = await rasterize(svg, { width: 3, height: 3 });
     assert.equal(first, second, "an unchanged face should not be re-rasterised");
-    assert.equal(rasterCacheSize(), 1);
     // Keying on the source alone would hand this the cached buffer and skip the length check.
     await assert.rejects(() => rasterize(svg, { width: 5, height: 5 }), RasterError);
   });

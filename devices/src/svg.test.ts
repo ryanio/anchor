@@ -42,6 +42,10 @@ const TOKENS = toTokens("Test", {
 
 const KEY: SlotSpec = { id: "key:0", kind: "key", paintable: true, width: 120, height: 120 };
 const STRIP: SlotSpec = { id: "strip:0", kind: "strip", paintable: true, width: 800, height: 100 };
+const PULSE: SlotSpec = { id: "screen:0", kind: "screen", paintable: true, width: 368, height: 448 };
+
+const cells = (count: number) =>
+  Array.from({ length: count }, (_v, i) => ({ label: `Cell ${i}`, emphasis: "ground" as const }));
 
 describe("escapeXml", () => {
   test("escapes markup so a label cannot become an element", () => {
@@ -49,14 +53,22 @@ describe("escapeXml", () => {
     assert.equal(escapeXml("<script>&\"'"), "&lt;script&gt;&amp;&quot;&apos;");
   });
 
-  test("a hostile label produces no tag in the output", () => {
-    const svg = toSvg({ kind: "tile", emphasis: "ground", label: '</text><rect fill="#f00"/>' }, TOKENS, KEY);
-    assert.equal(svg.includes('<rect fill="#f00"'), false);
-    // The caption is elided to fit the key, so assert on the escaping rather than on a whole
-    // substring of it: what matters is that no character of it can close an element.
-    assert.ok(svg.includes("&lt;"), "the label's markup must arrive escaped");
-    // Nothing outside a well-formed element may contain a `<`, whatever the label said.
-    assert.equal(svg.replace(/<\/?[a-zA-Z][^>]*>/g, "").includes("<"), false);
+  test("a hostile label produces no tag in the output, on a key or in a grid cell", () => {
+    const hostile = '</text><rect fill="#f00"/>';
+    const surfaces: Array<[Surface, SlotSpec]> = [
+      [{ kind: "tile", emphasis: "ground", label: hostile }, KEY],
+      // A cell is a tile, so it takes the same path.
+      [{ kind: "grid", cells: [{ label: hostile, emphasis: "ground" }] }, PULSE],
+    ];
+    for (const [surface, slot] of surfaces) {
+      const svg = toSvg(surface, TOKENS, slot);
+      assert.equal(svg.includes('<rect fill="#f00"'), false);
+      // The caption is elided to fit the key, so assert on the escaping rather than on a whole
+      // substring of it: what matters is that no character of it can close an element.
+      assert.ok(svg.includes("&lt;"), "the label's markup must arrive escaped");
+      // Nothing outside a well-formed element may contain a `<`, whatever the label said.
+      assert.equal(svg.replace(/<\/?[a-zA-Z][^>]*>/g, "").includes("<"), false);
+    }
   });
 });
 
@@ -90,12 +102,18 @@ describe("toSvg", () => {
     assert.ok(toSvg({ kind: "bar", segments: [] }, TOKENS, STRIP).includes('width="800" height="100"'));
   });
 
-  test("every colour in a plain tile comes from the token set", () => {
-    const svg = toSvg({ kind: "tile", emphasis: "ground", icon: "A", label: "Test" }, TOKENS, KEY);
-    for (const color of colorsIn(svg)) assert.ok(palette.has(color), `${color} is not a token`);
+  test("every colour in a plain tile, or a grid of them, comes from the token set", () => {
+    const surfaces: Array<[Surface, SlotSpec]> = [
+      [{ kind: "tile", emphasis: "ground", icon: "A", label: "Test" }, KEY],
+      [{ kind: "grid", cells: cells(8), selected: 1 }, PULSE],
+    ];
+    for (const [surface, slot] of surfaces) {
+      const svg = toSvg(surface, TOKENS, slot);
+      for (const color of colorsIn(svg)) assert.ok(palette.has(color), `${color} is not a token`);
+    }
   });
 
-  test("an active tile's tint is derived from a token, and it differs from ground", () => {
+  test("an active tile looks different from a ground one", () => {
     const ground = toSvg({ kind: "tile", emphasis: "ground", label: "x" }, TOKENS, KEY);
     const active = toSvg({ kind: "tile", emphasis: "active", label: "x" }, TOKENS, KEY);
     assert.notEqual(ground, active, "an active key must look different or the state is invisible");
@@ -253,12 +271,8 @@ describe("marks scale with the slot they are drawn in", () => {
  * arithmetic that turns a panel into columns is held to the size it claims to produce.
  */
 describe("a grid of tappable cells", () => {
-  const PULSE: SlotSpec = { id: "screen:0", kind: "screen", paintable: true, width: 368, height: 448 };
   const ROUND: SlotSpec = { id: "screen:0", kind: "screen", paintable: true, width: 240, height: 240 };
   const NARROW: SlotSpec = { id: "screen:0", kind: "screen", paintable: true, width: 170, height: 320 };
-
-  const cells = (count: number) =>
-    Array.from({ length: count }, (_v, i) => ({ label: `Cell ${i}`, emphasis: "ground" as const }));
 
   test("the 368x448 panel comes out three columns of roughly a thumb", () => {
     const metrics = gridMetrics(PULSE, 8);
@@ -345,20 +359,6 @@ describe("a grid of tappable cells", () => {
     assert.equal(gridCellAt(ROUND, 8, 5, topLeft.x, topLeft.y), 4);
   });
 
-  test("every colour in a grid of plain cells comes from the token set", () => {
-    const svg = toSvg({ kind: "grid", cells: cells(8), selected: 1 }, TOKENS, PULSE);
-    for (const color of [...svg.matchAll(/#[0-9a-fA-F]{3,6}/g)].map((m) => m[0].toLowerCase())) {
-      assert.ok(
-        new Set(
-          Object.values(TOKENS)
-            .filter((v) => typeof v === "string")
-            .map((v) => v.toLowerCase()),
-        ).has(color),
-        `${color} is not a token`,
-      );
-    }
-  });
-
   test("the selection is a ring, so it composes with a tile that is already filled", () => {
     // `emphasis` spends the fill on whether the thing is on. A selection that also filled would
     // make selected-and-off identical to unselected-and-on.
@@ -378,16 +378,6 @@ describe("a grid of tappable cells", () => {
   test("an empty grid says why it is empty rather than going blank", () => {
     const svg = toSvg({ kind: "grid", cells: [], empty: 'nothing matches "zzz"' }, TOKENS, PULSE);
     assert.ok(svg.includes("zzz"));
-  });
-
-  test("a cell is a tile, so a hostile label cannot become an element", () => {
-    const svg = toSvg(
-      { kind: "grid", cells: [{ label: '</text><rect fill="#f00"/>', emphasis: "ground" }] },
-      TOKENS,
-      PULSE,
-    );
-    assert.equal(svg.includes('<rect fill="#f00"'), false);
-    assert.equal(svg.replace(/<\/?[a-zA-Z][^>]*>/g, "").includes("<"), false);
   });
 
   test("each cell clips to its own box, never to its neighbour's", () => {

@@ -158,7 +158,7 @@ export const DEVICES: readonly DeviceProfile[] = [
   },
 ];
 
-export function deviceById(id: string): DeviceProfile | null {
+function deviceById(id: string): DeviceProfile | null {
   return DEVICES.find((device) => device.id === id) ?? null;
 }
 
@@ -480,7 +480,7 @@ export const STATES: readonly StateFixture[] = [
   },
 ];
 
-export function stateById(id: string): StateFixture | null {
+function stateById(id: string): StateFixture | null {
   return STATES.find((state) => state.id === id) ?? null;
 }
 
@@ -489,7 +489,7 @@ export function stateById(id: string): StateFixture | null {
 // ────────────────────────────────────────────────────────────────────────────────────────────────
 
 /** The theme every card wears unless it is about a theme. Stock, so it resolves on any Omarchy. */
-export const DEFAULT_THEME = "tokyo-night";
+const DEFAULT_THEME = "tokyo-night";
 
 export interface CaseSpec {
   readonly id: string;
@@ -1155,7 +1155,7 @@ export function buildFrame(entry: DeviceCase, config: PanelConfig, tokens: Token
 }
 
 /** The palette for a case, read off disk so a name that is not installed fails loudly. */
-export function tokensFor(theme: string): Tokens {
+function tokensFor(theme: string): Tokens {
   const found = themeOnDisk(theme);
   if (found === null) {
     throw new Error(
@@ -1189,7 +1189,7 @@ const ART_GRAVITIES = ["NorthWest", "North", "NorthEast", "West", "Center", "Eas
  * internet and on somebody's wallet, and would put marketplace bytes into a tool that runs
  * unattended.
  */
-export async function seedGallery(): Promise<number> {
+async function seedGallery(): Promise<number> {
   let seeded = 0;
   for (const [index, piece] of GALLERY.entries()) {
     const source = join(REPO, ART_SOURCES[index % ART_SOURCES.length] ?? "");

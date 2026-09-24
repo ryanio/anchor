@@ -146,7 +146,7 @@ function profileAction(service: ServiceStatus): string | undefined {
  * Readings a key can show. The argument after `:` selects a rank, so `token:1` is the largest
  * holding — which keeps three top-token keys from needing three near-identical sources.
  */
-export const KEY_SOURCES: Readonly<Record<string, (state: PanelState, argument: string) => KeyReading>> = {
+const KEY_SOURCES: Readonly<Record<string, (state: PanelState, argument: string) => KeyReading>> = {
   "portfolio.total": ({ portfolio }) => ({ value: usd(portfolio?.stats?.totalUsd ?? null), label: "Total" }),
   "portfolio.nft": ({ portfolio }) => ({ value: usd(portfolio?.stats?.nftUsd ?? null), label: "NFTs" }),
   "portfolio.token": ({ portfolio }) => ({ value: usd(portfolio?.stats?.tokenUsd ?? null), label: "Tokens" }),
@@ -286,12 +286,12 @@ export function readKeySource(name: string, state: PanelState): KeyReading | nul
  * is one rather than zero: a dial that can turn a gallery empty is a dial that can make a page whose
  * whole point is the art show `nothing to show`, which is a bug wearing a control's clothing.
  */
-export const MAX_GALLERY_NFTS = 50;
-export const MIN_GALLERY_NFTS = 1;
+const MAX_GALLERY_NFTS = 50;
+const MIN_GALLERY_NFTS = 1;
 
 export const keySlot = (index: number): string => `key:${index}`;
 export const dialSlot = (index: number): string => `dial:${index}`;
-export const screenSlot = (index: number): string => `screen:${index}`;
+const screenSlot = (index: number): string => `screen:${index}`;
 export const STRIP_SLOT = "strip:0";
 /**
  * The screen of a device that has one instead of a key grid.
@@ -348,7 +348,7 @@ export const SEGMENT_SOURCES: Readonly<Record<string, (state: PanelState, page: 
  * reaches "muted", a workspace id can reach two digits. Sources whose width is already stable, or
  * which sit last on the strip, are absent and simply take the room they need.
  */
-export const SEGMENT_MIN_CHARS: Readonly<Record<string, number>> = {
+const SEGMENT_MIN_CHARS: Readonly<Record<string, number>> = {
   cpu: 8,
   memory: 7,
   volume: 5,
@@ -394,7 +394,7 @@ export const BROWSE_PAGES: ReadonlyMap<string, "token" | "nft"> = new Map([
  * which is the whole reason this needed no change to `types.ts`. The order is the order of
  * decreasing certainty — what the thing is, then who holds it, then what just happened to it.
  */
-export const BROWSE_FACETS = ["Overview", "Holders", "Activity"] as const;
+const BROWSE_FACETS = ["Overview", "Holders", "Activity"] as const;
 
 /** `0xabcd…1234`: a 42-character address on a 240px screen is a smear, and its ends are what differ. */
 function shortAddress(address: string): string {
@@ -450,7 +450,7 @@ function tokenOverviewLines(item: TrendingToken): DetailLine[] {
  * tapped and walked away from is ambient again, and back in step with the units beside it, inside a
  * quarter of a minute — a hold that outlives the interest in it is just a broken rotation.
  */
-export const TAP_HOLD_MS = 10_000;
+const TAP_HOLD_MS = 10_000;
 
 /**
  * How long a tapped grid cell reads as "just pressed" before settling back to an ordinary
@@ -573,11 +573,6 @@ export class Panel {
     return this.#timeframe;
   }
 
-  /** How many pieces are currently in the gallery's rotation. Scrubbed by the `gallery` dial. */
-  get nftLimit(): number {
-    return this.#nftLimit;
-  }
-
   /**
    * The device's own backlight, 0-100.
    *
@@ -587,11 +582,6 @@ export class Panel {
    */
   get deckBrightness(): number {
     return this.#deckBrightness;
-  }
-
-  /** The filter text a keyboard device has committed. Narrows rows; never dispatched. */
-  get filter(): string {
-    return this.#filter;
   }
 
   get selected(): number {
@@ -643,11 +633,6 @@ export class Panel {
         };
       })
       .filter(({ cell }) => needle === "" || cell.label.toLowerCase().includes(needle));
-  }
-
-  /** The page's keys as grid cells, filtered. The shape a screen device is painted from. */
-  cells(state: PanelState): GridCell[] {
-    return this.#keyCells(state).map(({ cell }) => cell);
   }
 
   /**

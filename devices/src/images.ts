@@ -165,10 +165,6 @@ export async function thumbnail(url: string, size = 120): Promise<string | null>
   return uri;
 }
 
-export function artCacheSize(): number {
-  return memory.size;
-}
-
 /**
  * Put local bytes into the cache as if `url` had been fetched, and return the data URI.
  *

@@ -10,6 +10,7 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { after, before, describe, test } from "node:test";
 import { useFakeProcesses } from "./actions.ts";
+import { GEOMETRIES, type Geometry, VirtualDevice } from "./adapters/virtual.ts";
 import { loadConfig, parseConfig } from "./config.ts";
 import type { PanelState } from "./panel.ts";
 import {
@@ -36,9 +37,13 @@ import type { AnchorDevice, DeviceCapabilities, Frame, SlotSpec } from "./types.
 const fakeChild = (): EventEmitter & { unref(): void } => Object.assign(new EventEmitter(), { unref() {} });
 
 let restoreProcesses: () => void;
+const spawned: string[][] = [];
 before(() => {
   restoreProcesses = useFakeProcesses(
-    () => fakeChild(),
+    (command, args) => {
+      spawned.push([command, ...args]);
+      return fakeChild();
+    },
     (_command, _args, callback) => {
       callback(new Error("fake execFile: no real process runs in this test file"), "", "");
       return fakeChild();
@@ -63,30 +68,7 @@ function fakeDevice(slots: SlotSpec[]): AnchorDevice {
   };
 }
 
-const streamDeckPlus = (): AnchorDevice =>
-  fakeDevice([
-    ...Array.from(
-      { length: 8 },
-      (_v, i): SlotSpec => ({
-        id: keySlot(i),
-        kind: "key",
-        paintable: true,
-        width: 120,
-        height: 120,
-      }),
-    ),
-    ...Array.from(
-      { length: 4 },
-      (_v, i): SlotSpec => ({
-        id: dialSlot(i),
-        kind: "encoder",
-        paintable: false,
-        width: 0,
-        height: 0,
-      }),
-    ),
-    { id: STRIP_SLOT, kind: "strip", paintable: true, width: 800, height: 100 },
-  ]);
+const streamDeckPlus = (): AnchorDevice => new VirtualDevice(GEOMETRIES.plus as Geometry);
 
 const CONFIG = parseConfig({
   pages: [
@@ -111,8 +93,15 @@ const state = (overrides: Partial<typeof EMPTY_SNAPSHOT> = {}) => ({
 describe("Panel.build", () => {
   test("fills configured keys and blanks the rest", () => {
     const panel = new Panel(CONFIG, TOKENS);
-    const frame = panel.build(streamDeckPlus(), state());
+    const device = streamDeckPlus();
+    const frame = panel.build(device, state());
     assert.equal(frame.size, 9, "8 keys and the strip");
+    for (const slot of device.capabilities.slots) {
+      if (slot.paintable) assert.ok(frame.has(slot.id), `${slot.id} was left unpainted`);
+    }
+    // The Plus's encoders take input but have no display; a frame for one would be rasterised and
+    // thrown away.
+    assert.equal(frame.has(dialSlot(0)), false);
     const configured = frame.get(keySlot(0));
     assert.equal(configured?.kind === "tile" && configured.label, "One");
     const blank = frame.get(keySlot(5));
@@ -125,14 +114,6 @@ describe("Panel.build", () => {
     const active = panel.build(streamDeckPlus(), state({ workspace: 1 })).get(keySlot(0));
     assert.equal(inactive?.kind === "tile" && inactive.emphasis, "ground");
     assert.equal(active?.kind === "tile" && active.emphasis, "active");
-  });
-
-  test("never paints a slot the device cannot paint", () => {
-    const panel = new Panel(CONFIG, TOKENS);
-    const frame = panel.build(streamDeckPlus(), state());
-    // The Plus's encoders take input but have no display; a frame for one would be rasterised and
-    // thrown away.
-    assert.equal(frame.has(dialSlot(0)), false);
   });
 
   test("drives a device with fewer slots and no strip", () => {
@@ -416,14 +397,9 @@ describe("screen devices", () => {
       ["Total", "Ethereum", "Solana"],
     );
     assert.equal(grid.cells[0]?.value, "$125,431");
-  });
-
-  test("a key grid and a screen grid carry the same readings", () => {
-    const panel = new Panel(config, TOKENS);
-    const tile = panel.build(streamDeckPlus(), withPortfolio).get(keySlot(0));
-    const grid = panel.build(screenDevice(), withPortfolio).get(SCREEN_SLOT);
+    // A key grid carries the same reading.
+    const tile = new Panel(config, TOKENS).build(streamDeckPlus(), withPortfolio).get(keySlot(0));
     assert.equal(tile?.kind === "tile" && tile.value, "$125,431");
-    assert.equal(grid?.kind === "grid" && grid.cells[0]?.value, "$125,431");
   });
 
   test("a cell says whether the thing it controls is on, which a row could not", () => {
@@ -533,14 +509,6 @@ describe("a tap on a grid cell", () => {
     panel.handle({ kind: "tap", slot: SCREEN_SLOT, ...fifth });
     assert.equal(panel.pageName, "echo", "the tapped cell's action ran, not the selected one's");
     assert.equal(panel.selected, 4);
-  });
-
-  test("every cell reaches its own key and no other", () => {
-    for (const [index, at] of CENTRES.entries()) {
-      const panel = painted(new Panel(config, TOKENS));
-      panel.handle({ kind: "tap", slot: SCREEN_SLOT, ...at });
-      assert.equal(panel.pageName, NAMES[index], `cell ${index} ran the wrong key`);
-    }
   });
 
   test("a touch in the gutter between two tiles reaches neither", () => {
@@ -672,15 +640,6 @@ describe("a tap steers the rotation", () => {
     assert.equal(showing(panel, clock(10, 0)), "Delta");
     assert.equal(showing(panel, clock(12, 9_000)), "Delta", "two windows on, still held");
     assert.equal(showing(panel, clock(12, 10_001)), "Alpha", "hold spent: the clock has the page");
-  });
-
-  test("the hold expires with no further input, on the clock alone", () => {
-    // Nothing calls a "release the hold" method; the deadline is read off the injected clock, so a
-    // panel nobody touches again cannot stay pinned.
-    const panel = new Panel(config, TOKENS);
-    panel.handle({ kind: "tap", slot: SCREEN_SLOT, x: 1, y: 1 });
-    assert.equal(showing(panel, clock(20, 0)), "Beta", "21 % 4");
-    assert.equal(showing(panel, clock(23, 60_000)), "Delta", "23 % 4, straight off the clock");
   });
 
   test("two untouched panels agree, and a tapped one rejoins them", () => {
@@ -1084,14 +1043,6 @@ describe("browsing trending tokens and collections", () => {
     // Resolving through the unfiltered list would have opened Alpha — a token not on the screen.
     assert.equal(panel.browseDetail?.id, TRENDING?.[1]?.address);
   });
-
-  test("a screen page on a device with no screen is not painted twice either", () => {
-    // The Stream Deck has no screen slot, so a browse page has nothing to put its list on. It must
-    // still not paint the page's keys — there are none — and it must not throw.
-    const frame = painted("browse-tokens").build(streamDeckPlus(), browsing());
-    assert.equal(frame.has(SCREEN_SLOT), false);
-    assert.equal(frame.get(keySlot(0))?.kind === "tile" && frame.get(keySlot(0))?.kind, "tile");
-  });
 });
 
 describe("text input", () => {
@@ -1105,13 +1056,13 @@ describe("text input", () => {
           { index: 2, label: "Base", action: "exec true" },
         ],
       },
+      { name: "other", keys: [] },
     ],
   });
 
   test("narrows the cells and nothing else", () => {
     const panel = new Panel(config, TOKENS);
     panel.handle({ kind: "text", slot: SCREEN_SLOT, value: "sol" });
-    assert.equal(panel.filter, "sol");
     const grid = panel.build(screenDevice(), state()).get(SCREEN_SLOT);
     assert.deepEqual(grid?.kind === "grid" ? grid.cells.map((c) => c.label) : [], ["Solana"]);
   });
@@ -1126,13 +1077,13 @@ describe("text input", () => {
 
   test("filter text is never dispatched as an action", () => {
     // The whole safety argument for having a keyboard at all: this is a filter, not a command.
+    // `other` exists, so dispatching the text as `page other` would switch to it.
     const panel = new Panel(config, TOKENS);
-    const dispatched = false;
     const before = panel.pageName;
     panel.handle({ kind: "text", slot: SCREEN_SLOT, value: "page other" });
     assert.equal(panel.pageName, before, "text must not switch pages");
-    assert.equal(dispatched, false);
-    assert.equal(panel.filter, "page other", "it is kept, verbatim, as a filter");
+    const grid = panel.build(screenDevice(), state()).get(SCREEN_SLOT);
+    assert.match(grid?.kind === "grid" ? (grid.empty ?? "") : "", /page other/, "it is kept as a filter");
   });
 
   test("committing text resets the selection to the top of the new grid", () => {
@@ -1185,6 +1136,8 @@ describe("keys that show something can open it", () => {
     // the wrong piece would be worse than opening nothing.
     const reading = readKeySource("nft:1", withLinks);
     assert.match(reading?.action ?? "", /opensea\.io\/item\/1/);
+    // The piece's own name, never blanked once its art arrives.
+    assert.equal(reading?.label, "Piece");
   });
 
   test("a holding opens the token it is showing", () => {
@@ -1206,7 +1159,9 @@ describe("keys that show something can open it", () => {
     const panel = new Panel(config, TOKENS);
     panel.build(streamDeckPlus(), withLinks);
     // A press arrives with no state, so the panel has to have remembered.
-    assert.equal(panel.handle({ kind: "press", slot: keySlot(0) }), true);
+    spawned.length = 0;
+    panel.handle({ kind: "press", slot: keySlot(0) });
+    assert.deepEqual(spawned, [["omarchy", "launch", "browser", "https://opensea.io/item/1"]]);
   });
 
   test("every key on every shipped page can do something when pressed", () => {

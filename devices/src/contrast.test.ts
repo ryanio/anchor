@@ -34,7 +34,7 @@ function luminance(hex: string): number {
   return 0.2126 * (r ?? 0) + 0.7152 * (g ?? 0) + 0.0722 * (b ?? 0);
 }
 
-export function contrast(a: string, b: string): number {
+function contrast(a: string, b: string): number {
   const [lighter, darker] = [luminance(a), luminance(b)].sort((x, y) => y - x);
   return ((lighter ?? 0) + 0.05) / ((darker ?? 0) + 0.05);
 }
@@ -62,13 +62,6 @@ describe("the themes this repo ships", () => {
 
 describe("device palettes meet AA", () => {
   const themes = installedThemes();
-
-  test("there are themes to check", () => {
-    if (themes.length === 0) {
-      console.log("no Omarchy themes installed; palette checks skipped");
-    }
-    assert.ok(true);
-  });
 
   for (const { name: theme, colors } of themes) {
     test(`${theme}: key labels and readings are legible`, () => {

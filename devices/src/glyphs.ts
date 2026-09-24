@@ -12,7 +12,7 @@
  *     U+F186 moon    70px      U+F030 camera  93px
  *     U+F1FC brush   99px      U+F13D anchor 104px
  *
- * So the correction is `size * (0.3 - inkWidthEm / 2)`, and this module supplies `inkWidthEm`.
+ * So the correction is `size * (0.3 - inkWidthEm / 2)`, where `inkWidthEm` is the measured ink width.
  *
  * Measuring goes through ImageMagick and fontconfig, exactly as the real render does, which is why
  * the numbers are right rather than merely plausible: if the user runs `omarchy font set` and the
@@ -30,17 +30,8 @@ const UNMEASURED = 0.6;
 
 const registry = new Map<string, number>();
 
-export function registerGlyphMetrics(entries: Iterable<readonly [string, number]>): void {
+function registerGlyphMetrics(entries: Iterable<readonly [string, number]>): void {
   for (const [glyph, widthEm] of entries) registry.set(glyph, widthEm);
-}
-
-export function clearGlyphMetrics(): void {
-  registry.clear();
-}
-
-/** Ink width in em, or undefined when unmeasured. */
-export function inkWidthEm(glyph: string): number | undefined {
-  return registry.get(glyph);
 }
 
 /**

@@ -146,7 +146,3 @@ export async function rasterize(svg: string, size: RasterSize): Promise<Buffer> 
 export function clearRasterCache(): void {
   cache.clear();
 }
-
-export function rasterCacheSize(): number {
-  return cache.size;
-}

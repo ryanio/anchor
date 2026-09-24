@@ -76,7 +76,7 @@ export function fitEnds(text: string, fontSize: number, maxWidth: number): strin
  * fixed size either wastes the tile or overflows it. Shrinking beats truncating here: the last
  * digits of a number are not optional the way the tail of a window title is.
  */
-export function autoSize(text: string, maxWidth: number, maxSize: number, minSize: number): number {
+function autoSize(text: string, maxWidth: number, maxSize: number, minSize: number): number {
   for (let size = maxSize; size > minSize; size--) {
     if (advance(text, size) <= maxWidth) return size;
   }

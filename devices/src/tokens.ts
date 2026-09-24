@@ -94,7 +94,7 @@ export function parseFlatToml(source: string): Record<string, string> {
 }
 
 /** Read the active theme's raw Omarchy colours, or the fallback set. */
-export function readThemeColors(themeName?: string): { name: string; colors: Record<string, string> } {
+function readThemeColors(themeName?: string): { name: string; colors: Record<string, string> } {
   const name = themeName ?? run("omarchy", ["theme", "current"]) ?? "Tokyo Night";
   const dir = run("omarchy", ["theme", "dir", slugify(name)]);
   if (dir === null) return { name, colors: { ...FALLBACK_COLORS } };
@@ -160,7 +160,7 @@ function ratio(a: string, b: string): number {
  * belongs to the palette — the colour is still derived from tokens, never picked at a call site.
  * A theme that already clears the floor is returned untouched, which is almost all of them.
  */
-export function ensureLegible(color: string, background: string, toward: string, target: number): string {
+function ensureLegible(color: string, background: string, toward: string, target: number): string {
   if (ratio(color, background) >= target) return color;
   for (let step = 1; step <= 20; step++) {
     const candidate = mix(color, toward, step / 20);
@@ -237,7 +237,7 @@ function lightnessOf(color: string): number {
  * cannot get there — a mark on a mid-grey ground with nowhere useful to go — it falls back to
  * `ensureLegible`, blending toward the theme's own foreground, which always can.
  */
-export function ensureLegibleHue(color: string, background: string, toward: string, target: number): string {
+function ensureLegibleHue(color: string, background: string, toward: string, target: number): string {
   if (ratio(color, background) >= target) return color;
   const start = lightnessOf(color);
   const darken = luminance(background) > luminance(color) || luminance(background) > 0.18;
@@ -329,7 +329,7 @@ const LINE_BAND = { min: 1.55, max: 4.5, target: 2.1, reversed: 2.1 };
  * a genuine step off this ground, and derive one from the ground itself when it is not. A theme is
  * never overridden for having an opinion — only for having none.
  */
-export function deriveSurfaces(tokens: Tokens): Tokens {
+function deriveSurfaces(tokens: Tokens): Tokens {
   const { ground } = tokens;
   // Raised moves toward the reader, sunken away from it. On a light theme both are darker than the
   // ground, because a light UI has no headroom above white — which is what the stock themes do.
@@ -419,7 +419,7 @@ const TONE_FLOOR = 4.5;
  * meter fill. Surface colours are not adjusted here: a background is not required to contrast with
  * itself, and `deriveSurfaces` above has already given them their separation.
  */
-export function legible(tokens: Tokens): Tokens {
+function legible(tokens: Tokens): Tokens {
   const floor = (color: string): string => ensureLegibleHue(color, tokens.ground, tokens.ink, TONE_FLOOR);
   return {
     ...tokens,
