@@ -215,7 +215,7 @@ describe("wifi setup, in the simulator", { skip: !runnable }, () => {
     assert.ok(!run.out.includes("WRAPPED ONTO THE NEXT LINE"), `something wrapped:\n${run.out}`);
   });
 
-  test("every network the list holds can be picked", () => {
+  test("the list keeps only the strongest networks the panel has rows for, strongest first", () => {
     const run = sim([
       "--networks",
       "A1:-40,B2:-45,C3:-50,D4:-55,E5:-60,F6:-65,G7:-70,H8:-75",

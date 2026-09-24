@@ -559,7 +559,6 @@ export class CardputerDevice implements AnchorDevice {
 
   #input: ((input: DeviceInput) => void) | null = null;
   #queryHandler: ((text: string) => void) | null = null;
-  #powerHandler: ((power: PowerState) => void) | null = null;
   /** Resolved by the device's `hello`. Empty except while something is waiting for one. */
   readonly #helloWaiters = new Set<() => void>();
 
@@ -666,10 +665,6 @@ export class CardputerDevice implements AnchorDevice {
 
   onQuery(handler: (text: string) => void): void {
     this.#queryHandler = handler;
-  }
-
-  onPower(handler: (power: PowerState) => void): void {
-    this.#powerHandler = handler;
   }
 
   // -- AnchorDevice ----------------------------------------------------------------------------
@@ -930,7 +925,6 @@ export class CardputerDevice implements AnchorDevice {
       return;
     }
     this.#power = { percent: message.percent, charging: message.charging };
-    this.#powerHandler?.(this.#power);
     void this.#send({ t: "backlight", percent: backlightFor(this.#brightness, this.#power) });
   }
 

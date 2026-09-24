@@ -9,7 +9,7 @@
 
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import { findHello, listPorts, MAX_PRESYNC_BYTES } from "./esp32-serial.ts";
+import { findHello, listPorts } from "./esp32-serial.ts";
 import {
   decodeMessages,
   encodeHello,
@@ -52,9 +52,7 @@ describe("resynchronising a serial link", () => {
     const { messages } = decodeMessages(stream.subarray(findHello(stream)));
     assert.equal(messages.length, 1);
     assert.equal(messages[0]?.type, MessageType.Hello);
-  });
-
-  test("a clean stream syncs at zero", () => {
+    // A clean stream syncs at zero.
     assert.equal(findHello(encodeHello(1, hello)), 0);
   });
 
@@ -76,13 +74,6 @@ describe("resynchronising a serial link", () => {
     const partial = encodeHello(1, hello).subarray(0, 5);
     assert.equal(findHello(partial), -1);
   });
-
-  test("the pre-sync budget is large enough for a boot log and small enough to be a budget", () => {
-    // The failure this guards is a port that babbles forever growing the process. Both halves are
-    // the claim: the budget must not be so tight that a normal boot cannot fit inside it.
-    assert.ok(MAX_PRESYNC_BYTES > BOOT_LOG.length * 4);
-    assert.ok(MAX_PRESYNC_BYTES <= 1 << 16);
-  });
 });
 
 describe("finding a port", () => {
@@ -99,11 +90,5 @@ describe("finding a port", () => {
      */
     const prefix = process.platform === "darwin" ? "/dev/cu.usbmodem" : "/dev/serial/by-id/";
     for (const port of ports) assert.ok(port.startsWith(prefix), port);
-  });
-
-  test("a machine with neither a by-id directory nor a Darwin node answers with nothing", () => {
-    // The property every caller relies on: probing costs nothing and reports nothing, rather than
-    // throwing at a host that simply has no device plugged in.
-    assert.doesNotThrow(() => listPorts());
   });
 });

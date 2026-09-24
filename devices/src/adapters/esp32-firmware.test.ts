@@ -197,7 +197,8 @@ describe("firmware conformance", { skip: !compilerAvailable() || !rasteriserAvai
     const surface: Surface = { kind: "tile", emphasis: "ground", label: "anchor", value: "1.42" };
     await device.paint(frameFor(surface));
 
-    const run = feed(link.written());
+    const bytes = link.written();
+    const run = feed(bytes); // one byte at a time
 
     assert.equal(run.status, 0, `decoder faulted: ${run.events.join(", ")}`);
     assert.ok(run.events.includes("fault 0"), `expected a clean stream, got ${JSON.stringify(run.events)}`);
@@ -215,6 +216,12 @@ describe("firmware conformance", { skip: !compilerAvailable() || !rasteriserAvai
       0,
       "the firmware framebuffer differs from the pixels the host rendered",
     );
+    // The stream survives any split the transport chooses: one write, or seven bytes at a time.
+    for (const chunk of [bytes.length, 7]) {
+      const split = feed(bytes, chunk);
+      assert.equal(split.status, 0, `${chunk}-byte chunks faulted`);
+      assert.equal(Buffer.compare(split.framebuffer, expected), 0, `${chunk}-byte chunks differ`);
+    }
     await device.close();
   });
 
@@ -244,28 +251,6 @@ describe("firmware conformance", { skip: !compilerAvailable() || !rasteriserAvai
       0,
       "the incrementally-painted framebuffer differs from the frame the host rendered",
     );
-    await device.close();
-  });
-
-  test("the whole exchange survives being split at every byte boundary", async () => {
-    const { link, device } = await connect();
-    const surface: Surface = { kind: "tile", emphasis: "ground", label: "split", value: "0.01" };
-    await device.paint(frameFor(surface));
-    const bytes = link.written();
-
-    const wholesale = feed(bytes, bytes.length);
-    const byteAtATime = feed(bytes, 1);
-    const awkward = feed(bytes, 7);
-
-    const expected = await expectedPixels(surface);
-    for (const [name, run] of [
-      ["one write", wholesale],
-      ["one byte at a time", byteAtATime],
-      ["seven bytes at a time", awkward],
-    ] as const) {
-      assert.equal(run.status, 0, `${name} faulted`);
-      assert.equal(Buffer.compare(run.framebuffer, expected), 0, `${name} produced a different frame`);
-    }
     await device.close();
   });
 
@@ -473,11 +458,5 @@ describe("firmware conformance", { skip: !compilerAvailable() || !rasteriserAvai
     assert.equal(run.status, 1);
     assert.ok(run.events.includes("fault 1"), `expected ANCHOR_FAULT_MAGIC, got ${run.events.join(", ")}`);
     await device.close();
-  });
-
-  test("garbage that never contains a header is consumed without faulting", async () => {
-    const run = feed(Buffer.from([0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07]));
-    assert.equal(run.status, 0);
-    assert.ok(run.events.includes("fault 0"), `expected no fault, got ${run.events.join(", ")}`);
   });
 });

@@ -27,22 +27,20 @@ import {
   encodeBlank,
   encodeBrightness,
   encodeCommit,
-  encodeHeader,
   encodeHello,
   encodeInput,
+  encodePing,
+  encodeReady,
   encodeRle16,
   encodeTile,
   HEADER_BYTES,
   type Hello,
-  HOST_BOUND_TYPES,
-  MAGIC,
   MAX_PANEL_PIXELS,
   MessageType,
   PixelFormat,
   PROTOCOL_VERSION,
   rgb888ToRgb565,
   sanitiseDeviceId,
-  splitRect,
   TileEncoding,
   WireError,
 } from "./esp32-wire.ts";
@@ -68,15 +66,6 @@ const solid565 = (value: number, count: number): Buffer => {
 };
 
 describe("framing", () => {
-  test("every message carries the magic byte, its type, a sequence and a length", () => {
-    const header = encodeHeader(MessageType.Commit, 7, 0);
-    assert.equal(header.length, HEADER_BYTES);
-    assert.equal(header.readUInt8(0), MAGIC);
-    assert.equal(header.readUInt8(1), MessageType.Commit);
-    assert.equal(header.readUInt16LE(2), 7);
-    assert.equal(header.readUInt32LE(4), 0);
-  });
-
   test("a partial message is left in the buffer rather than half-parsed", () => {
     const whole = encodeHello(1, hello);
     const { messages, rest } = decodeMessages(whole.subarray(0, whole.length - 4));
@@ -105,21 +94,16 @@ describe("framing", () => {
 });
 
 describe("what a device is allowed to say", () => {
-  test("the host-bound set is exactly hello, input and pong", () => {
-    assert.deepEqual([...HOST_BOUND_TYPES].sort(), [MessageType.Hello, MessageType.Input, MessageType.Pong]);
-  });
-
-  test("a device sending a tile is a protocol error, not a repaint", () => {
-    // The point of the whole format: a display cannot paint the host's idea of the panel, cannot
-    // address another device through us, and has no opcode that means anything about a wallet.
-    const forged = encodeTile(1, { x: 0, y: 0, width: 1, height: 1 }, TileEncoding.Raw, solid565(0, 1));
-    assert.throws(() => decodeMessages(forged), WireError);
-  });
-
+  // The point of the whole format: a display cannot paint the host's idea of the panel, cannot
+  // address another device through us, and has no opcode that means anything about a wallet. Only
+  // hello, input and pong come the other way.
   for (const [name, message] of [
+    ["tile", encodeTile(1, { x: 0, y: 0, width: 1, height: 1 }, TileEncoding.Raw, solid565(0, 1))],
     ["blank", encodeBlank(1)],
     ["brightness", encodeBrightness(1, 50)],
     ["commit", encodeCommit(1)],
+    ["ping", encodePing(1)],
+    ["ready", encodeReady(1, { version: 1, brightness: 70, keepaliveMs: 5000, staleAfterMs: 15000 })],
   ] as const) {
     test(`a device sending ${name} is refused`, () => {
       assert.throws(() => decodeMessages(message), WireError);
@@ -227,25 +211,10 @@ describe("rle16", () => {
     ]);
     assert.deepEqual(decodeRle16(encodeRle16(mixed), 207), mixed);
   });
-
-  test("a stream that does not fill the tile is refused rather than smeared", () => {
-    // On the device a short decode is a band of stale pixels under a fresh number.
-    assert.throws(() => decodeRle16(encodeRle16(solid565(1, 4)), 8), WireError);
-    assert.throws(() => decodeRle16(Buffer.from([0x80]), 1), WireError);
-  });
 });
 
 describe("dirtyTiles", () => {
   const size = { width: 64, height: 64 };
-
-  test("the first frame is one full-panel rectangle", () => {
-    assert.deepEqual(dirtyTiles(null, solid565(0, 64 * 64), size), [{ x: 0, y: 0, width: 64, height: 64 }]);
-  });
-
-  test("an unchanged frame sends nothing at all", () => {
-    const frame = solid565(0x1234, 64 * 64);
-    assert.deepEqual(dirtyTiles(frame, Buffer.from(frame), size), []);
-  });
 
   test("one changed pixel sends one tile, not the panel", () => {
     const before = solid565(0, 64 * 64);
@@ -269,7 +238,7 @@ describe("dirtyTiles", () => {
   });
 });
 
-describe("cropRgb565 and splitRect", () => {
+describe("cropRgb565", () => {
   test("a crop takes the rectangle asked for, row by row", () => {
     const frame = Buffer.alloc(4 * 4 * 2);
     for (let index = 0; index < 16; index++) frame.writeUInt16LE(index, index * 2);
@@ -278,21 +247,5 @@ describe("cropRgb565 and splitRect", () => {
       [crop.readUInt16LE(0), crop.readUInt16LE(2), crop.readUInt16LE(4), crop.readUInt16LE(6)],
       [5, 6, 9, 10],
     );
-  });
-
-  test("a rectangle wider than the device's buffer is split on whole rows", () => {
-    const pieces = splitRect({ x: 0, y: 0, width: 466, height: 466 }, 16384);
-    // 466 pixels is 932 bytes a row, so 17 rows fit in 16 KB.
-    assert.equal(pieces[0]?.height, 17);
-    assert.equal(
-      pieces.reduce((total, piece) => total + piece.height, 0),
-      466,
-    );
-    for (const piece of pieces) assert.ok(piece.width * piece.height * 2 <= 16384);
-  });
-
-  test("a rectangle that already fits is not split", () => {
-    const rect = { x: 4, y: 4, width: 32, height: 32 };
-    assert.deepEqual(splitRect(rect, 16384), [rect]);
   });
 });

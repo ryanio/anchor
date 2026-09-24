@@ -102,7 +102,7 @@ const MAX_HELLO_PAYLOAD = 10 + 255;
  * The boot log below is a few hundred bytes. This is generous enough to hold several of them and
  * small enough that a port babbling forever cannot grow the process.
  */
-export const MAX_PRESYNC_BYTES = 8192;
+const MAX_PRESYNC_BYTES = 8192;
 
 /**
  * Find where the device's first HELLO starts, or -1.

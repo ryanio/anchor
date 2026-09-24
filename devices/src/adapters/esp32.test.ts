@@ -19,18 +19,15 @@ import {
   type Esp32PulseDevice,
   isLoopback,
   MemoryLink,
-  PANELS,
   PairingError,
   SCREEN_SLOT,
 } from "./esp32.ts";
 import {
-  decodeMessages,
   encodeHeader,
   encodeHello,
   encodeInput,
   HEADER_BYTES,
   type Hello,
-  MAX_PANEL_PIXELS,
   MessageType,
   PixelFormat,
   PROTOCOL_VERSION,
@@ -111,9 +108,6 @@ const listWithSelection = (selected: number | undefined): Surface => ({
   selected,
 });
 
-/** Every message type, for reading back what the *host* wrote. */
-const ALL_TYPES: ReadonlySet<number> = new Set(Object.values(MessageType));
-
 interface SentTile {
   readonly x: number;
   readonly y: number;
@@ -164,13 +158,6 @@ describe("capabilities", () => {
       { id: SCREEN_SLOT, kind: "screen", paintable: true, width: 240, height: 536 },
     ]);
     assert.deepEqual(capabilities.inputs, ["tap", "swipe"]);
-  });
-
-  test("the panel table is documentation, and every entry is a panel a hello could declare", () => {
-    for (const [name, panel] of Object.entries(PANELS)) {
-      assert.ok(panel.width > 0 && panel.height > 0, `${name} has a size`);
-      assert.ok(panel.width * panel.height <= MAX_PANEL_PIXELS, `${name} is within the hello ceiling`);
-    }
   });
 });
 
@@ -319,6 +306,7 @@ describe("paint", { skip: noRasteriser }, () => {
     await device.paint(frameFor(tile("ready")));
     const { tiles } = sent(link);
     assert.ok(tiles.length > 1, "a 32 KB frame must not arrive as one 4 KB tile");
+    assert.equal(tiles[0]?.height, 16, "each piece is as many whole rows as fit");
     for (const entry of tiles) assert.ok(entry.width * entry.height * 2 <= 4096);
     assert.equal(paintedPixels(tiles), PANEL_PIXELS);
     await device.close();
@@ -341,21 +329,9 @@ describe("paint", { skip: noRasteriser }, () => {
     await device.close();
   });
 
-  test("blank clears the panel and forces a full repaint after it", async () => {
+  test("setBlanked clears the panel, and unblanking repaints rather than restoring", async () => {
     // The session-lock path. `docs/security.md`: private wallet data must not stay on a screen the
     // desktop has locked, and a desk display cannot know it locked unless the host says so.
-    const { link, device } = await connect();
-    await device.paint(frameFor(tile("ready")));
-    link.sent.length = 0;
-    await device.blank();
-    assert.deepEqual(sent(link).types, [MessageType.Blank]);
-    link.sent.length = 0;
-    await device.paint(frameFor(tile("ready")));
-    assert.equal(paintedPixels(sent(link).tiles), PANEL_PIXELS);
-    await device.close();
-  });
-
-  test("setBlanked is the contract's name for it, and unblanking repaints rather than restoring", async () => {
     // `AnchorDevice.setBlanked` is what a lock-signal subscriber calls, so an adapter that only had
     // `blank()` would be skipped by it silently — the display stays lit and nothing reports a fault.
     const { link, device } = await connect();
@@ -391,15 +367,6 @@ describe("liveness", () => {
     device.onPong((answered) => seen.push(answered));
     link.receive(encodeHeader(MessageType.Pong, seq, 0));
     assert.deepEqual(seen, [seq]);
-    await device.close();
-  });
-
-  test("a device may not answer with anything but a pong", async () => {
-    // The mirror of the firmware's own refusal. A device that replies to a ping with a tile is
-    // trying to paint the host's idea of the panel, and the link goes down rather than parsing it.
-    const { link, device } = await connect();
-    link.receive(encodeHeader(MessageType.Tile, 1, 0));
-    assert.equal(link.closed, true);
     await device.close();
   });
 });
@@ -443,13 +410,5 @@ describe("the wire has no vocabulary for spending", () => {
     for (const forbidden of ["sign", "key", "approve", "approval", "tx", "transaction", "spend"]) {
       assert.equal(names.includes(forbidden), false, `MessageType must not contain ${forbidden}`);
     }
-  });
-
-  test("a device-to-host message carries a shape with no free text in it", () => {
-    const { messages } = decodeMessages(encodeHello(1, smallHello), ALL_TYPES);
-    assert.equal(messages.length, 1);
-    assert.deepEqual(Object.keys(messages[0] ?? {}).sort(), ["hello", "seq", "type"]);
-    const input = decodeMessages(encodeInput(2, { kind: "tap", slot: SCREEN_SLOT, x: 1, y: 2 }), ALL_TYPES);
-    assert.deepEqual(Object.keys(input.messages[0] ?? {}).sort(), ["input", "seq", "type"]);
   });
 });

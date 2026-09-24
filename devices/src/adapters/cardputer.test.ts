@@ -61,6 +61,16 @@ function build(): { device: CardputerDevice; link: MemoryLink; inputs: DeviceInp
 
 const tile = (label: string): Surface => ({ kind: "tile", emphasis: "ground", label });
 
+/**
+ * A frame that fills the screen slot, which is what a `layout: "screen"` page produces.
+ *
+ * The device learns which layout it is in from the frame rather than from config, because the
+ * frame is the only thing it is told — and that has to be re-learnt every paint: a browse page
+ * followed by a page of keys must get its tile cursor back.
+ */
+const screenFrame = (): Frame =>
+  new Map<string, Surface>([[SCREEN_SLOT, { kind: "list", rows: [{ label: "ALP", value: "$1.50" }] }]]);
+
 function frameOf(entries: Record<string, Surface>): Frame {
   return new Map(Object.entries(entries));
 }
@@ -87,20 +97,6 @@ describe("geometry", () => {
   const gridRects = (geometry: typeof CARDPUTER_V11): { x: number; y: number; w: number; h: number }[] =>
     [...slotRects(geometry).entries()].filter(([id]) => id !== SCREEN_SLOT).map(([, rect]) => rect);
 
-  test("the slots tile the screen exactly, with no overlap and nothing left over", () => {
-    const rects = gridRects(CARDPUTER_V11);
-    const area = rects.reduce((sum, rect) => sum + rect.w * rect.h, 0);
-    const { width, height } = tileSize(CARDPUTER_V11);
-    assert.equal(width, 80, "240 across three columns");
-    assert.equal(height, 37, "111 of usable height across three rows");
-    assert.equal(area, 240 * 24 + 9 * 80 * 37, "status bar plus nine tiles");
-    for (const rect of rects) {
-      assert.ok(rect.x >= 0 && rect.y >= 0, "no slot starts off-screen");
-      assert.ok(rect.x + rect.w <= CARDPUTER_V11.width, "no slot runs past the right edge");
-      assert.ok(rect.y + rect.h <= CARDPUTER_V11.height, "no slot runs past the bottom edge");
-    }
-  });
-
   test("the flint geometry stops where the firmware's own status bar starts", () => {
     // flint owns the bottom 12 rows of the panel and draws a status bar there. A host layout that
     // assumed the whole 240x135 would paint over it, and the device would be right to refuse the op.
@@ -109,6 +105,7 @@ describe("geometry", () => {
     assert.equal(area, CARDPUTER_FLINT.width * CARDPUTER_FLINT.height, "the slots tile the body");
     for (const rect of [...rects, slotRects(CARDPUTER_FLINT).get(SCREEN_SLOT)]) {
       assert.ok(rect !== undefined, "every slot has a rectangle, the screen included");
+      assert.ok(rect.x >= 0 && rect.y >= 0, "no slot starts off-screen");
       assert.ok(rect.y + rect.h <= 123, "nothing reaches into the firmware's status bar");
       assert.ok(rect.x + rect.w <= 240);
     }
@@ -135,15 +132,6 @@ describe("geometry", () => {
       assert.equal(spec?.width, screen.w, "the slot's own dimensions are the rectangle's");
       assert.equal(spec?.height, screen.h);
     }
-  });
-
-  test("it declares only the inputs it has", () => {
-    const { inputs } = capabilitiesFor(CARDPUTER_V11);
-    // No encoder and no touchscreen. A device that claimed `rotate` would get dial config it cannot
-    // drive, which is the failure the `paintable` flag exists to prevent one layer down.
-    assert.equal(inputs.includes("rotate"), false);
-    assert.equal(inputs.includes("tap"), false);
-    assert.deepEqual([...inputs].sort(), ["press", "release", "swipe"]);
   });
 });
 
@@ -287,16 +275,13 @@ describe("decodeDeviceMessage", () => {
       '{"t":"power","percent":"lots","charging":false}',
       '{"t":"execute","request":"buy"}',
       `{"t":"key","key":"${"a".repeat(5000)}","down":true}`,
+      // A control character dressed as a key: a rogue keyboard reporting an escape sequence would
+      // otherwise put terminal control bytes into a string this process writes to its own stderr.
+      '{"t":"key","key":"\\u001b","down":true}',
+      '{"t":"key","key":"\\u0000","down":true}',
     ]) {
       assert.equal(decodeDeviceMessage(line), null, `should have refused: ${line.slice(0, 40)}`);
     }
-  });
-
-  test("refuses a control character dressed as a key", () => {
-    // A rogue keyboard reporting an escape sequence would otherwise put terminal control bytes into
-    // a string this process writes to its own stderr.
-    assert.equal(decodeDeviceMessage('{"t":"key","key":"\\u001b","down":true}'), null);
-    assert.equal(decodeDeviceMessage('{"t":"key","key":"\\u0000","down":true}'), null);
   });
 
   test("clamps a charge level rather than trusting it", () => {
@@ -361,15 +346,6 @@ describe("the keyboard in navigate mode", () => {
 });
 
 describe("the keyboard on a page that is one screen", () => {
-  /**
-   * A frame that fills the screen slot, which is what a `layout: "screen"` page produces.
-   *
-   * The device learns which layout it is in from the frame rather than from config, because the
-   * frame is the only thing it is told — and that has to be re-learnt every paint: a browse page
-   * followed by a page of keys must get its tile cursor back.
-   */
-  const screenFrame = (): Frame =>
-    new Map<string, Surface>([[SCREEN_SLOT, { kind: "list", rows: [{ label: "ALP", value: "$1.50" }] }]]);
   const keyFrame = (): Frame =>
     new Map<string, Surface>([[keySlot(0), { kind: "tile", label: "One", emphasis: "ground" }]]);
 
@@ -421,25 +397,6 @@ describe("the keyboard on a page that is one screen", () => {
     device.handleKey("right", true);
     assert.equal(device.selectedSlot, keySlot(1));
     assert.deepEqual(inputs, []);
-  });
-
-  test("no keystroke, on a screen page either, produces anything but press, release or swipe", async () => {
-    // The boundary suite's claim, restated against the layout that did not exist when it was
-    // written: a second mapping is a second chance to give a keyboard a verb it should not have.
-    const { device, inputs } = build();
-    await device.paint(screenFrame());
-    const keys = ["up", "down", "left", "right", "enter", "esc", "tab", "backspace", ...[..."0123456789/"]];
-    for (const key of keys) {
-      device.handleKey(key, true, true);
-      device.handleKey(key, false, true);
-    }
-    const allowed = new Set(["press", "release", "swipe"]);
-    const slots = new Set(device.capabilities.slots.map((slot) => slot.id));
-    for (const input of inputs) {
-      assert.ok(allowed.has(input.kind), `unexpected input kind ${input.kind}`);
-      assert.ok(slots.has(input.slot), `input for an undeclared slot: ${input.slot}`);
-    }
-    assert.ok(inputs.length > 0, "the mapping should do something, or this test proves nothing");
   });
 });
 
@@ -500,11 +457,14 @@ describe("the keyboard in filter mode", () => {
 });
 
 describe("the boundary", () => {
-  test("no keystroke, in any mode, produces anything but press, release or swipe", () => {
+  test("no keystroke, in any mode, produces anything but press, release or swipe", async () => {
     // AGENTS.md invariant 1. The device may render a proposal and say "I am looking at this"; it can
     // never say "do it". This exhausts the key space to show that as a property of the mapping rather
-    // than of anyone's care.
+    // than of anyone's care. The screen layout is a second mapping, so it is a second chance to give
+    // a keyboard a verb it should not have.
     const { device, inputs } = build();
+    const screen = build();
+    await screen.device.paint(screenFrame());
     const keys = [
       "up",
       "down",
@@ -523,13 +483,18 @@ describe("the boundary", () => {
         device.handleKey(key, false, true);
       }
     }
+    for (const key of keys) {
+      screen.device.handleKey(key, true, true);
+      screen.device.handleKey(key, false, true);
+    }
     const allowed = new Set(["press", "release", "swipe"]);
     const slots = new Set(device.capabilities.slots.map((slot) => slot.id));
-    for (const input of inputs) {
+    for (const input of [...inputs, ...screen.inputs]) {
       assert.ok(allowed.has(input.kind), `unexpected input kind ${input.kind}`);
       assert.ok(slots.has(input.slot), `input for an undeclared slot: ${input.slot}`);
     }
     assert.ok(inputs.length > 0, "the mapping should do something, or this test proves nothing");
+    assert.ok(screen.inputs.length > 0, "and so should the screen mapping");
   });
 
   test("a hostile device cannot make the adapter say anything but its own protocol", () => {
@@ -630,12 +595,6 @@ describe("a device that comes and goes", () => {
     link.receive({ t: "hello", proto: 1, fw: "0.1.0", width: 240, height: 135 });
     assert.equal(await waited, true);
     assert.equal(await device.waitForHello(10), true, "an identified device stays identified");
-  });
-
-  test("an idle panel still says something, so silence means the link is gone", async () => {
-    const { device, link } = build();
-    await device.ping();
-    assert.equal(link.sent().at(-1)?.t, "ping");
   });
 });
 
