@@ -44,6 +44,13 @@
 #include "../app/feed.h"
 #include "pulse_feed_view.h"
 #include "pulse_explore.h"
+#include "pulse_companion.h"
+
+/* The companion is a prototype under review, so a unit boots to the ambient readout unless this is
+ * set. The simulator opens it with `--companion`. */
+#ifndef PULSE_COMPANION_HOME
+#define PULSE_COMPANION_HOME 0
+#endif
 #include "pulse_power.h"
 #include "pulse_ui.h"
 #include "pulse_wifi.h"
@@ -443,6 +450,33 @@ static void refresh_feed(void) {
 
   screen = pulse_feed_view::compose(trending, portfolio, millis() / ROTATE_MS);
   pulse_explore::update(trending, portfolio, millis());
+
+  /* The companion reacts to the same readings, already formatted. See `pulse_companion_model.h`. */
+  static char companion_age[16];
+  pulse_companion::Inputs companion;
+  companion.wifiConfigured = pulse_wifi::configured();
+  companion.online = pulse_wifi::connected();
+  companion.fetching = trending.status == pulse_feed_view::Status::Fetching ||
+                       portfolio.status == pulse_feed_view::Status::Fetching;
+  companion.stale = trending.status == pulse_feed_view::Status::Failed && trending.everSucceeded;
+  companion.havePortfolio = portfolio.everSucceeded;
+  companion.total = portfolio.total;
+  companion.change = portfolio.change;
+  companion.changePositive = portfolio.changePositive;
+  companion.covered = portfolio.covered;
+  companion.configured = portfolio.configured;
+  companion.haveTrending = trending.count > 0;
+  if (trending.count > 0) {
+    companion.topSymbol = view_tokens[0].symbol;
+    companion.topPrice = view_tokens[0].price;
+    companion.topChange = view_tokens[0].change;
+    companion.topPositive = view_tokens[0].changePositive;
+  }
+  if (trending.everSucceeded) {
+    pulse_feed_view::formatAge(trending.ageMs, companion_age, sizeof(companion_age));
+    companion.age = companion_age;
+  }
+  pulse_companion::update(companion);
   pulse_ui::update(screen);
 }
 
@@ -717,6 +751,10 @@ void setup() {
   pulse_wifi::begin();
   pulse_explore::begin(pulse_wifi::open);
   pulse_ui::onExplore(pulse_explore::open);
+  pulse_companion::begin(pulse_explore::open, pulse_wifi::open);
+#if PULSE_COMPANION_HOME
+  pulse_companion::open();
+#endif
   pulse_wifi::attachOpenGesture(pulse_ui::surface());
   /* `LV_EVENT_PRESSED` rather than `LV_EVENT_CLICKED`: a press is reported the moment LVGL decides
    * a finger is down, which is what a calibration readout wants. A click waits for the release and

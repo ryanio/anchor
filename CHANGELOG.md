@@ -14,6 +14,13 @@ becomes `## [0.1.0] - YYYY-MM-DD` at the moment the tag is pushed, and not befor
 
 ### Added
 
+A companion character for the ESP32, as a prototype that is off by default: a glowing face that
+blinks, breathes, looks happy or worried with the portfolio's day, sleepy when offline, curious while
+fetching, and says the portfolio total or the top trending token when tapped, using only readings
+the feed already formatted. It builds its objects only while it is on screen, so the crowded Wi-Fi
+scan keeps the LVGL pool headroom it had. `PULSE_COMPANION_HOME=1` makes it the home screen.
+
+
 Cardputer OpenSea reads now run on a bounded background worker. App exit, token changes, and network
 changes invalidate unfinished work without destroying another task's HTTP objects. ESP32 feed reads
 use the same generation gate and one worker slot, and clear old portfolio totals when configured

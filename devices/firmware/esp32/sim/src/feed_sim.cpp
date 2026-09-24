@@ -206,6 +206,18 @@ void simScenario(const char *name) {
 		scenario_portfolio_ever = true;
 		scenario_portfolio_age_ms = 9000;
 		seedPortfolio("$3,125", "$105.29", "+3.54%", true, 6, 6);
+	} else if (strcmp(name, "portfolio-down") == 0) {
+		/* A down day, so the companion's worried face has something to be worried about. The figures
+		 * are the ones above moved down rather than a new invention. */
+		scenario_status = Status::Online;
+		scenario_reason = "";
+		scenario_ever = true;
+		seed(8);
+		scenario_portfolio_status = Status::Online;
+		scenario_portfolio_reason = "up to date";
+		scenario_portfolio_ever = true;
+		scenario_portfolio_age_ms = 9000;
+		seedPortfolio("$2,996", "$101.18", "-4.12%", false, 6, 6);
 	} else if (strcmp(name, "portfolio-partial") == 0) {
 		/*
 		 * Four of six answered, which is the scenario this whole feature is judged on.

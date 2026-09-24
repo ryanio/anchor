@@ -56,6 +56,42 @@ The tearing-activity probe counted 18 transitions in 150 ms; its historical bann
 34 to 36. That difference needs comparison with the visible panel before changing the driver. A
 startup banner and memory readings do not establish touch quality, frame rate, or network operation.
 
+## The companion (prototype)
+
+`pulse/pulse_companion.{h,cpp}` draws a character on its own screen: a glowing rounded body with two
+eyes and a mouth that blinks, breathes, and reacts to the readings. It was inspired by
+character-led devices like Meta's Muse Charm and is our own drawing. There is no AI in it. The mood
+and wording are in `pulse/pulse_companion_model.h`, tested by `host/companion.cpp`:
+
+| Mood | When |
+|---|---|
+| Lost | no Wi-Fi saved; a tap opens Wi-Fi setup |
+| Sleepy | not connected, or the trending reading is stale |
+| Curious | asking OpenSea with nothing to show yet |
+| Happy / Worried | the portfolio's 24h change is up / down, or the top trending token's when there is no portfolio |
+| Content | anything else |
+
+A tap steps through what it can say, "Your wallets: $3,125 (6 of 6) / +3.54% today" and then the top
+trending token, using only strings the feed already formatted. Explore opens from its header.
+
+It is not the home screen yet. A unit boots to the ambient readout unless the firmware is built
+with `PULSE_COMPANION_HOME=1`. The simulator opens it with `--companion`, and the `companion`,
+`companion-tap`, `companion-return` and `companion-crowded` scenarios cover it.
+
+Two constraints came out of building it:
+
+- **No wide LVGL shadow for the glow.** A 64 px shadow on the body failed its buffer allocation and
+  LVGL wrote through a null pointer. The glow is two translucent rounded layers instead.
+- **Its objects exist only while it is on screen.** Built at boot, or built once and kept, it made
+  the 32-network Wi-Fi scan run out of LVGL pool and crash. It now deletes its children when another
+  screen replaces it and rebuilds them on return. With it as home, the crowded scan peaks at
+  110,728 bytes with a 22,400-byte largest free block. Removing that deletion makes
+  `companion-crowded` segfault again, which is the control for the fix.
+
+Curves are crescents, a dark circle with a body-coloured circle laid over it, because arcs are not
+compiled in and a one-sided border on a circle draws as a shallow dash. The body is one flat colour
+for the same reason.
+
 ## Health line for long runs
 
 Once a minute the `pulse/` firmware prints one line to Serial:

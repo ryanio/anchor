@@ -40,6 +40,7 @@
 
 #include "lvgl.h"
 
+#include "pulse_companion.h"
 #include "pulse_power.h"
 #include "pulse_ui.h"
 #include "pulse_wifi.h"
@@ -297,6 +298,7 @@ void usage() {
       "  --connect-ms MS     how long a join takes to resolve (default 2000)\n"
       "  --join-fail         every join fails, whatever was typed\n"
       "  --open-wifi         open Wi-Fi setup immediately, as the hold gesture would\n"
+      "  --companion         open the companion screen after setup\n"
       "  --no-psram          refuse the SPIRAM allocation, to exercise the smaller draw buffer\n"
       "  --quiet             do not print the boot banner\n"
       "  --then-feed NAME    switch feed fixture as the next scripted step\n"
@@ -314,6 +316,7 @@ int main(int argc, char **argv) {
   bool have_saved = false;
   bool wifi_wired = false;
   bool open_wifi = false;
+  bool open_companion = false;
   bool power_wired = false;
 
   for (int i = 1; i < argc; i++) {
@@ -367,6 +370,8 @@ int main(int argc, char **argv) {
     } else if (strcmp(arg, "--battery") == 0 && more) {
       parseBattery(argv[++i]);
       power_wired = true;
+    } else if (strcmp(arg, "--companion") == 0) {
+      open_companion = true;
     } else if (strcmp(arg, "--open-wifi") == 0) {
       wifi_wired = true;
       open_wifi = true;
@@ -431,6 +436,7 @@ int main(int argc, char **argv) {
   // setup() owns module initialization and event handlers. Repeating it here
   // registers gestures twice and tests a different boot from the actual device.
   if (open_wifi) pulse_wifi::open();
+  if (open_companion) pulse_companion::open();
   if (power_wired) printf("sim: %s\n", pulse_power::describe());
 
   if (!quiet) {

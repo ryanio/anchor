@@ -899,6 +899,39 @@ function simEsp32(root: string, paths: DevicePaths, manifest: Toolchain, runner:
       labels: ["Connected", "HomeNet"],
       nvsIncludes: "70617373776f7264",
     },
+    // The companion prototype, which only the simulator opens as a home screen for now: it says the
+    // portfolio first, and a tap on the character moves it on to the top trending token.
+    {
+      name: "companion",
+      taps: "20,440",
+      extra: ["--companion"],
+      labels: ["Your wallets: $3,125 (6 of 6)", "+3.54% today"],
+    },
+    // Leaving the companion deletes its objects; coming back must rebuild them with the same reading.
+    {
+      name: "companion-return",
+      taps: "295,46 70,398",
+      extra: ["--companion"],
+      labels: ["Your wallets: $3,125 (6 of 6)", "+3.54% today"],
+    },
+    // The pool's tightest moment, reached from the companion. Built once and kept, the companion made
+    // this scan run out of LVGL pool and crash.
+    {
+      name: "companion-crowded",
+      networks: Array.from(
+        { length: 32 },
+        (_, i) => `Conference-${i.toString().padStart(2, "0")}-long-network-name:-${35 + i}`,
+      ).join(","),
+      taps: "295,46 295,398",
+      extra: ["--companion", "--wait", "--tap", "180,398"],
+      labels: ["Hidden network"],
+    },
+    {
+      name: "companion-tap",
+      taps: "184,180",
+      extra: ["--companion", "--lead", "3000"],
+      labels: ["STONK is trending", "$0.2400, -4.58% today"],
+    },
     {
       name: "wifi-crowded",
       networks: Array.from(
