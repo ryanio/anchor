@@ -558,3 +558,6 @@ green-locally, red-in-CI failures in one day.
 Test behaviour at the boundary, not implementation details: that non-GET is refused, that stale cache
 is served when the network fails, that a missing key produces a 401 rather than a crash. Those are the
 promises the project makes.
+
+Follow the `test-audit` skill (`.agents/skills/test-audit/SKILL.md`) whenever you write, change, review, or
+sweep tests.
