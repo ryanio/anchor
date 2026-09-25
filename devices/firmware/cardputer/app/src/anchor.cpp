@@ -789,7 +789,7 @@ void drawStandaloneIntro()
 //      what the thing is, then who holds it, then what just happened to it.
 //   2. **The refusal.** A facet never draws holders or activity belonging to a different token than
 //      the one open. `panel.ts`'s `#browseDepth` compares ids for this reason and so does
-//      `openFacetRows` below: rows under the wrong name are indistinguishable from rows that are
+//      `depthIsOurs` below: rows under the wrong name are indistinguishable from rows that are
 //      simply wrong, and AGENTS.md puts that failure above every other one here.
 //
 // And one thing it cannot keep: the host's footer says "esc: back", and escape on this keyboard

@@ -1547,8 +1547,9 @@ function isIncomingOffer(event, wallet) {
  * Everything with a clock on it, soonest first.
  *
  * Incoming offers expire, and an expiry the user does not see is the one thing a bar widget is
- * actually for. Anything already past, or further out than `windowHours`, is dropped: a countdown
- * reading `41d` is noise, and one reading `ended` is a lie about a decision still being available.
+ * actually for. Anything already past, or further out than `deadlineWindowHours`, is dropped: a
+ * countdown reading `41d` is noise, and one reading `ended` is a lie about a decision still being
+ * available.
  */
 function deadlines(state, nowMs, settings) {
   const now = Number(nowMs) || Date.now();

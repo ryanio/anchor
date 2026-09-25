@@ -14,14 +14,7 @@ namespace {
 /*
  * The card is inset a step from the panel and its content a step from the card, which puts the first
  * pixel of text at 32 — a step and a half outside the corner clearance, because the card's own
- * rounded corner is already inside it.
- *
- * `READING_ROW_STEP` is the one number here that is not a step off the scale, and it is not arbitrary
- * either: four rows plus the title block plus the footer is exactly the 448 available, so it is the
- * panel divided by its content rather than a gap somebody chose. The footer numbers moved once after
- * looking at the render — the first pass left 6px between the last row and the rule and 32px of dead
- * space under the footer text, which reads as a screen that has slumped upward. Obvious in a PNG and
- * invisible in the arithmetic, which is the whole reason `sim/lvgl.sh` exists.
+ * rounded corner is already inside it. The rows below the title are laid out by `SLOT`.
  */
 constexpr int32_t CARD_INSET = space::md;
 constexpr int32_t CARD_PAD = space::lg;
