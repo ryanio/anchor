@@ -9,7 +9,6 @@
  */
 
 const REPO = "https://github.com/ryanio/anchor";
-const GAME_REPO = "https://github.com/ryanio/tidebreak";
 
 export const LINKS = {
   site: "https://anchor.ryanio.com",
@@ -18,13 +17,10 @@ export const LINKS = {
   agents: `${REPO}/blob/main/AGENTS.md`,
   autonomy: `${REPO}/blob/main/docs/autonomy.md`,
   security: `${REPO}/blob/main/docs/security.md`,
-  tokens: `${REPO}/blob/main/docs/tokens.md`,
 
   game: "https://ryanio.github.io/tidebreak/",
-  gameRepo: GAME_REPO,
 
   omarchy: "https://omarchy.org",
-  opensea: "https://opensea.io",
 
   ryan: "https://ryanio.com",
   x: "https://x.com/r_alx_z",

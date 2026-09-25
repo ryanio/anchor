@@ -242,8 +242,8 @@ function page(title: string, body: string, opts: { subtitle?: string } = {}): st
 <meta name="description" content="Anchor — make your wallet a part of your desktop, not another browser tab.">
 <meta property="og:title" content="${esc(title)}">
 <meta property="og:description" content="An ambient OpenSea experience for Omarchy — a wallet-aware desktop, built in the open.">
-<meta property="og:image" content="https://anchor.ryanio.com/assets/og.jpg">
-<meta property="og:url" content="https://anchor.ryanio.com/">
+<meta property="og:image" content="${LINKS.site}/assets/og.jpg">
+<meta property="og:url" content="${LINKS.site}/">
 <meta property="og:type" content="website">
 <meta name="twitter:card" content="summary_large_image">
 <style>${TOKENS}
@@ -444,7 +444,7 @@ function entryRows(list: readonly (typeof entries)[number][]): string {
   return list
     .map(
       (e) =>
-        `<li><a class="glass" href="/diary/${e.slug}.html"><span class="entry-date">${esc(e.date)}</span><span class="entry-title">${esc(e.title)}</span><span class="entry-summary">${esc(e.summary)}</span></a></li>`,
+        `<li><a class="glass" href="${PATHS.diary(e.slug)}"><span class="entry-date">${esc(e.date)}</span><span class="entry-title">${esc(e.title)}</span><span class="entry-summary">${esc(e.summary)}</span></a></li>`,
     )
     .join("");
 }
@@ -504,19 +504,19 @@ const llms = [
   "",
   "## Build diary",
   "",
-  ...entries.map((e) => `- [${e.title}](https://anchor.ryanio.com/diary/${e.slug}.html): ${e.summary}`),
+  ...entries.map((e) => `- [${e.title}](${LINKS.site}${PATHS.diary(e.slug)}): ${e.summary}`),
   "",
   "## Project",
   "",
-  "- [Changelog](https://anchor.ryanio.com/changelog.html): what shipped, and what broke.",
-  "- [Source](https://github.com/ryanio/anchor): the repository.",
-  "- [Working agreement](https://github.com/ryanio/anchor/blob/main/AGENTS.md): invariants, definition of done, what needs a human.",
-  "- [Autonomy model](https://github.com/ryanio/anchor/blob/main/docs/autonomy.md): how an agent holds a real balance under spend controls enforced outside it.",
-  "- [Security model](https://github.com/ryanio/anchor/blob/main/docs/security.md): keys, policy, and the withdrawal allowlist.",
+  `- [Changelog](${LINKS.site}${PATHS.changelog}): what shipped, and what broke.`,
+  `- [Source](${LINKS.repo}): the repository.`,
+  `- [Working agreement](${LINKS.agents}): invariants, definition of done, what needs a human.`,
+  `- [Autonomy model](${LINKS.autonomy}): how an agent holds a real balance under spend controls enforced outside it.`,
+  `- [Security model](${LINKS.security}): keys, policy, and the withdrawal allowlist.`,
   "",
   "## Related",
   "",
-  "- [Tidebreak](https://ryanio.github.io/tidebreak/): a side project — a Roman battle in the browser, no dependencies.",
+  `- [Tidebreak](${LINKS.game}): a side project — a Roman battle in the browser, no dependencies.`,
   "",
 ].join("\n");
 writeFileSync(join(OUT, "llms.txt"), `${llms}\n`);
