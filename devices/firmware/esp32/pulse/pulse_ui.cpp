@@ -13,7 +13,7 @@ using namespace pulse_design;
  *
  * Built once rather than torn down and rebuilt on every kind change, because a device that spends a
  * minute joining a network crosses this boundary several times — no credentials, joining, fetching,
- * a reading, stale — and rebuilding an LVGL tree per transition is allocation churn on a 64 kB pool
+ * a reading, stale — and rebuilding an LVGL tree per transition is allocation churn on a 128 kB pool
  * for a screen that is going to change back. `lv_mem_monitor` in the boot banner is the check on
  * that claim; the whole of this screen was 8,816 bytes with one archetype in it.
  */

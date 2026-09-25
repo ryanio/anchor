@@ -27,7 +27,7 @@
  * never run either.
  *
  * So: PSRAM first — LVGL's tree, styles and glyph caches are not on a hot memcpy path and there are
- * ~7.9 MB going spare — and internal SRAM if there is no PSRAM, where 64 kB still fits inside the
+ * ~7.9 MB going spare — and internal SRAM if there is no PSRAM, where 128 kB still fits inside the
  * ~267 kB this part reports free with the USB stack up. A slower screen is a screen. A null pool is
  * not.
  */
