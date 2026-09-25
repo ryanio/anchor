@@ -61,6 +61,14 @@ describe("routing", () => {
     assert.match((await json<{ error: string }>(res)).error, /wallet/i);
   });
 
+  test("a malformed percent-escape in a path segment is a 400, not an upstream failure", async () => {
+    for (const path of ["/tokens/%E0", "/tokens/%E0/holders", "/collections/%E0"]) {
+      const res = await fetch(`${base}${path}`);
+      assert.equal(res.status, 400, path);
+      assert.match((await json<{ error: string }>(res)).error, /malformed/i, path);
+    }
+  });
+
   test("trailing slashes resolve to the same route", async () => {
     assert.equal((await fetch(`${base}/health/`)).status, 200);
   });

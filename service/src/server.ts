@@ -473,7 +473,12 @@ export function createApp(config: Config, client: OpenSeaClient, deps: ServerDep
         send(res, 401, { error: (err as Error).message }, headOnly);
         return;
       }
-      if (err instanceof TypeError && /Invalid URL/i.test((err as Error).message)) {
+      // A path segment with a bad percent-escape (`/tokens/%E0`) throws URIError from
+      // decodeURIComponent. That is the caller's malformed request, not an upstream failure.
+      if (
+        err instanceof URIError ||
+        (err instanceof TypeError && /Invalid URL/i.test((err as Error).message))
+      ) {
         send(res, 400, { error: "Malformed request URL." }, headOnly);
         return;
       }

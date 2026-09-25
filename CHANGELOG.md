@@ -635,6 +635,9 @@ assuming it, so a machine without one shows the command exactly as before.
   gap, and what to delete when each is fixed.
 
 ### Changed
+- **A malformed percent-escape in a path is a 400.** `/tokens/%E0` or `/collections/%E0` made
+  `decodeURIComponent` throw, and the service answered 502 "URI malformed", which reads as an
+  upstream failure. It is the caller's bad request, so it now gets 400 "Malformed request URL."
 - **Enter on a screen runs only a cell that is on the glass.** A screen press had no page check, so an
   Enter landing after a page change but before the repaint ran the new page's key at the selected
   index. On the Cardputer, Tab off a browse page then a quick Enter could run desktop key 0 (`theme
