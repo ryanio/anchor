@@ -27,18 +27,6 @@ jobs:
       - name: Build the site
         run: node site/build.ts
 
-      # Cloudflare's dashboard now defaults to creating *Workers* projects, but `pages deploy`
-      # needs a *Pages* project — an easy, invisible mismatch that failed this deploy with
-      # "Project not found [code: 8000007]". Creating it here removes the manual prerequisite.
-      # Expected to fail once the project exists, hence continue-on-error.
-      - name: Ensure the Pages project exists
-        uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
-        continue-on-error: true
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages project create anchor --production-branch=main
-
       - name: Publish to Cloudflare Pages
         # Pinned to a commit, not a mutable tag: this action receives the deploy token, and
         # AGENTS.md treats every dependency as a supply-chain risk. Update deliberately.
