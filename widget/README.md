@@ -91,7 +91,7 @@ hand-edit.
 | `r` in the panel | Refresh |
 | `v` in the panel | Toggle the value |
 | `d` in the panel | Show or hide the details view |
-| `b` in the panel | Cycle the portfolio breakdown: type · assets · chains |
+| `b` in the panel | Cycle the portfolio breakdown: type · wallets · assets · chains |
 | `s` in the panel | Run the current setup step's action — the same thing its button does |
 | `Esc` | Close |
 
@@ -140,10 +140,9 @@ subtitle were all saying it already.
    `~/.config/anchor/config.json` in the editor Omarchy is configured to use.
 
 **Every configured wallet is watched.** `wallets` is a list and `wallet: "0x…"` is still read as a
-one-element one. What Anchor cannot do is *discover* a person's wallets: it holds no wallet
-credential by design, and no endpoint maps a human to their addresses. So the step is widened
-rather than deleted, and it comes back if the list is emptied. Auto-discovery arrives with a wallet
-adapter, not here.
+one-element one. The one discovery the service does is reading the wallets a stored wallet PAT
+names, when the config lists none; no endpoint maps a human to their addresses. So the step is
+widened rather than deleted, and it comes back if the list is emptied.
 
 Optional, collapsed behind a pill you can press: **watch a few collections**, for floor prices.
 
@@ -194,10 +193,11 @@ this widget and the site alike. What follows is what those principles cost in th
 - **The number says where it came from.** Which wallets, and how old, in one line under the total.
   Not a debug line: a total is a claim about specific addresses at a specific moment, and a panel
   that prints the figure without either is asking to be believed rather than read.
-- **A breakdown is a labelled split bar, never a pie**, and each of its three views states what it
-  covers. `type` is the whole portfolio; `assets` and `chains` come from `/balances` and are the
-  *token* half, which they say, with their own total. Drawing NFT value into a chain split would
-  need per-chain NFT valuation the endpoint does not return.
+- **A breakdown is a labelled split bar, never a pie**, and each of its four views states what it
+  covers. `type` is the whole portfolio; `wallets` is each wallet's own total beside the sum;
+  `assets` and `chains` come from `/balances` and are the *token* half, which they say, with their
+  own total. Drawing NFT value into a chain split would need per-chain NFT valuation the endpoint
+  does not return.
 - **USD always carries two decimal places.** `$125,430.5` is not a dollar amount. The rule is keyed
   on the denomination and applies only to it: ETH at 8 places must not become `1.50000000`.
 - **Depth comes from the theme, not from Anchor.** `OmarchyPalette` reads the active theme's

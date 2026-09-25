@@ -218,6 +218,6 @@ whole desktop follows — terminal, Neovim, notifications, the bar, this widget 
 Anchor to change. `omarchy theme set` already reloads it live. Failing that, one more source merged
 into `OmarchyPalette.themeColors` reaches every colour the widget draws.
 
-What would block it is a hex literal at a call site, which is why rule 6 is a rule. There are none:
+What would block it is a hex literal at a call site, which is why principle 8 is a rule. There are none:
 `grep -n '#[0-9a-f]\{6\}' widget/*.qml` returns nothing but the fallback in `OmarchyPalette`, which
 is the value used when no theme is applied at all.

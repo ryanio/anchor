@@ -126,7 +126,7 @@ write on the physical unit.
 ## Wi-Fi setup, on the glass
 
 `pulse_wifi.{h,cpp}` is the LVGL replacement for `../app/wifi_setup.cpp`: an `lv_list` of networks,
-an `lv_keyboard` over an `lv_textarea` in password mode, and a result screen that says what actually
+the `pulse_keypad` button matrix over an `lv_textarea` in password mode, and a result screen that says what actually
 happened. It owns its own LVGL screen — `open()` remembers whichever screen was loaded and `close()`
 puts it back — so the ambient readout never has to know it exists.
 
@@ -145,7 +145,7 @@ devices/firmware/esp32/sim/lvgl.sh --wifi --saved "Guest:seaports" --networks "G
 The harness prints every `WiFi.begin()` the firmware made and what NVS ended up holding, which is how
 "only the credential that worked is saved" is checked rather than asserted.
 
-Four lines wire it into `pulse.ino`; until they are there, `--wifi` is the only thing that calls it.
+`pulse.ino` calls it: `pulse_wifi::begin()` in `setup()` and `pulse_wifi::tick()` in `loop()`.
 
 **Measured** (the `## Measured` figures below predate both this module and `feed`):
 
@@ -207,7 +207,8 @@ the unit's revision and stable USB path have been confirmed. See
   wire-format decoder, the WiFi stack and the setup UI that this sketch does not.
 - **The whole screen lives in 8,816 bytes of LVGL heap**, zero fragmentation, reported by
   `lv_mem_monitor()` in the boot banner and by the simulator at exit. `LV_MEM_SIZE` was 256 kB of
-  guessed headroom until that number existed; it is 64 kB now.
+  guessed headroom until that number existed; it is 128 kB now, sized for Explore and Wi-Fi setup
+  together (the comment in `lv_conf.h` has the measurement).
 - **The layout renders correctly through a 24-line draw buffer as well as a 96-line one.** Same
   picture, more flushes — which is the check that the partial-refresh tiling is right, and a bug
   there would show as banding.
@@ -239,7 +240,7 @@ the unit's revision and stable USB path have been confirmed. See
 In this order, because each answers the next one's question:
 
 1. Flash, and read the banner. `tearing activity` near 34-36/150 ms says the panel is refreshing;
-   `lv_mem` says whether 64 kB was the right pool.
+   `lv_mem` says whether 128 kB was the right pool.
 2. Look at the colours. Blues where reds should be is the byte order, and the fix is one line.
 3. Put a finger on the glass. The footer reports the coordinate LVGL resolved for four seconds and
    the banner prints it too. Nothing, and the CST820 is still silent. Mirrored or transposed, and

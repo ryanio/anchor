@@ -74,7 +74,12 @@ These are not negotiable, and they shape the architecture:
 |---|---|
 | `service/` | Local read-only data service. Everything else reads from here |
 | `widget/` | Quickshell top-bar widget |
-| `theme/` | Gallery wallpaper and palette extraction |
+| `executor/` | Policy-bound execution seam (roadmap step 6) |
+| `devices/` | Stream Deck, ESP32 and Cardputer support, opt-in |
+| `theme/` | The design system: `tokens.css` and `components.css`. Gallery and palette extraction are planned |
+| `themes/` | Omarchy themes authored for this project |
+| `site/` | The project site and build diary |
+| `scripts/` | Repo tooling: version and contrast checks, review capture, device builds |
 | `packaging/` | Arch packaging, targeting the `[omarchy]` repo |
 | `docs/` | Security model, autonomy and spend controls, NFTs vs tokens, chains, upstream workarounds, roadmap |
 | `.node-version` | The Node version, for local `mise` and CI alike. Single source of truth |

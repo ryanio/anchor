@@ -1148,11 +1148,13 @@ function statusDetail(state, nowMs, settings) {
 // The portfolio, broken down
 // -------------------------------------------------------------------------------------------
 //
-// Three views of one number, and each says what it covers, because they do not all cover the same
+// Four views of one number, and each says what it covers, because they do not all cover the same
 // thing:
 //
 //   **Type** is the whole portfolio. `/portfolio/value` returns `nftValueUsd` and `tokenValueUsd`
 //   and they sum to the total, so this is the only view that accounts for everything.
+//
+//   **Wallets** is each wallet's own total, as the service reports it beside the sum.
 //
 //   **Assets** and **Chains** come from `/balances`, which is the *token* half. They are labelled
 //   as such and their own total is shown, rather than being presented as shares of the portfolio.

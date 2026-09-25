@@ -96,7 +96,7 @@ cd flint && python3 tools/icons/generate.py \
     --pack anchor:ANCHOR:32 --namespace anchorart --out ../app/src/art.h
 
 # the simulator's capture: real bytes off this adapter, not a hand typed approximation
-node scripts/cardputer-session.ts --page anchor --filter azuki
+node scripts/cardputer-session.ts --page portfolio
 ```
 
 The capture goes into the `SESSION` literal in `app/sim/cable_sim.cpp`. Taking it under a different

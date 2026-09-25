@@ -5,7 +5,7 @@
  *   node scripts/panel-states.ts            # write review/panel/*.png
  *   node scripts/panel-states.ts --list     # what would be captured
  *
- * The panel has fifteen states and a live machine is in exactly one of them, so until this existed
+ * The panel has seventeen states and a live machine is in exactly one of them, so until this existed
  * its error and warning screens had never been reviewed by anyone. `widget/PanelContent.qml` renders
  * from a single reading and takes no action of its own, which is what lets it be mounted against a
  * fixture with no service, no bar and no desktop behind it.

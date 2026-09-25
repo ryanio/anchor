@@ -132,8 +132,8 @@ on every startup rather than refused, because no policy edit would fix it, and t
 `executor/src/solana.ts` is the only enforcement there is.
 
 *Verified.* `ProjectOpenSea/wallet-adapters` has adapters for Privy, Turnkey, Fireblocks, Bankr and
-local keys, and bridges for ethers and viem — all EVM. There is no Solana adapter today. That is a
-gap worth closing upstream, since it is the package Anchor would otherwise use.
+local keys, and bridges for ethers and viem, all EVM, plus one Solana adapter, `PrivySvmAdapter`
+(1.1.0, [upstream.md](upstream.md) entry 8). The executor's Solana signer uses it.
 
 ## `setApprovalForAll` has no Solana analogue — which is not the same as being safe
 

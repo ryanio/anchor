@@ -17,7 +17,7 @@ import "PulseModel.js" as Model
 // resolves `qs.Commons` and `qs.Ui` relative to the config root, so the script assembles a
 // directory of symlinks rather than putting a copy of Omarchy's shell in this repository.
 //
-// One case is drawn at a time and grabbed before the next is bound. Binding all fifteen at once
+// One case is drawn at a time and grabbed before the next is bound. Binding them all at once
 // renders them all every frame, and QML's asynchronous image grab then races the next binding —
 // the shots come out mislabelled, which is worse than slow.
 ShellRoot {

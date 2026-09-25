@@ -4,9 +4,10 @@
  * Actions are terse verb-first strings so a config stays readable:
  *
  *     "omarchy toggle nightlight"   run an Omarchy command
- *     "hypr workspace 3"            a Hyprland dispatcher
+ *     "workspace 3"                 focus a Hyprland workspace
+ *     "hypr hl.dsp.window.close()"  a raw Hyprland Lua dispatch
  *     "exec foot -e btop"           a command, argv-style, no shell
- *     "page anchor"                 switch panel page
+ *     "page portfolio"              switch panel page
  *     "volume mute"                 built-in audio control
  *
  * **No action here can sign, spend, or approve anything**, and that is a deliberate boundary rather

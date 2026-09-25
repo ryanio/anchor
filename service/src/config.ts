@@ -24,10 +24,9 @@ export interface Config {
    * `chains` already has, and for the same reason: asking someone to pick *the* wallet is a
    * configuration step, and watching all of the ones they name removes the choice.
    *
-   * It does not remove the *typing*. Anchor cannot discover a person's wallets: it holds no wallet
-   * credential by design (the PAT step was removed once it was measured to be unnecessary), and
-   * there is no endpoint that maps a human to their addresses. True auto-discovery arrives with a
-   * wallet adapter, not here — see docs/upstream.md.
+   * It does not remove the *typing*, with one exception: when this list is empty and a wallet PAT
+   * is stored, `wallet-token.ts` reads the wallets that token names. No read needs the PAT, and
+   * there is no endpoint that maps a human to their addresses.
    */
   wallets: string[];
   /** Collection slugs to watch. Users should pin only what they care about. */

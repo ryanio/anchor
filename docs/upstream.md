@@ -199,7 +199,7 @@ is already there; only the number is missing.
 resolves nine wallets — which is what `linked_wallets` gives, see entry 14 — needs nine requests
 through one rate limiter, and the **caller** sums the money.
 
-**What we wrote.** `service/src/aggregate.ts`, about 120 lines: fan out sequentially so a portfolio
+**What we wrote.** `service/src/aggregate.ts`, about 250 lines: fan out sequentially so a portfolio
 refresh cannot starve the health check behind it, sum with BigInt at a common scale because these
 are dollars, and label a partial answer with an `incomplete` list rather than trimming a wallet that
 failed. Plus `service/src/wallets.test.ts`, which walks `WALLET_ROUTES` so a route added later cannot

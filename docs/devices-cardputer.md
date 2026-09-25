@@ -65,7 +65,7 @@ has no vocabulary for, and a 240x135 screen wants a surface the shared contract 
 This document says which of those should change the contract and which should not, where the
 proposal queue's approval boundary sits, and what runs on the device.
 
-> **Status: both ends written, neither run on a Cardputer.** `devices/src/adapters/cardputer.ts`
+> **Status when this design was written: both ends written, neither run on a Cardputer.** `devices/src/adapters/cardputer.ts`
 > implements `AnchorDevice` and its tests run with nothing plugged in. The device end now exists too,
 > and it is in this repository: `devices/firmware/cardputer/app/`, built against **flint**
 > (`ryanio/cardputer`), Ryan's Cardputer ADV firmware, which is a git submodule beside it. It is

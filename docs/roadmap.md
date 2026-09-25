@@ -11,7 +11,7 @@ directly — one cache, one rate limit, one place where freshness is tracked.
 ## 1b. The token half
 
 The same service, the other marketplace: balances, prices and candles, trending and top, account swap
-activity, holders and liquidity. Read-only — `swap_quote` returns executable transaction data and so
+activity, holders and liquidity. Read-only — `/swap/quote` returns executable transaction data and so
 belongs behind the executor, never in the read-only service. Endpoint list in [tokens.md](tokens.md).
 
 ## 2. Quickshell widget

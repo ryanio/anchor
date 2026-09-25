@@ -367,7 +367,7 @@ export interface ClientOptions {
   chains: readonly ChainIdentifier[];
   requestsPerSecond: number;
   cache: Cache;
-  /** Supplies the wallet JWT that account-scoped reads additionally require. See auth.ts. */
+  /** Supplies the wallet JWT, sent with account-scoped reads when a PAT is stored. None requires it. */
   walletToken: WalletTokenProvider;
   /** Seam for tests. Defaults to the OS keyring. */
   getApiKey?: () => Promise<string | null>;

@@ -42,7 +42,7 @@ Review a panel without hardware — useful in CI, or away from the desk:
 
 ```bash
 node --experimental-strip-types src/cli.ts --dry-run --preview /tmp/panel.png
-node --experimental-strip-types src/cli.ts --dry-run --theme "Rose Pine" --page anchor --preview /tmp/p.png
+node --experimental-strip-types src/cli.ts --dry-run --theme "Rose Pine" --page portfolio --preview /tmp/p.png
 ```
 
 `--dry-run` renders through a `VirtualDevice`; `--model` picks its geometry (`plus`, `original`,
@@ -93,7 +93,8 @@ Verb first. An unknown verb is refused rather than guessed at.
 | Action | Does |
 |---|---|
 | `omarchy <args>` | Run an Omarchy command — `omarchy toggle nightlight` |
-| `hypr <args>` | A Hyprland dispatcher — `hypr workspace 3` |
+| `workspace <n>` | Focus a Hyprland workspace, as in `workspace 3` |
+| `hypr <lua>` | A raw Lua expression for `hyprctl dispatch`, as in `hypr hl.dsp.window.close()` |
 | `exec <cmd> <args>` | Run a command, argv-style. No shell, so no globbing or redirection |
 | `page <name>` | Switch panel page |
 | `volume <n>` \| `volume mute` | Adjust or mute output, with Omarchy's on-screen display |
@@ -117,9 +118,12 @@ often not in front of.
 | `portfolio.pnl` / `portfolio.pnlAbsolute` | P&L over the current timeframe, green up, red down |
 | `portfolio.nftCount` | NFTs held |
 | `token:N` | The Nth largest token holding, captioned with its symbol |
+| `nft:N` | An owned piece, rotating; `nft:2` is offset by one from `nft:1` |
 | `collection:N` | The Nth collection by holdings, captioned with its slug |
 | `portfolio.spark` / `portfolio.pnlSpark` | Total or P&L over the timeframe, over a sparkline of it |
 | `chain:N` | The Nth chain by token value, captioned with its name |
+| `portfolio.split` | The NFT share of the total, with an NFT/token split |
+| `portfolio.chains` | How many chains hold tokens, split by chain value |
 
 A key whose reading names one thing opens it when pressed: a holding or a piece opens its OpenSea
 page. A sparkline or a chain share opens the wallet's OpenSea profile, or, with no wallet
@@ -144,7 +148,8 @@ from a measurement.
 
 ### Dial controls
 
-`control` is one of `volume`, `brightness`, `workspace`, `theme`, `timeframe`, or `none`. `press`
+`control` is one of `volume`, `brightness`, `workspace`, `theme`, `timeframe`, `deck` (the deck's
+own brightness), `gallery` (how many pieces rotate), or `none`. `press`
 takes any action. `step` scales each detent.
 
 `timeframe` is the odd one out, and the most interesting: it changes what is *shown* rather than what

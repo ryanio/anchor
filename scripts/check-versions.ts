@@ -125,7 +125,7 @@ if (typeof biomePin !== "string") {
   }
 }
 
-// One project version, in five files.
+// One project version, in every workspace package.json and the PKGBUILD.
 //
 // These are independent packages rather than npm workspaces, so nothing makes them agree on its
 // own. The root package.json is the source of truth; every other copy is checked against it. The

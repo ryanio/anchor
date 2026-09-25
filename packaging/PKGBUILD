@@ -39,7 +39,7 @@ package() {
 enable anchor-service.service
 PRESET
 
-  # TODO: install service/, widget/, theme/ once they exist.
+  # TODO: install service/, widget/ and theme/.
   #
   # `/usr/bin/anchor-service` is what the unit's ExecStart names, and it does not exist yet: it
   # needs to be a wrapper that runs `node /usr/share/anchor/service/src/index.ts` with the packaged

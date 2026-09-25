@@ -5,7 +5,7 @@
  *
  * ```bash
  * node scripts/cardputer-session.ts > session.ndjson
- * node scripts/cardputer-session.ts --page anchor --theme "Tokyo Night"
+ * node scripts/cardputer-session.ts --page portfolio --theme "Tokyo Night"
  * ```
  *
  * The firmware's simulator needs something to render, and the honest something is what the adapter

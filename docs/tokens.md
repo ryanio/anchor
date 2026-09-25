@@ -39,8 +39,7 @@ ambient; they cannot be ambient the same way.
 
 ### The data service
 
-The read-only service currently speaks only the NFT half of the API. The token half exists and is
-substantial:
+The read-only service reads both halves of the API. The token half is substantial:
 
 | Purpose | Endpoint |
 |---|---|

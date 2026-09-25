@@ -29,13 +29,14 @@ four encoders report turns and presses but have no display; other Elgato models 
 around theirs. Both are encoders, only one can be drawn on. Painting is gated on the flag, so a
 panel never rasterises a frame that has nowhere to go.
 
-A `Surface` is medium-neutral. Four exist:
+A `Surface` is medium-neutral. Five exist:
 
 | Surface | For |
 |---|---|
 | `tile` | One key: icon, label, an optional large `value`, meter or badge |
 | `bar` | A row of icon/text segments — a status strip |
 | `list` | Rows on a screen, with panel-owned `selected` |
+| `grid` | Cells on a screen in reading order; the renderer picks the column count |
 | `detail` | One thing in full: title, labelled lines, a footer that is never truncated |
 
 `list` and `detail` are shared vocabulary rather than device-specific, and the reason is structural:
@@ -89,8 +90,9 @@ stable rather than a guess.
 Marks are then held to WCAG AA — 4.5:1 for label text, 3:1 for icons and rules — over every
 installed theme, gated by `contrast.test.ts`. A theme designed for a large screen at arm's length
 does not always clear the bar on a 120px key: Omarchy's `rose-pine` puts a `#56949f` accent on an
-`#ede7e1` ground, which is 2.79:1. Rather than lower the threshold, a failing mark colour is blended
-toward the theme's own foreground until it clears, so the result still belongs to the palette.
+`#ede7e1` ground, which is 2.79:1. Rather than lower the threshold, a failing mark colour has its
+lightness moved until it clears, keeping its hue, and is blended toward the theme's own foreground
+only when lightness alone cannot get there. Either way the result still belongs to the palette.
 
 ### Text is a filter, never a command
 

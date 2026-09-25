@@ -189,9 +189,9 @@ it is the only place the pixels can come from.
 
 **A portfolio is public data about an address, so an independent device can show one.** This was
 briefly written down here the other way round — that a portfolio needs the PAT and therefore cannot
-live on a handheld unit — and that is wrong twice over. `service/src/config.ts` says it plainly:
-Anchor "holds no wallet credential by design (the PAT step was removed once it was measured to be
-unnecessary)", and `wallets` is a list of addresses somebody typed. An address is configuration, not
+live on a handheld unit — and that is wrong twice over. `service/src/auth.ts` says it plainly:
+every route the service calls "needs the API key and nothing else", and `wallets` is a list of
+addresses. An address is configuration, not
 a secret: what it holds is on a public chain and a read-only API key is enough to read it.
 
 So a device is given **addresses**, the same way it is given a network, and fetches their holdings
@@ -389,14 +389,14 @@ Pin versions. Update deliberately, not incidentally.
 ## Releasing
 
 The project version lives in **`package.json` at the root** and nowhere else by hand.
-`scripts/check-versions.ts` fails CI when `service`, `executor`, `widget` or
+`scripts/check-versions.ts` fails CI when `service`, `executor`, `widget`, `devices` or
 `packaging/PKGBUILD` disagree with it, because nothing else makes independent packages agree. The
 PKGBUILD is the one that bites quietly: it builds from `tag=v$pkgver`, so a stale value produces a
 package that installs an older Anchor than it claims.
 
 To cut a release:
 
-1. Bump the version in all five places, in one commit. Run `node scripts/check-versions.ts`.
+1. Bump the version in all six places, in one commit. Run `node scripts/check-versions.ts`.
 2. In `CHANGELOG.md`, turn the `## [Unreleased]` heading into `## [X.Y.Z] - YYYY-MM-DD`.
 3. Merge, confirm CI is green on `main`, then tag and push the tag.
 4. Create the GitHub release from the changelog section.
@@ -439,10 +439,10 @@ through. It takes under a second, so it is a loop you use while editing rather t
 run once. Adding a device or a state touches that one file; `devices/src/review.test.ts` fails if a
 failure `state/anchor.ts` can produce has no card on the page.
 
-**The panel has fifteen states and a live machine is in one of them.** Its error and warning screens
+**The panel has seventeen states and a live machine is in one of them.** Its error and warning screens
 went unreviewed for exactly that reason — there was no way to see them without arranging for the
 condition. `widget/PanelContent.qml` renders from a single reading and takes no action of its own,
-so `widget/gallery/` mounts it against a fixture per state and photographs all fifteen with no
+so `widget/gallery/` mounts it against a fixture per state and photographs all seventeen with no
 service, no bar and no desktop behind it. Add a state there when you add one to the model; a state
 nobody can look at is a state nobody has designed.
 
@@ -542,8 +542,8 @@ A bare `biome-ignore` with no reason is worse than the lint it silences.
 
 - `mise` reads it automatically for local work.
 - CI reads it via `node-version-file:` in every workflow — no workflow may hardcode a version.
-- The two places that cannot read it — `service/package.json` `engines` and `packaging/PKGBUILD`
-  `depends` — are checked against it by `scripts/check-versions.ts`, which runs first in CI.
+- The places that cannot read it, every workspace's `package.json` `engines` and `packaging/PKGBUILD`
+  `depends`, are checked against it by `scripts/check-versions.ts`, which runs first in CI.
 
 To upgrade Node, change `.node-version`, run `node scripts/check-versions.ts`, and fix whatever it
 names. Never bump a version in a workflow or in `engines` directly.

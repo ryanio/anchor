@@ -21,44 +21,28 @@ so the whole desktop shares one cache, one rate limit, and one place where data 
 - **Freshness is explicit.** Every response carries `meta.fetchedAt`, `meta.ageSeconds`, and
   `meta.stale`. If the network fails, cached data is served with `stale: true` rather than an error.
 
-## Credentials — there are two
+## Credentials
 
-OpenSea auth is not a single API key, and this is the most likely reason a fresh install returns 401
-on half its routes.
-
-| Credential | Header | Needed for |
-|---|---|---|
-| **API key** | `x-api-key` | Everything. Public REST and quota |
-| **Wallet JWT** | `Authorization: Bearer …` | Account-scoped reads, *in addition to* the API key |
-
-Measured against the live API with a valid key and no wallet token:
+Every read this service makes needs one credential, the **API key**, sent as `x-api-key`. Measured
+with a real key and no `Authorization` header:
 
 ```
 200  /api/v2/collections/{slug}/stats
-401  /api/v2/chain/ethereum/account/{addr}/nfts
-401  /api/v2/account/{addr}/tokens
-401  /api/v2/account/{addr}/portfolio
-401  /api/v2/tokens/trending
+200  /api/v2/chain/ethereum/account/{addr}/nfts
+200  /api/v2/account/{addr}/tokens
+200  /api/v2/tokens/trending
+500  /api/v2/account/{addr}/portfolio   (server-side bug, unrelated to auth; see docs/upstream.md)
 ```
 
-The JWT lasts about twelve hours and is minted from a **personal access token (PAT)**. Anchor stores
-the PAT and exchanges it for a JWT automatically, refreshing before expiry. It does *not* implement
-the SIWE flow that creates a PAT in the first place: that needs a wallet signature, which is a
-one-time human action and sits badly with a service that holds no keys. Create the PAT yourself —
-see [docs.opensea.io/reference/auth](https://docs.opensea.io/reference/auth) — and store it.
+A wallet **personal access token (PAT)** is optional. When one is stored (`--set-pat`), the service
+exchanges it for a wallet JWT and sends that with account-scoped reads, but no read requires it and
+no route refuses without it. A stored PAT that OpenSea rejects does fail account routes, with a 401
+naming `--set-pat`. It also supplies wallets: when `wallets` in the config is empty, the
+service reads the addresses the token names. The header of `src/auth.ts` has the measurement, what
+is verified about the exchange, and why the module still exists.
 
-Without a PAT, account routes fail with a message naming `--set-pat` **before** any network call,
-rather than passing a bare 401 through. `GET /health` reports which credentials are present, and so
-does the startup line.
-
-> **Unverified.** The exchange itself has never been run end to end here, because we have no PAT to
-> test with. The request and response shapes are taken from `@opensea/sdk`'s own
-> `OpenSeaAuth.exchangeScopedToken` (`POST /api/v2/auth/tokens/exchange` with
-> `{subjectToken, subjectTokenType: "ACCESS_TOKEN"}` → `{accessToken, expiresIn, tokenScopes}`), which
-> is code rather than prose, but is still not a live call. Note also that the OpenAPI spec shipped
-> with `@opensea/api-types` declares only `ApiKeyAuth` for every endpoint that measurably 401s, and
-> does not describe the exchange endpoint at all — the spec and the live API disagree, and this
-> follows the live API.
+`GET /health` reports which credentials are present, and so does the startup line. Presence is not
+proof: `anchor-service --check-credentials` makes a live call that 401s without a valid key.
 
 ## Running
 
@@ -133,9 +117,10 @@ to paste into an issue:
 ```
 
 `wallets` is a list and every entry is watched. The older `wallet: "0x…"` is still read, as a
-one-element list, the same way `chain` is read as a one-element `chains`. Anchor cannot *discover*
-a person's wallets — it holds no wallet credential and no endpoint maps a human to their addresses
-— so watching all the configured ones is as far as this goes until a wallet adapter is connected.
+one-element list, the same way `chain` is read as a one-element `chains`. When the list is empty
+and a wallet PAT is stored, the service watches the wallets that token names (its `wallet` claim,
+or the `linked_wallets` of the JWT it exchanges for); config always wins over the token. No endpoint
+maps a person to their addresses, so without either, nothing is discovered.
 
 `chains` is validated against OpenSea's own chain union, so a typo fails at load with a suggestion
 rather than a 400 later. The older single `"chain": "base"` string still works and is read as a
@@ -150,18 +135,25 @@ See [../docs/chains.md](../docs/chains.md).
 | `GET /health` | Liveness, resolved config, configured chains, which credentials are present |
 | `GET /portfolio` | NFTs owned by the configured wallet. `?collection=slug` |
 | `GET /portfolio/value` | Net worth and P&L across every configured chain. `?timeframe=HOUR\|DAY\|WEEK\|MONTH` |
+| `GET /portfolio/history` | Portfolio value over time, for the first configured wallet. `?timeframe=` |
 | `GET /balances` | Fungible balances across every configured chain. `?limit=`, `?cursor=` |
 | `GET /activity` | Account events. `?event_type=` repeatable (sale, transfer, offer, …) |
 | `GET /collections` | Stats for every watched collection in one call |
+| `GET /collections/trending` | Trending collections. `?limit=`, `?timeframe=`, `?category=` |
+| `GET /collections/top` | Top collections. `?limit=`, `?sort_by=`, `?category=` |
 | `GET /collections/:slug` | Collection metadata |
 | `GET /collections/:slug/stats` | Floor, volume, sales |
 | `GET /collections/:slug/listings` | Best listings |
 | `GET /collections/:slug/offers` | Collection offers |
+| `GET /collections/:slug/holders` | Collection holders |
 | `GET /tokens` | Metadata for every watched token in one call |
 | `GET /tokens/trending` | Trending tokens across every configured chain. `?limit=` |
 | `GET /tokens/top` | Top tokens across every configured chain. `?limit=` |
 | `GET /tokens/:address` | One token, on the first configured chain |
 | `GET /tokens/:address/price_history` | `?start_time=`, `?end_time=`. Defaults to the last day |
+| `GET /tokens/:address/holders` | Token holders. `?limit=`, `?cursor=`, `?chain=` |
+| `GET /tokens/:address/activity` | Token trade activity. `?limit=`, `?cursor=`, `?chain=` |
+| `GET /tokens/:address/activity_stats` | Token activity totals. `?chain=` |
 
 Endpoints whose *path* carries a chain use the **first** configured chain; endpoints that take a
 `chains` list get all of them. `/health` reports which is which as `primaryChain`.

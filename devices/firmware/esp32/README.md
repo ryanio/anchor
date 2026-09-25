@@ -197,6 +197,8 @@ sensors/sensors.ino      what the touch controller and the IMU say when a person
 sim/                     the whole firmware on a desktop: shims, a framebuffer, a scripted finger
 sim/run.sh               one command — build it and run a scenario, writing frames as PPM/PNG
 sim/wifi_setup.test.ts   six of those scenarios, on every `npm test`
+sim/lvgl.sh              the same for `pulse/`, the LVGL firmware
+pulse/                   the independent LVGL firmware, the supported target; see pulse/README.md
 tools/bringup.ts         host side — paint one frame down the cable and hold it there
 tools/measure.ts         host side — what a frame actually costs, end to end
 library.properties       so the Arduino IDE can find src/ as a library
