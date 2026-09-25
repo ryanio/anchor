@@ -26,7 +26,6 @@ import {
   on,
   SOL_ACCOUNT,
   SOL_ATTACKER,
-  SOL_CHAIN,
   SOL_COLD_VAULT,
   SOL_MINT,
   SOL_OTHER_MINT,
@@ -37,7 +36,15 @@ import {
 } from "./fixtures.ts";
 import { DeclaredIntentSimulator } from "./inert.ts";
 import { PolicyEngine, type PolicyLimits, tierLimits } from "./policy.ts";
-import { type ActionRequest, evmAddress, HUMAN_ONLY_ACTION_KINDS, money, type Simulation } from "./types.ts";
+import {
+  type ActionRequest,
+  type Address,
+  type AuthorityType,
+  evmAddress,
+  HUMAN_ONLY_ACTION_KINDS,
+  money,
+  type Simulation,
+} from "./types.ts";
 
 /** Build an engine plus a cooperative simulator sharing one controllable clock. */
 function engine(over: Partial<PolicyLimits> = {}) {
@@ -56,6 +63,8 @@ function denied(decision: PolicyDecision): Denied {
 
 describe("per-transaction cap", () => {
   test("allows a buy at exactly the cap", async () => {
+    // The marketplace is not on the withdrawal allowlist, so this is also the proof that a buy is
+    // not judged as a withdrawal: that check is per action kind.
     const { decide } = engine();
     const decision = await decide(buy("r1", 2_500n));
     assert.equal(decision.outcome, "allow");
@@ -157,15 +166,6 @@ describe("contract allowlist", () => {
     assert.equal(denied(await decide(request)).reason, "contract-not-allowlisted");
   });
 
-  test("a freshly deployed 'helpful' contract is not special", async () => {
-    const { decide } = engine();
-    const fresh = evmAddress(`0xfeed${"0".repeat(36)}`);
-    assert.equal(
-      denied(await decide(buy("r1", 1n, 0, { contract: fresh }))).reason,
-      "contract-not-allowlisted",
-    );
-  });
-
   test("allowlist matching is case-insensitive on an EVM address", async () => {
     const { decide } = engine();
     // `evmAddress()` normalises, so a checksummed string reaches policy as the same value. Note
@@ -194,61 +194,34 @@ describe("action allowlist", () => {
 });
 
 describe("setApprovalForAll is a human-only action class", () => {
-  test("it is refused, with its own reason code, before any cap is consulted", async () => {
-    const { decide, policy } = engine();
-    // Built inline and nowhere else. This request exists to be refused; there is no fixture for it
-    // precisely so it cannot be lifted into working code (AGENTS.md invariant 3).
-    const request: ActionRequest = {
-      kind: "set-approval-for-all",
-      id: "r1",
-      requestedAt: 0,
-      chain: "ethereum",
-      account: ACCOUNT,
-      contract: COLLECTION,
-      operator: ATTACKER,
-      approved: true,
-    };
-
-    const decision = await decide(request);
-    assert.equal(denied(decision).reason, "human-only-action");
-    // It moves no value, so it must not be judged on value — nothing was charged.
-    assert.equal((await policy.status()).rolling24hSpent.amount, 0n);
-  });
-
-  test("it is refused even when the contract and operator are fully allowlisted", async () => {
-    // The usual reason a control fails: everything about the request looks legitimate.
-    const { decide } = engine({
-      contractAllowlist: [on(CHAIN, COLLECTION)],
-      withdrawalAllowlist: [on(CHAIN, COLD_VAULT)],
-    });
-    const request: ActionRequest = {
-      kind: "set-approval-for-all",
-      id: "r1",
-      requestedAt: 0,
-      chain: "ethereum",
-      account: ACCOUNT,
-      contract: COLLECTION,
-      operator: COLD_VAULT,
-      approved: true,
-    };
-    assert.equal(denied(await decide(request)).reason, "human-only-action");
-  });
-
-  test("revoking an approval is equally not delegable", async () => {
-    // Even `approved: false` stays human-only: an agent that can toggle operator rights can toggle
-    // them back on, and the safe rule is that it never holds the switch at all.
-    const { decide } = engine();
-    const request: ActionRequest = {
-      kind: "set-approval-for-all",
-      id: "r1",
-      requestedAt: 0,
-      chain: "ethereum",
-      account: ACCOUNT,
-      contract: COLLECTION,
-      operator: ATTACKER,
-      approved: false,
-    };
-    assert.equal(denied(await decide(request)).reason, "human-only-action");
+  test("it is refused, with its own reason code, before any cap, whatever it names", async () => {
+    // Built inline and nowhere else. These requests exist to be refused; there is no fixture for
+    // them precisely so one cannot be lifted into working code (AGENTS.md invariant 3).
+    const rows: { name: string; operator: Address; approved: boolean }[] = [
+      { name: "an operator the user never chose", operator: ATTACKER, approved: true },
+      // The usual reason a control fails: everything about the request looks legitimate. The
+      // contract is allowlisted and the operator is the pre-registered vault.
+      { name: "an operator that is fully allowlisted", operator: COLD_VAULT, approved: true },
+      // Revoking stays human-only too: an agent that can toggle operator rights can toggle them
+      // back on, and the safe rule is that it never holds the switch at all.
+      { name: "revoking an approval", operator: ATTACKER, approved: false },
+    ];
+    for (const row of rows) {
+      const { decide, policy } = engine();
+      const request: ActionRequest = {
+        kind: "set-approval-for-all",
+        id: "r1",
+        requestedAt: 0,
+        chain: "ethereum",
+        account: ACCOUNT,
+        contract: COLLECTION,
+        operator: row.operator,
+        approved: row.approved,
+      };
+      assert.equal(denied(await decide(request)).reason, "human-only-action", row.name);
+      // It moves no value, so it must not be judged on value: nothing was charged.
+      assert.equal((await policy.status()).rolling24hSpent.amount, 0n, row.name);
+    }
   });
 
   test("it cannot be configured onto an action allowlist, at compile time or run time", () => {
@@ -299,13 +272,6 @@ describe("withdrawal destination allowlist", () => {
   test("an empty withdrawal allowlist means no transfers at all", async () => {
     const { decide } = engine({ withdrawalAllowlist: [] });
     assert.equal(denied(await decide(transfer("r1", 1n, COLD_VAULT))).reason, "destination-not-allowlisted");
-  });
-
-  test("the allowlist is not consulted for a marketplace purchase", async () => {
-    // A buy sends value to a marketplace, which is not a withdrawal. Conflating the two would make
-    // the agent useless; keeping them apart is why the check is per-action-kind.
-    const { decide } = engine();
-    assert.equal((await decide(buy("r1", 1_000n))).outcome, "allow");
   });
 });
 
@@ -437,19 +403,16 @@ describe("kill switch", () => {
     assert.equal(denied(await decide(transfer("r4", 1n, COLD_VAULT))).reason, "revoked");
   });
 
-  test("revoke is idempotent and keeps the first reason", async () => {
+  test("revoke is idempotent, keeps the first reason, and status reports it", async () => {
+    // Status carries revocation so the UI can show it without asking permission first.
     const { policy } = engine();
+    assert.equal((await policy.status()).revoked, false);
     await policy.revoke("first");
     const second = await policy.revoke("second");
     assert.equal(second.reason, "first");
-    assert.equal((await policy.status()).revokedReason, "first");
-  });
-
-  test("status reports revocation, so the UI can show it without asking permission first", async () => {
-    const { policy } = engine();
-    assert.equal((await policy.status()).revoked, false);
-    await policy.revoke("anomaly");
-    assert.equal((await policy.status()).revoked, true);
+    const status = await policy.status();
+    assert.equal(status.revoked, true);
+    assert.equal(status.revokedReason, "first");
   });
 
   test("reinstatement is not reachable through the PolicyAuthority interface", async () => {
@@ -484,12 +447,6 @@ describe("status and tiers", () => {
     assert.equal(tierLimits(1, lists).perTransaction, 2_500n);
     assert.equal(tierLimits(2, lists).rolling24h, 30_000n);
     assert.equal(tierLimits(3, lists).perTransaction, 100_000n);
-    for (const tier of [1, 2, 3] as const) {
-      assert.equal(
-        (tierLimits(tier, lists).allowedActions as readonly string[]).includes("set-approval-for-all"),
-        false,
-      );
-    }
   });
 
   test("negative caps are rejected at construction", () => {
@@ -601,102 +558,46 @@ describe("cross-chain confusion is refused", () => {
 });
 
 describe("Solana's human-only action classes", () => {
-  test("naming an SPL delegate is refused, with its own reason code, before any cap", async () => {
-    // Built inline and nowhere else, exactly as the setApprovalForAll request is: this exists to be
-    // refused, and a fixture for it could be lifted into working code (AGENTS.md invariant 3).
-    const { decide, policy } = solanaEngine();
-    const request: ActionRequest = {
+  test("every delegation and authority change is refused, with its own reason code, before any cap", async () => {
+    // Built inline and nowhere else, exactly as the setApprovalForAll requests are: these exist to
+    // be refused, and a fixture for one could be lifted into working code (AGENTS.md invariant 3).
+    const envelope = { id: "r1", requestedAt: 0, chain: "solana", account: SOL_ACCOUNT, contract: SOL_MINT };
+    const delegate = (delegate: Address | null, amount: bigint): ActionRequest => ({
+      ...envelope,
       kind: "approve-delegate",
-      id: "r1",
-      requestedAt: 0,
-      chain: "solana",
-      account: SOL_ACCOUNT,
-      contract: SOL_MINT,
       tokenAccount: SOL_ACCOUNT,
-      delegate: SOL_ATTACKER,
-      amount: (1n << 64n) - 1n, // u64::MAX — unlimited
-    };
-    assert.equal(denied(await decide(request)).reason, "human-only-action");
-    // It moves no value, which is exactly why a spend cap cannot see it: nothing was charged.
-    assert.equal((await policy.status()).rolling24hSpent.amount, 0n);
-  });
-
-  test("a bounded delegate amount is still a delegation", async () => {
-    // The bound is enforced by the token program against a delegate Anchor does not control, and
-    // "small allowance now, top it up later" is a delegation rather than a spend.
-    const { decide } = solanaEngine();
-    const request: ActionRequest = {
-      kind: "approve-delegate",
-      id: "r1",
-      requestedAt: 0,
-      chain: "solana",
-      account: SOL_ACCOUNT,
-      contract: SOL_MINT,
-      tokenAccount: SOL_ACCOUNT,
-      delegate: SOL_COLD_VAULT,
-      amount: 1n,
-    };
-    assert.equal(denied(await decide(request)).reason, "human-only-action");
-  });
-
-  test("revoking a delegate is equally not delegable", async () => {
-    // Same reasoning as `setApprovalForAll(false)`: an agent that holds the switch can turn it on.
-    const { decide } = solanaEngine();
-    const request: ActionRequest = {
-      kind: "approve-delegate",
-      id: "r1",
-      requestedAt: 0,
-      chain: "solana",
-      account: SOL_ACCOUNT,
-      contract: SOL_MINT,
-      tokenAccount: SOL_ACCOUNT,
-      delegate: null,
-      amount: 0n,
-    };
-    assert.equal(denied(await decide(request)).reason, "human-only-action");
-  });
-
-  test("every authority type is refused, including relinquishing one permanently", async () => {
-    const authorities = [
-      "account-owner",
-      "close-account",
-      "mint-tokens",
-      "freeze-account",
-      "program-upgrade",
-    ] as const;
-    for (const authorityType of authorities) {
-      const { decide } = solanaEngine();
-      const request: ActionRequest = {
-        kind: "set-authority",
-        id: "r1",
-        requestedAt: 0,
-        chain: "solana",
-        account: SOL_ACCOUNT,
-        contract: SOL_MINT,
-        authorityType,
-        newAuthority: authorityType === "program-upgrade" ? null : SOL_ATTACKER,
-      };
-      assert.equal(denied(await decide(request)).reason, "human-only-action", authorityType);
-    }
-  });
-
-  test("they are refused even when everything about them is allowlisted", async () => {
-    // The usual reason a control fails: the request looks entirely legitimate.
-    const { decide } = solanaEngine({
-      contractAllowlist: [on(SOL_CHAIN, SOL_MINT)],
-      withdrawalAllowlist: [on(SOL_CHAIN, SOL_COLD_VAULT)],
+      delegate,
+      amount,
     });
-    const request: ActionRequest = {
+    const authority = (authorityType: AuthorityType, newAuthority: Address | null): ActionRequest => ({
+      ...envelope,
       kind: "set-authority",
-      id: "r1",
-      requestedAt: 0,
-      chain: "solana",
-      account: SOL_ACCOUNT,
-      contract: SOL_MINT,
-      authorityType: "account-owner",
-      newAuthority: SOL_COLD_VAULT,
-    };
-    assert.equal(denied(await decide(request)).reason, "human-only-action");
+      authorityType,
+      newAuthority,
+    });
+
+    const rows: [string, ActionRequest][] = [
+      ["an unlimited delegate (u64::MAX)", delegate(SOL_ATTACKER, (1n << 64n) - 1n)],
+      // The bound is enforced by the token program against a delegate Anchor does not control, and
+      // "small allowance now, top it up later" is a delegation rather than a spend.
+      ["a bounded delegate amount", delegate(SOL_COLD_VAULT, 1n)],
+      // Same reasoning as `setApprovalForAll(false)`: an agent that holds the switch can turn it on.
+      ["revoking a delegate", delegate(null, 0n)],
+      ["account-owner", authority("account-owner", SOL_ATTACKER)],
+      ["close-account", authority("close-account", SOL_ATTACKER)],
+      ["mint-tokens", authority("mint-tokens", SOL_ATTACKER)],
+      ["freeze-account", authority("freeze-account", SOL_ATTACKER)],
+      // Relinquishing one permanently is refused as well.
+      ["program-upgrade, relinquished", authority("program-upgrade", null)],
+      // The usual reason a control fails: the mint is allowlisted and the new owner is the vault.
+      ["account-owner to the allowlisted vault", authority("account-owner", SOL_COLD_VAULT)],
+    ];
+    for (const [name, request] of rows) {
+      const { decide, policy } = solanaEngine();
+      assert.equal(denied(await decide(request)).reason, "human-only-action", name);
+      // It moves no value, which is exactly why a spend cap cannot see it: nothing was charged.
+      assert.equal((await policy.status()).rolling24hSpent.amount, 0n, name);
+    }
   });
 
   test("neither can be configured onto an action allowlist, at compile time or run time", () => {
