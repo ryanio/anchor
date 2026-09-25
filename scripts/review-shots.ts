@@ -32,7 +32,7 @@ export interface Placed extends SurfaceMeta {
   /**
    * Surfaces produced together by one pass, named so they can be cleared together.
    *
-   * Fifteen panel states come out of one Quickshell launch and thirty-odd device frames out of one
+   * The panel states come out of one Quickshell launch and thirty-odd device frames out of one
    * render, so their `capture` functions all wait on the same promise and only the first one does
    * any work. Undefined for a surface that is photographed on its own.
    */

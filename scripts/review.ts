@@ -3,7 +3,7 @@
  * Capture every surface Anchor renders, and build a page for marking them up.
  *
  *   node scripts/review.ts              capture everything available
- *   node scripts/review.ts widget site  capture only those groups
+ *   node scripts/review.ts widget panel capture only those groups
  *   node scripts/review.ts devices      just the hardware, rendered — no session needed
  *   node scripts/review.ts devices -w   re-render on every save, and rebuild the page
  *   node scripts/review.ts --list       show what would be captured
@@ -45,9 +45,9 @@
  *
  * ## What it needs
  *
- * `grim` for anything on the Wayland session, `chromium` for anything with a URL or a file path, and
- * `omarchy-shell` to open the widget panel. Each surface is skipped with a reason rather than
- * failing the run, so this still does something useful over SSH or in CI.
+ * `grim` for anything on the Wayland session, and `quickshell` with Omarchy's shell for the panel
+ * gallery. Each surface is skipped with a reason rather than failing the run, so this still does
+ * something useful over SSH or in CI.
  */
 import { execFile, execFileSync, spawn } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -200,28 +200,6 @@ async function grim(geometry: string, file: string): Promise<void> {
 }
 
 /**
- * Render a page headlessly.
- *
- * `--force-dark-mode` because every page here is designed dark-first and that is what the desktop
- * shows; the light variants are checked by scripts/check-contrast.ts rather than by eye.
- */
-async function shot(url: string, file: string, width = 1280, height = 900): Promise<void> {
-  const chromium = ["chromium", "chromium-browser", "google-chrome-stable"].find(have);
-  if (chromium === undefined) throw new Error("chromium not installed");
-  await run(chromium, [
-    "--headless",
-    "--disable-gpu",
-    "--no-sandbox",
-    "--hide-scrollbars",
-    "--force-dark-mode",
-    `--window-size=${width},${height}`,
-    "--virtual-time-budget=4000",
-    `--screenshot=${file}`,
-    url,
-  ]);
-}
-
-/**
  * Blow a capture up with nearest-neighbour, for shots that are too small to review at page scale.
  *
  * The bar strip is 260×30. At that size a reviewer cannot see what they are being asked about, and
@@ -231,75 +209,6 @@ async function shot(url: string, file: string, width = 1280, height = 900): Prom
 async function magnify(file: string, factor: number): Promise<void> {
   if (!have("magick")) return; // reviewable, just small
   await run("magick", [file, "-filter", "point", "-resize", `${factor * 100}%`, file]);
-}
-
-/**
- * Crop to whatever actually changed between two captures.
- *
- * A panel is a layer-shell surface, so it cannot be captured by window and its geometry is not
- * exposed. Hyprland does not help either: with the panel open the only new layer it reports is a
- * full-screen `omarchy-keyboard-panel`, which is the input catcher, not the panel. So the bounds
- * come from diffing the screen before and after opening it, which beats a hardcoded region that is
- * mostly wallpaper and breaks on a different monitor.
- *
- * The difference is split into connected regions rather than reduced to one bounding box, because
- * the panel is not the only thing on screen that moves. A capture taken while a terminal was
- * printing produced a "panel" shot four times too big with the panel in one corner — the union of
- * the panel and some scrolling text. The panel is a single solid region and text is a scattering of
- * small ones, so the largest region is the panel.
- */
-async function cropToDiff(before: string, after: string, out: string, pad = 12): Promise<boolean> {
-  if (!have("magick")) return false;
-  try {
-    const { stdout } = await run("magick", [
-      before,
-      after,
-      "-compose",
-      "difference",
-      "-composite",
-      "-colorspace",
-      "Gray",
-      "-threshold",
-      "8%",
-      // Close hairline gaps so a panel's border and its interior count as one region rather than a
-      // ring around a hole.
-      "-morphology",
-      "Close",
-      "Octagon:3",
-      "-define",
-      "connected-components:verbose=true",
-      "-define",
-      "connected-components:area-threshold=2000",
-      "-connected-components",
-      "8",
-      "null:",
-    ]);
-
-    // `  2: 360x249+809+31  929.9,155.7  9709  gray(255)` — id, bounds, centroid, area, colour.
-    // gray(255) is changed, gray(0) unchanged; ignore the latter and the full-frame background.
-    const regions = stdout
-      .split("\n")
-      .map((line) => /^\s*\d+:\s+(\d+)x(\d+)\+(\d+)\+(\d+)\s+\S+\s+(\d+)\s+gray\(255\)/.exec(line))
-      .filter((m) => m !== null)
-      .map((m) => ({
-        w: Number(m[1]),
-        h: Number(m[2]),
-        x: Number(m[3]),
-        y: Number(m[4]),
-        area: Number(m[5]),
-      }))
-      .sort((a, b) => b.area - a.area);
-
-    const biggest = regions[0];
-    if (biggest === undefined) return false;
-    const [w, h, x, y] = [biggest.w, biggest.h, biggest.x, biggest.y];
-    if (w < 40 || h < 40) return false; // nothing meaningful changed
-    const box = `${w + pad * 2}x${h + pad * 2}+${Math.max(0, x - pad)}+${Math.max(0, y - pad)}`;
-    await run("magick", [after, "-crop", box, "+repage", out]);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 /** Width of the primary monitor, so bar captures do not hardcode one machine's resolution. */
@@ -313,9 +222,9 @@ async function screenWidth(): Promise<number> {
 /**
  * Render every panel state, once per run.
  *
- * Fifteen surfaces come out of one Quickshell launch, so the first of them to be captured does the
- * work and the rest wait on the same promise. A failure is remembered too — otherwise fourteen
- * surfaces each retry a launch that has already been shown not to work.
+ * Every panel and bar state comes out of one Quickshell launch, so the first of them to be captured
+ * does the work and the rest wait on the same promise. A failure is remembered too — otherwise every
+ * other surface would retry a launch that has already been shown not to work.
  */
 let panelStates: Promise<string[]> | null = null;
 function ensurePanelStates(): Promise<void> {

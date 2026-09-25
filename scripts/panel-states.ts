@@ -100,7 +100,7 @@ export async function capturePanelStates(): Promise<string[]> {
     });
 
     // What is on disk, not what the harness said it did. Quickshell's log format is not a contract,
-    // and a run that claims fifteen and wrote fourteen is exactly the failure this tool exists to
+    // and a run that claims every state and wrote one fewer is exactly the failure this tool exists to
     // stop being invisible.
     const wrote = (c: (typeof ALL)[number]) => existsSync(join(OUT, c.dir, `${c.id}.png`));
     const captured = ALL.filter(wrote).map((c) => c.id);
