@@ -31,8 +31,8 @@ it can rasterise an SVG.
 
 ```bash
 cd devices && npm install
-node --experimental-strip-types src/cli.ts --list    # what is attached
-node --experimental-strip-types src/cli.ts           # run the panel
+node src/cli.ts --list    # what is attached
+node src/cli.ts           # run the panel
 ```
 
 No `sudo`, and no udev rule: on Omarchy, logind's `uaccess` ACL already grants the logged-in user
@@ -41,8 +41,8 @@ read/write on `/dev/hidraw*`.
 Review a panel without hardware — useful in CI, or away from the desk:
 
 ```bash
-node --experimental-strip-types src/cli.ts --dry-run --preview /tmp/panel.png
-node --experimental-strip-types src/cli.ts --dry-run --theme "Rose Pine" --page portfolio --preview /tmp/p.png
+node src/cli.ts --dry-run --preview /tmp/panel.png
+node src/cli.ts --dry-run --theme "Rose Pine" --page portfolio --preview /tmp/p.png
 ```
 
 `--dry-run` renders through a `VirtualDevice`; `--model` picks its geometry (`plus`, `original`,

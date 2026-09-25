@@ -70,5 +70,5 @@ about, and a palette is nothing but a visual change:
 
 ```bash
 cd devices
-node --experimental-strip-types src/cli.ts --dry-run --theme Harbor --page desktop --preview /tmp/k.png
+node src/cli.ts --dry-run --theme Harbor --page desktop --preview /tmp/k.png
 ```

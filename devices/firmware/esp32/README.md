@@ -187,6 +187,7 @@ repeats.
 ```
 src/anchor_pulse.{c,h}   the protocol. C99, no allocation, no platform. This is the firmware.
 host/conformance.c       the same decoder as a desktop binary, driven by the Node test
+host/*.cpp               pulse's pure models (companion, keypad, feed request, preferences), same test
 app/app.ino              the application: transport, framebuffer, the LED, and nothing else
 app/sensors.{h,cpp}      the CST820 touch driver, bounded and throttled, and why the IMU is not one
 app/wifi_setup.{h,cpp}   the one screen this device draws itself: pick a network, type, join
@@ -195,6 +196,7 @@ panelsweep/panelsweep.ino  hunt for the display's bus using the panel's own tear
 panel/panel.ino          wake the panel from the known pin map, and prove it woke
 sensors/sensors.ino      what the touch controller and the IMU say when a person uses them
 audio/audio.ino          whether the speaker and microphone work, by playing a tone and hearing it
+psram/psram.ino          whether a band blitted out of PSRAM reaches the glass intact, by band size
 sim/                     the whole firmware on a desktop: shims, a framebuffer, a scripted finger
 sim/run.sh               one command — build it and run a scenario, writing frames as PPM/PNG
 sim/wifi_setup.test.ts   six of those scenarios, on every `npm test`
@@ -210,8 +212,8 @@ The split is the point. Everything with judgement in it is in `src/`, which is p
 tested on every `npm test`; everything platform-specific is a thin shim that can be replaced without
 touching a decoder.
 
-`probe/`, `panelsweep/`, `panel/`, `sensors/` and `audio/` are standalone sketches rather than debug
-flags in `app/` for one reason: on this device `Serial` **is** the protocol, so a `printf` arriving
+`probe/`, `panelsweep/`, `panel/`, `sensors/`, `audio/` and `psram/` are standalone sketches rather
+than debug flags in `app/` for one reason: on this device `Serial` **is** the protocol, so a `printf` arriving
 mid-frame is a fault the host correctly reports as a broken device. An instrument gets its own
 sketch, and `app/` only ever receives code that has already been checked against silicon in one of
 them. `sensors/` is why `app/sensors.cpp` is trustworthy at all — including the two findings that
@@ -441,9 +443,9 @@ for the failure path, `--scan-ms`/`--connect-ms` for the timing a state machine 
 `--no-psram` for the fallback panel nobody can trigger on real silicon without a soldering iron, and
 `--host` for a cable with somebody on the other end.
 
-**The protocol path runs here too, against a real host frame.** `tools/frame.ts` drives the actual
-`Esp32PulseDevice` and writes what it put on the wire; the simulator feeds those bytes to the same
-`anchor_pulse.c` the board runs and blits the result:
+**The protocol path runs here too, against a real host frame.** `sim/tools/frame.ts` drives the
+actual `Esp32PulseDevice` and writes what it put on the wire; the simulator feeds those bytes to the
+same `anchor_pulse.c` the board runs and blits the result:
 
 ```bash
 node sim/tools/frame.ts /tmp/frame.bin

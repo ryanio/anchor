@@ -16,7 +16,7 @@
 // a capture instead: real bytes, written by the real Anchor adapter against
 // its real panel config, taken with
 //
-//   node scripts/cardputer-session.ts --page anchor
+//   node scripts/cardputer-session.ts --page portfolio
 //
 // in the Anchor checkout. A hand typed approximation would be a fixture that
 // agrees with whatever the view happens to draw, which is the one thing a

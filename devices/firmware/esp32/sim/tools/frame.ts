@@ -7,7 +7,7 @@
  * `Esp32PulseDevice` through the real `MemoryLink`, in the shape `esp32-firmware.test.ts` already
  * established, and writes what the host actually put on the wire.
  *
- *   node tools/frame.ts /tmp/frame.bin
+ *   node sim/tools/frame.ts /tmp/frame.bin
  *   sim/run.sh --feed /tmp/frame.bin --shot /tmp/pulse --quit-after 3000
  *
  * The HELLO it answers is this board's: 368x448, RGB565 little-endian, 8 KB tiles — the same
