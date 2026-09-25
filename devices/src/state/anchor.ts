@@ -64,20 +64,6 @@ export async function status(timeoutMs = 1500): Promise<ServiceStatus> {
   };
 }
 
-/**
- * Fetch `/portfolio/value`. Returns the envelope, or null when the service is absent or refused.
- *
- * The caller gets `meta` to render provenance (`theme/README.md` principle 6: a number without
- * which wallets and how old is not checkable) and `data` as `unknown`.
- */
-export async function portfolioValue(timeoutMs = 2500): Promise<Envelope | null> {
-  // 428 is the service saying "no wallet configured" rather than a failure; measured against a
-  // running service with `wallets: []`. Either way there is nothing to draw.
-  const result = await get("/portfolio/value", timeoutMs);
-  if (result === null || result.status !== 200) return null;
-  return isEnvelope(result.body) ? result.body : null;
-}
-
 /** "12s ago", "4m ago" — provenance the panel can show next to a number. */
 export function describeAge(ageSeconds: number): string {
   if (ageSeconds < 60) return `${Math.max(0, Math.round(ageSeconds))}s ago`;
