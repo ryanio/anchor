@@ -304,24 +304,6 @@ export function money(amount: bigint, denomination: string): Money {
   return { amount, denomination };
 }
 
-/**
- * Add two amounts, refusing to mix denominations.
- *
- * There is no implicit conversion anywhere in this workspace. A policy denominated in USD cannot
- * evaluate a request denominated in ETH, and the honest answer is to *deny* rather than to invent
- * an exchange rate — a stale rate is a spend cap that silently changes size.
- */
-export function addMoney(a: Money, b: Money): Money {
-  if (a.denomination !== b.denomination) {
-    throw new TypeError(`cannot add ${a.denomination} to ${b.denomination}`);
-  }
-  return { amount: a.amount + b.amount, denomination: a.denomination };
-}
-
-export function formatMoney(m: Money): string {
-  return `${m.amount} ${m.denomination}`;
-}
-
 // --- Actions ---------------------------------------------------------------------------------
 
 /**

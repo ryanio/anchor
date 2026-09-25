@@ -961,7 +961,7 @@ export class PrivySigner implements Signer {
     }
     // Compare against the ceiling only when the units actually match. A policy denominated in
     // USD-cents cannot bound a wei value without an exchange rate, and inventing one would make the
-    // cap silently change size (types.ts, `addMoney`). Privy's own value condition bounds that case.
+    // cap silently change size. Privy's own value condition bounds that case.
     if (approved.ceiling.denomination === "wei" && tx.value > approved.ceiling.amount) {
       throw new Error("refusing to sign: transaction value exceeds the approved ceiling");
     }
