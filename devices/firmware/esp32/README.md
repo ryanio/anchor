@@ -194,6 +194,7 @@ probe/probe.ino          what is actually wired to this board — measured, not 
 panelsweep/panelsweep.ino  hunt for the display's bus using the panel's own tearing line
 panel/panel.ino          wake the panel from the known pin map, and prove it woke
 sensors/sensors.ino      what the touch controller and the IMU say when a person uses them
+audio/audio.ino          whether the speaker and microphone work, by playing a tone and hearing it
 sim/                     the whole firmware on a desktop: shims, a framebuffer, a scripted finger
 sim/run.sh               one command — build it and run a scenario, writing frames as PPM/PNG
 sim/wifi_setup.test.ts   six of those scenarios, on every `npm test`
@@ -209,12 +210,12 @@ The split is the point. Everything with judgement in it is in `src/`, which is p
 tested on every `npm test`; everything platform-specific is a thin shim that can be replaced without
 touching a decoder.
 
-`probe/`, `panelsweep/`, `panel/` and `sensors/` are standalone sketches rather than debug flags in
-`app/` for one reason: on this device `Serial` **is** the protocol, so a `printf` arriving mid-frame
-is a fault the host correctly reports as a broken device. An instrument gets its own sketch, and
-`app/` only ever receives code that has already been checked against silicon in one of them.
-`sensors/` is the newest of the four and is why `app/sensors.cpp` is trustworthy at all — including
-the two findings that shaped it, the burst read from `0x01` the part refuses and the bounded
+`probe/`, `panelsweep/`, `panel/`, `sensors/` and `audio/` are standalone sketches rather than debug
+flags in `app/` for one reason: on this device `Serial` **is** the protocol, so a `printf` arriving
+mid-frame is a fault the host correctly reports as a broken device. An instrument gets its own
+sketch, and `app/` only ever receives code that has already been checked against silicon in one of
+them. `sensors/` is why `app/sensors.cpp` is trustworthy at all — including the two findings that
+shaped it, the burst read from `0x01` the part refuses and the bounded
 `Wire.setTimeOut` without which a quiet sensor looks like a frozen display.
 
 ## Transport: the cable first, the radio later
