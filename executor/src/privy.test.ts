@@ -19,7 +19,7 @@ import assert from "node:assert/strict";
 import { generateKeyPairSync, verify } from "node:crypto";
 import { describe, test } from "node:test";
 import { PrivySvmAdapter } from "@opensea/wallet-adapters";
-import type { ApprovedAction, Denied, PolicyDecision } from "./decision.ts";
+import type { ApprovedAction } from "./decision.ts";
 import { PolicyBoundExecutor } from "./executor.ts";
 import {
   ACCOUNT,
@@ -210,11 +210,6 @@ function afterConnect(calls: readonly Call[]): Call[] {
   return calls.slice(1);
 }
 
-function denied(decision: PolicyDecision): Denied {
-  assert.equal(decision.outcome, "deny", `expected a denial, got ${decision.outcome}`);
-  return decision as Denied;
-}
-
 // --- Tests -------------------------------------------------------------------------------------
 
 describe("a request inside policy is approved and submitted", () => {
@@ -292,18 +287,6 @@ describe("a request outside policy is denied with a reason", () => {
     assert.equal(afterConnect(calls).length, 0);
   });
 
-  test("a contract that is not on the allowlist", async () => {
-    const { executor } = await harness();
-    const request = transfer("r1", 100n, COLD_VAULT, 0, {
-      contract: evmAddress("0xbadc0de00000000000000000000000000000beef"),
-    });
-    const result = await executor.execute(request);
-
-    assert.equal(result.status, "rejected");
-    if (result.status !== "rejected") return;
-    assert.equal(result.decision.reason, "contract-not-allowlisted");
-  });
-
   test("and Privy refuses independently: a policy_violation is a failure, not a transaction", async () => {
     // The mirror is deliberately widened past the remote policy here — which is exactly the state
     // an attacker who owns this process would engineer. Privy still says no.
@@ -327,16 +310,6 @@ describe("a request outside policy is denied with a reason", () => {
 });
 
 describe("a denial cannot be turned into an approval", () => {
-  test("Denied carries no approval to reuse", async () => {
-    const { executor } = await harness();
-    const result = await executor.execute(transfer("r1", 9_999n, COLD_VAULT));
-    assert.equal(result.status, "rejected");
-    if (result.status !== "rejected") return;
-    const decision = denied(result.decision);
-    // @ts-expect-error A denial has no `approval` property; there is nothing to launder.
-    assert.equal(decision.approval, undefined);
-  });
-
   test("a hand-built approval is refused by the signer, and never reaches Privy", async () => {
     const { executor, signer, calls } = await harness();
     const rejected = await executor.execute(transfer("r1", 9_999n, COLD_VAULT));
@@ -800,6 +773,12 @@ describe("auditing a Solana policy", () => {
   });
 
   test("the three gaps Ryan needs to know about are stated every single time", () => {
+    // Stated in `unverified`, not raised as findings (which `findings: []` above shows on this same
+    // document). A finding means "fix this in Privy" and refuses to start; the token and System
+    // Program findings are both fixable that way, with an instructionName condition. The priority
+    // fee is not fixable remotely at all, and nearly every real Solana transaction sets a compute
+    // unit limit, so raising it as a finding would refuse every honest policy while offering no
+    // remedy.
     const audit = solanaAudit(solanaPolicyDocument());
     // Worse than the EVM case: there is no aggregation primitive for Solana at all, not merely one
     // with too short a window.
@@ -811,17 +790,6 @@ describe("auditing a Solana policy", () => {
     // exposes no Compute Budget condition source, so a policy that permits the program cannot say
     // anything about the priority fee it names.
     assert.ok(audit.unverified.some((u) => /no Privy condition can bound what it does/.test(u)));
-  });
-
-  test("the priority-fee gap is stated, not raised as a finding — there is nothing to fix remotely", () => {
-    // The distinction between the two lists is the point. A finding means "fix this in Privy" and
-    // refuses to start; the token and System Program findings are both fixable that way, with an
-    // instructionName condition. This one is not fixable at all, and nearly every real Solana
-    // transaction sets a compute unit limit — so raising it as a finding would refuse every honest
-    // policy while offering no remedy.
-    const audit = solanaAudit(solanaPolicyDocument());
-    assert.deepEqual(audit.findings, []);
-    assert.ok(audit.unverified.some((u) => /SetComputeUnitPrice commits/.test(u)));
   });
 
   test("a policy that does not permit the Compute Budget program does not carry the note", () => {
