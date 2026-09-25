@@ -115,25 +115,6 @@ static void expander(uint8_t reg, uint8_t value) {
   Wire.endTransmission();
 }
 
-/*
- * Put the panel back the way it was found.
- *
- * The expander's original state was config 0x78, outputs 0x87 — bits 0, 1, 2 and 7 driven high. One
- * of those is the panel's reset, which is why a display can be running with no reset line reachable
- * from any GPIO. Pulsing them low and high again is a power-on reset for the panel, and it is what
- * makes each run of this sweep start from the same place instead of from wherever the last one left
- * it.
- */
-static void reset_panel(void) {
-  Wire.begin(BUS_SDA, BUS_SCL, 100000u);
-  Wire.setTimeOut(10);
-  expander(0x03, 0x00); // all lines outputs
-  expander(0x01, 0x00); // assert everything low
-  delay(50);
-  expander(0x01, 0xFF); // release
-  delay(250);
-}
-
 static bool found = false;
 
 /*
