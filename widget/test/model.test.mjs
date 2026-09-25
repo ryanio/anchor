@@ -1326,18 +1326,18 @@ test("the panel says which wallets a total is for, and how old it is", () => {
   // The line that would have made a fabricated total obvious: it names the addresses behind the
   // number. Two of them nobody configured is visible; a plausible dollar figure alone is not.
   const one = portfolioState({ health: health({ wallet: `0x${"a".repeat(40)}` }) });
-  assert.equal(Model.provenance(one, NOW, {}), "0xaaaa…aaaa  ·  as of now");
+  assert.equal(Model.provenance(one, NOW), "0xaaaa…aaaa  ·  as of now");
 
   const two = portfolioState({ health: health({ wallets: ["0xaa", "0xbb"] }) });
-  assert.match(Model.provenance(two, NOW, {}), /^2 wallets/);
+  assert.match(Model.provenance(two, NOW), /^2 wallets/);
 
   // Older readings keep saying so rather than quietly presenting as current.
   const old = portfolioState({
     health: health({ wallets: ["0xaa"] }),
     portfolio: { data: { totalValueUsd: "1" }, meta: null, receivedAt: NOW - 3_600_000 },
   });
-  assert.match(Model.provenance(old, NOW, {}), /as of 1h/);
+  assert.match(Model.provenance(old, NOW), /as of 1h/);
 
   // And with nothing to say it says nothing, rather than a line of empty separators.
-  assert.equal(Model.provenance(stateWith({}), NOW, {}), "");
+  assert.equal(Model.provenance(stateWith({}), NOW), "");
 });

@@ -1372,7 +1372,7 @@ function portfolioBreakdown(state, settings, mode) {
  * figure without either is asking to be believed rather than read. This is the line that would
  * have made two addresses nobody configured obvious at a glance.
  */
-function provenance(state, nowMs, settings) {
+function provenance(state, nowMs) {
   const wallets = walletList(state?.health);
   const missing = missingWallets(state).length;
   const parts = [];

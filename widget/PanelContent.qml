@@ -80,7 +80,7 @@ Column {
    * rather than read. This project has already had one afternoon of a plausible number being taken
    * for a true one.
    */
-  readonly property string provenance: Model.provenance(root.reading, root.nowMs, root.config)
+  readonly property string provenance: Model.provenance(root.reading, root.nowMs)
 
   /**
    * The hero's trailing pill. One wallet gets its short address; several get a count, because six
@@ -91,11 +91,6 @@ Column {
     : root.wallets.length === 1
       ? Model.shortAddress(root.wallets[0])
       : root.wallets.length + " wallets"
-
-  readonly property string ageText: {
-    const age = Model.ageSeconds(root.reading.portfolio, root.nowMs)
-    return age === null ? "" : Model.relativeAge(age)
-  }
 
   // ------------------------------------------------------------------------------------ view state
 
