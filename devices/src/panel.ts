@@ -7,6 +7,8 @@
  * has no key slots to fill.
  */
 
+import { homedir } from "node:os";
+import { join } from "node:path";
 import * as actions from "./actions.ts";
 import type { KeyConfig, PageConfig, PanelConfig } from "./config.ts";
 import { cachedThumbnail, thumbnail } from "./images.ts";
@@ -135,11 +137,18 @@ function signTone(value: string | null): TokenName | undefined {
 
 const NOT_LOADED: KeyReading = { value: "—" };
 
-/** Open the wallet's own OpenSea page, when the service knows which wallet that is. */
-function profileAction(service: ServiceStatus): string | undefined {
-  return service.wallet === undefined || service.wallet === ""
-    ? undefined
-    : `omarchy launch browser https://opensea.io/${service.wallet}`;
+/**
+ * Open the wallet's own OpenSea page, or, when the service knows of no wallet, the file a wallet is
+ * added in. The second is the widget's own "Add a wallet to watch" step: the same launcher on the
+ * same file (`service/src/config.ts`), so a key with no profile to open offers the one thing that
+ * would give it one.
+ */
+function profileAction(service: ServiceStatus): string {
+  if (service.wallet !== undefined && service.wallet !== "") {
+    return `omarchy launch browser https://opensea.io/${service.wallet}`;
+  }
+  const config = join(process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config"), "anchor", "config.json");
+  return `exec omarchy-launch-editor "${config}"`;
 }
 
 /**
@@ -255,11 +264,14 @@ const KEY_SOURCES: Readonly<Record<string, (state: PanelState, argument: string)
       image: art ?? undefined,
     };
   },
-  chain: ({ portfolio }, argument) => {
+  // A chain's share is a slice of the same wallet the sparklines read, so a press opens what theirs
+  // does. Nothing chain-scoped exists to open instead.
+  chain: ({ portfolio, service }, argument) => {
     const rank = Math.max(1, Number.parseInt(argument || "1", 10));
     const entry = portfolio?.chains[rank - 1];
-    if (entry === undefined) return { ...NOT_LOADED, label: `Chain ${rank}` };
-    return { value: usd(String(entry.usdValue)), label: entry.chain };
+    const action = profileAction(service);
+    if (entry === undefined) return { ...NOT_LOADED, label: `Chain ${rank}`, action };
+    return { value: usd(String(entry.usdValue)), label: entry.chain, action };
   },
   collection: ({ portfolio }, argument) => {
     const rank = Math.max(1, Number.parseInt(argument || "1", 10));

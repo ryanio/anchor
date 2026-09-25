@@ -1190,17 +1190,9 @@ describe("keys that show something can open it", () => {
     assert.deepEqual(spawned, [["omarchy", "launch", "browser", "https://opensea.io/item/1"]]);
   });
 
-  test("no shipped key is dead except the ones listed as dead on purpose", () => {
+  test("no shipped key is dead, with or without a wallet", () => {
     // "All buttons should have a click that does something useful": a key with neither a configured
-    // action nor a source that supplies one is a dead key. A few shipped keys are dead today, and
-    // they are named here so that a new one fails this test instead of passing among them.
-    //
-    // The six chain shares are readings only. `chain:N` supplies no action, and giving a chain
-    // share something to open is a product decision that has not been made, so they stay dead.
-    const neverAct = ["chains/0", "chains/1", "chains/2", "chains/3", "chains/4", "chains/5"];
-    // The two sparklines open the wallet's OpenSea profile, so without a configured wallet they
-    // have nothing to open. That is the product as designed, not a gap.
-    const needAWallet = ["portfolio/0", "portfolio/1"];
+    // action nor a source that supplies one is a dead key, and none ships.
 
     // Everything a key could want: a wallet, two linked holdings, a linked piece.
     const loaded = {
@@ -1236,7 +1228,42 @@ describe("keys that show something can open it", () => {
         )
         .sort();
 
-    assert.deepEqual(dead(loaded), [...neverAct].sort(), "dead even with everything loaded");
-    assert.deepEqual(dead(noWallet), [...neverAct, ...needAWallet].sort(), "dead without a wallet");
+    assert.deepEqual(dead(loaded), [], "dead with everything loaded");
+    assert.deepEqual(dead(noWallet), [], "dead without a wallet");
+  });
+
+  test("a sparkline or chain share opens the wallet, or with no wallet the file one is added in", () => {
+    // The no-wallet target is the widget's "Add a wallet to watch" step: this launcher on the file
+    // `service/src/config.ts` reads. A space in the path must survive the action's tokenizer.
+    const wallet = "0x00a839de7922491683f547a67795204763ff8237";
+    const keys = parseConfig({
+      pages: [
+        {
+          name: "p",
+          keys: [
+            { index: 0, source: "portfolio.spark" },
+            { index: 1, source: "chain:1" },
+          ],
+        },
+      ],
+    });
+    const previous = process.env.XDG_CONFIG_HOME;
+    process.env.XDG_CONFIG_HOME = "/home/someone/my config";
+    try {
+      for (const [service, expected] of [
+        [{ ...withLinks.service, wallet }, ["omarchy", "launch", "browser", `https://opensea.io/${wallet}`]],
+        [withLinks.service, ["omarchy-launch-editor", "/home/someone/my config/anchor/config.json"]],
+      ] as const) {
+        const panel = new Panel(keys, TOKENS);
+        panel.build(streamDeckPlus(), { ...withLinks, service });
+        spawned.length = 0;
+        panel.handle({ kind: "press", slot: keySlot(0) });
+        panel.handle({ kind: "press", slot: keySlot(1) });
+        assert.deepEqual(spawned, [expected, expected]);
+      }
+    } finally {
+      if (previous === undefined) delete process.env.XDG_CONFIG_HOME;
+      else process.env.XDG_CONFIG_HOME = previous;
+    }
   });
 });

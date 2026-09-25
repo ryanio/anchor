@@ -635,6 +635,10 @@ assuming it, so a machine without one shows the command exactly as before.
   gap, and what to delete when each is fixed.
 
 ### Changed
+- **Every shipped device key does something when pressed.** The six chain shares on the `chains`
+  page did nothing; they now open the wallet's OpenSea profile, as the portfolio sparklines do. With
+  no wallet configured, both open `~/.config/anchor/config.json` in the editor, where a wallet is
+  added, the same file the widget's setup step opens.
 - **A Cardputer filter stays on the page it was typed on.** The filter text carried across a
   page change, so the next page's grid came up narrowed, or empty with `nothing matches`, while the
   device showed no filter box. Changing page now clears it.

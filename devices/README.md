@@ -118,6 +118,13 @@ often not in front of.
 | `portfolio.nftCount` | NFTs held |
 | `token:N` | The Nth largest token holding, captioned with its symbol |
 | `collection:N` | The Nth collection by holdings, captioned with its slug |
+| `portfolio.spark` / `portfolio.pnlSpark` | Total or P&L over the timeframe, over a sparkline of it |
+| `chain:N` | The Nth chain by token value, captioned with its name |
+
+A key whose reading names one thing opens it when pressed: a holding or a piece opens its OpenSea
+page. A sparkline or a chain share opens the wallet's OpenSea profile, or, with no wallet
+configured, opens `~/.config/anchor/config.json` in the editor, the same file the widget's "Add a
+wallet to watch" step opens.
 
 Only holdings OpenSea classifies `OK` are shown. Its `status` field also marks `SPAM`, `WARNING`,
 `LOW_LIQUIDITY` and `LOW_VALUE`, and an unfiltered "top tokens" list on a wallet that has been
@@ -159,15 +166,17 @@ backlight, "0%" would be a false one.
 
 ## Pages
 
-Three ship, and each fills all eight keys:
+Four ship with keys:
 
-- **desktop** — workspaces, theme, night light, screenshot; volume, workspace, brightness and theme
-  on the dials.
-- **portfolio** — total, NFT and token value, P&L, and the three largest holdings. Dial 1 scrubs the
-  timeframe.
-- **anchor** — holdings: NFTs held, top collections, absolute P&L, and links out.
+- **desktop**: theme, night light, screenshot, lock, terminal, and a key to each other page. Deck,
+  workspace, brightness and theme on the dials.
+- **portfolio**: the total and P&L sparklines, the NFT share, two owned pieces and the two largest
+  holdings. Dial 1 scrubs the timeframe.
+- **chains**: the six largest chains by token value, with keys to the gallery and the desktop.
+- **gallery**: six owned pieces, each opening its OpenSea page.
 
-Swipe the touch strip to page.
+Every shipped key does something when pressed, with or without a wallet, and
+`src/panel.test.ts` fails on one that does not. Swipe the touch strip to page.
 
 ## Colour and type
 
