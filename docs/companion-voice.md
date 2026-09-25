@@ -11,16 +11,17 @@ today?". It listens with wide eyes, thinks with its eyes turned up, and answers 
 sentence while the reply also appears as its speech line. Answers use the same readings the unit
 shows, with their age, and never suggest or perform a transaction.
 
-## What the board has, and what is not verified
+## What the board has
 
 The probe found an ES8311 audio codec at I2C `0x18` beside the touch controller, IMU, power IC and
 real-time clock. Waveshare's own source for this board lists a microphone and a speaker on that
-codec, and gives the pins (the table is in
-[the ESP32 notes](devices-esp32.md#the-microphone-and-speaker-not-yet-heard)). That is the vendor's
-word, not a measurement on our unit. `devices/firmware/esp32/audio/audio.ino` is the measurement: a
-1 kHz tone played and recorded at the same time, so the serial log says whether sound crossed from
-speaker to microphone, followed by three seconds of speech played back for a person to judge. The
-rest of this design waits on that sketch passing on a unit.
+codec and gives the pins, which
+[the ESP32 notes](devices-esp32.md#the-microphone-and-speaker) tabulate.
+`devices/firmware/esp32/audio/audio.ino` checked them on our unit on 2026-09-25: a 1 kHz tone
+played and recorded at once rose over 90 dB above silence at the microphone in every cycle, so sound
+crossed from speaker to microphone, and three seconds of speech played back sounded good to the
+person holding it. The microphone clips on the unit's own speaker at the test's levels, so the
+device listens only while it is not talking.
 
 ## Why a relay, and not a key on the device
 
@@ -65,8 +66,8 @@ buffers stay small, and talking is refused while Wi-Fi setup is open.
 
 ## Build order
 
-1. **Hardware check.** Run `audio/audio.ino` on a unit: the loopback verdict on serial, and a
-   person hearing their own voice played back. The sketch is written; it has not run yet.
+1. **Hardware check.** Done on 2026-09-25 with `audio/audio.ino`: the loopback passed three of
+   three, and the voice playback sounded good.
 2. **Text first.** Relay endpoint that takes the unit's current readings and a typed or preset
    question and returns one sentence. This proves tokens, limits, tools and the reply path with no
    audio at all.

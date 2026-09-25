@@ -25,8 +25,8 @@ screen. `PULSE_COMPANION_HOME=0` restores the ambient readout.
 An ESP32 audio check sketch, `devices/firmware/esp32/audio/`, is the first step toward talking to
 the companion. It plays a 1 kHz tone while recording and prints how far the tone rose above a quiet
 second, which proves the speaker and microphone from serial alone, then plays back three seconds of
-speech. The pins come from Waveshare's source at the pinned vendor commit. It has not run on a unit
-yet.
+speech. The pins come from Waveshare's source at the pinned vendor commit. It passed on the first unit:
+the tone rose over 90 dB above silence in every cycle, and voice playback sounded good.
 
 
 Cardputer OpenSea reads now run on a bounded background worker. App exit, token changes, and network

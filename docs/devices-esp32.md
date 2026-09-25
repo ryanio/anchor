@@ -787,7 +787,7 @@ worse, not richer, by a page that turns because somebody set a mug down next to 
 Cardputer, which is the unit already in a hand. That is a judgement about what this device is for,
 not a limit on what it can do.
 
-### The microphone and speaker, not yet heard
+### The microphone and speaker
 
 `probe/` found an ES8311 codec at 0x18. Waveshare's source for this board, at the vendor commit
 `devices/toolchain.json` pins, says what is wired to it: an SMD microphone, a speaker behind an
@@ -807,7 +807,10 @@ That file also defines `DOPIN 10` and `DIPIN 8`, the same two wires named from t
 table above uses the ESP32's end, which is the order `ESP_I2S::setPins` takes and the order their
 `15_ES8311` example passes.
 
-None of this has been measured on our unit. `devices/firmware/esp32/audio/audio.ino` is the check.
+`devices/firmware/esp32/audio/audio.ino` is the check, and on 2026-09-25 it passed on
+`3a:d3:f0`: the 1 kHz energy rose 93 to 103 dB over the quiet second in all three cycles, and
+speech played back clearly to the person holding the unit.
+[The hardware record](device-hardware.md#audio-check-2026-09-25) has the numbers.
 It records a quiet second, then plays 1 kHz while recording, and prints how far the 1 kHz energy
 rose. Sound has to cross the air from the speaker to the microphone for that number to move, so one
 line of serial proves both ends. It then records three seconds of speech and plays them back, the
@@ -827,9 +830,14 @@ vendor checkout, so the `15_ES8311` folder has to be present: a checkout that `d
 created sparse holds only the GFX library. Nothing here is part of the product firmware or CI.
 
 The lines to read are `anchor-audio: loopback cycle=... rise_1k_db_l=... rise_1k_db_r=... verdict=`
-and the final `anchor-audio: result=`. The pass line of 15 dB was picked by hand, not measured:
-the first run on a unit is what calibrates it, and a rise well short of it with a clearly audible
-beep would mean the threshold is wrong, not the microphone.
+and the final `anchor-audio: result=`. The pass line of 15 dB was picked by hand; the first unit
+cleared it by more than 75 dB, so a result near the line means a fault, not a marginal part.
+
+What the run taught the voice design: at volume 70 with 18 dB of microphone gain, the microphone
+clips on the unit's own speaker (a recorded RMS near 29,700 against about 5,660 sent). Playback and
+capture at once is therefore not usable at these settings, and the companion should listen only
+while it is silent, or lower both before trying echo cancellation. The codec sends its one
+microphone on both I2S slots.
 
 ### What a tap does on the host
 

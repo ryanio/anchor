@@ -117,6 +117,27 @@ display, while the bigger keys were much better. The unit received `2f04061` wit
 only, 1,743,312 bytes, hash verified); its first health line reported 157,704 bytes free, a low of
 148,184 and the LVGL pool 47% used. It still had no Wi-Fi saved.
 
+## Audio check, 2026-09-25
+
+With both units plugged back in and identified as before, the Waveshare unit received the
+`audio/audio.ino` check from `eccfb41` (app0 only, 426,000 bytes, hash verified). The codec answered
+with id `0x83 0x11` and configured without error. All three loopback cycles passed:
+
+| Cycle | Quiet RMS | Tone RMS | 1 kHz rise | Talk peak |
+|---|---|---|---|---|
+| 1 | 42 | 29,686 | 100.3 dB | 199 |
+| 2 | 43 | 29,667 | 103.2 dB | 10,523 |
+| 3 | 156 | 29,644 | 92.6 dB | 6,862 |
+
+The tone went out at an RMS of about 5,660, so a recorded RMS near 29,700 is louder than what was
+sent and cannot be the outgoing samples copied back inside the codec: the microphone heard the
+speaker through the air and clipped. Both I2S slots carried the same samples, so the codec sends its
+one microphone on both. The talk window of cycle 1 stayed near the quiet level, and cycles 2 and 3
+caught speech. Ryan heard the beep and reported that the recorded voice played back sounding good.
+
+The unit was then restored to the `2f04061` companion image (hash verified) and booted to it. Its
+first health line reported the battery at 3% and charging, after a night unplugged.
+
 ## Idle soak, 2026-09-23
 
 A read-only serial logger recorded the Waveshare unit on `ad4668c` from 15:09 to 22:29, when both
