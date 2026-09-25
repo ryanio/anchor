@@ -48,13 +48,19 @@ describe("tool isolation", () => {
 
   test("generates direct exact Cardputer constraints over flint's compatible ranges", () => {
     const manifest = loadToolchain(ROOT);
-    const generated = platformioConfig(ROOT, pathsForRoot(ROOT), manifest);
-    const config = readFileSync(generated, "utf8");
-    for (const library of manifest.cardputer.libraries) assert.ok(config.includes(library), library);
-    assert.ok(config.indexOf("m5stack/M5GFX@") < config.indexOf("m5stack/M5Unified@"));
-    assert.ok(config.indexOf("m5stack/M5Unified@") < config.indexOf("m5stack/M5Cardputer@"));
-    assert.equal(config.includes("project_dir ="), false, "project location comes from pio run -d");
-    assert.equal(generated.endsWith("/anchor-cardputer-project/platformio.ini"), true);
+    // Sources come from the checkout; the generated file goes to a temp cache, not the checkout's.
+    const cache = mkdtempSync(join(tmpdir(), "anchor-device-platformio-test-"));
+    try {
+      const generated = platformioConfig(ROOT, pathsForRoot(cache), manifest);
+      const config = readFileSync(generated, "utf8");
+      for (const library of manifest.cardputer.libraries) assert.ok(config.includes(library), library);
+      assert.ok(config.indexOf("m5stack/M5GFX@") < config.indexOf("m5stack/M5Unified@"));
+      assert.ok(config.indexOf("m5stack/M5Unified@") < config.indexOf("m5stack/M5Cardputer@"));
+      assert.equal(config.includes("project_dir ="), false, "project location comes from pio run -d");
+      assert.equal(generated.endsWith("/anchor-cardputer-project/platformio.ini"), true);
+    } finally {
+      rmSync(cache, { recursive: true, force: true });
+    }
   });
 
   test("installs the platform, then the exact Cardputer library closure without its dependencies", () => {
