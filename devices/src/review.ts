@@ -91,8 +91,8 @@ const FALLBACK_GEOMETRY = {
  *
  * Capabilities come from each adapter's own `capabilitiesFor`, so a device cannot appear here with
  * a geometry the adapter would not actually produce. The ESP32 entries pass the panel dimensions
- * the board reports in HELLO; `PANELS` in `esp32.ts` is documentation of the boards that exist and
- * these are two of them.
+ * the board reports in HELLO; the candidate table in `docs/devices-esp32.md` lists the boards that
+ * exist and these are two of them.
  */
 export const DEVICES: readonly DeviceProfile[] = [
   {

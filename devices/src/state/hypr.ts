@@ -22,10 +22,6 @@ function runtimeDir(): string | null {
   return join(base, "hypr", signature);
 }
 
-export function available(): boolean {
-  return runtimeDir() !== null;
-}
-
 type ExecFileCallback = (error: Error | null, stdout: string, stderr: string) => void;
 type ExecFileFn = (command: string, args: readonly string[], callback: ExecFileCallback) => unknown;
 

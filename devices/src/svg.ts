@@ -661,9 +661,10 @@ function renderList(surface: Extract<Surface, { kind: "list" }>, tokens: Tokens,
  *
  * **Worked out from the one panel that has been driven**, not picked: the 1.8in AMOLED is 368x448,
  * so its diagonal is √(368² + 448²) ≈ 580px across 1.8in ≈ 322 ppi ≈ 12.7 px/mm. The usual guidance
- * for a finger is 9-10mm, which is 114-127px here; 120 sits in the middle of that. The other panels
- * in `PANELS` are coarser rather than finer — the 1.28in round 240x240 is ≈ 265 ppi, where 120px is
- * 11.5mm — so this floor is at worst generous on them, never mean.
+ * for a finger is 9-10mm, which is 114-127px here; 120 sits in the middle of that. The other
+ * candidate panels in `docs/devices-esp32.md` are coarser rather than finer — the 1.28in round
+ * 240x240 is ≈ 265 ppi, where 120px is 11.5mm — so this floor is at worst generous on them, never
+ * mean.
  *
  * It is a *target* rather than a minimum: a panel is divided into whole columns, so the cells that
  * come out are usually larger. 368 wide gives three columns of 122px, and 448 tall three rows of

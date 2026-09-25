@@ -81,10 +81,10 @@ export type TileEncodingValue = (typeof TileEncoding)[keyof typeof TileEncoding]
 /**
  * A ceiling on what a HELLO may claim, in pixels.
  *
- * 1024x1024 is four times the largest panel in `PANELS` and far beyond anything an ESP32 drives.
- * The number is not the point; having one is. A HELLO is data from an untrusted device, and
- * `width * height * 2` is an allocation — a device claiming 65535x65535 would ask the host for
- * 8 GB before a single pixel was painted.
+ * 1024x1024 is four times the largest candidate panel in `docs/devices-esp32.md` and far beyond
+ * anything an ESP32 drives. The number is not the point; having one is. A HELLO is data from an
+ * untrusted device, and `width * height * 2` is an allocation — a device claiming 65535x65535 would
+ * ask the host for 8 GB before a single pixel was painted.
  */
 export const MAX_PANEL_PIXELS = 1024 * 1024;
 
