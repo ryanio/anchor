@@ -115,6 +115,7 @@ async function openVirtual(model: string) {
 import { loadConfig } from "./config.ts";
 import { loadGlyphMetrics } from "./glyphs.ts";
 import { prefetch } from "./images.ts";
+import { Painter } from "./painter.ts";
 import { BROWSE_PAGES, Panel, type PanelState, STRIP_SLOT } from "./panel.ts";
 import { clearRasterCache } from "./raster.ts";
 import * as anchor from "./state/anchor.ts";
@@ -296,8 +297,6 @@ async function main(): Promise<void> {
   let discoveryTokensFetched = false;
   let discoveryCollectionsFetched = false;
   let discoveryDetail: PanelState["discoveryDetail"];
-  let painting = false;
-  let repaintQueued = false;
   let reconnecting = false;
 
   /**
@@ -453,13 +452,9 @@ async function main(): Promise<void> {
     }
   };
 
-  const repaint = async (): Promise<void> => {
-    if (painting) {
-      repaintQueued = true;
-      return;
-    }
-    painting = true;
-    try {
+  const painter = new Painter(
+    () => device,
+    async () => {
       const snapshot = await desktop.get();
       // A pinned theme is a review aid; it must not be overwritten by what the desktop is wearing.
       if (options.theme === undefined && snapshot.theme !== "" && snapshot.theme !== tokens.themeName) {
@@ -469,30 +464,24 @@ async function main(): Promise<void> {
         if ("tokens" in device) (device as { tokens: typeof tokens }).tokens = tokens;
         clearRasterCache();
       }
-      await device.paint(
-        panel.build(device, {
-          desktop: snapshot,
-          service,
-          themeName: tokens.themeName,
-          portfolio,
-          timeframe: panel.timeframe,
-          ...rotationNow(),
-          discoveryTokens,
-          discoveryCollections,
-          discoveryDetail,
-        }),
-      );
-    } catch (error) {
+      return panel.build(device, {
+        desktop: snapshot,
+        service,
+        themeName: tokens.themeName,
+        portfolio,
+        timeframe: panel.timeframe,
+        ...rotationNow(),
+        discoveryTokens,
+        discoveryCollections,
+        discoveryDetail,
+      });
+    },
+    (error) => {
       process.stderr.write(`paint failed: ${error instanceof Error ? error.message : String(error)}\n`);
       void reconnect();
-    } finally {
-      painting = false;
-      if (repaintQueued) {
-        repaintQueued = false;
-        void repaint();
-      }
-    }
-  };
+    },
+  );
+  const repaint = (): Promise<void> => painter.repaint();
 
   await refreshPortfolio();
   await refreshDiscovery();
@@ -593,18 +582,11 @@ async function main(): Promise<void> {
 
   // Blanking is checked on its own beat and only acted on when it changes, so a locked session
   // costs one subprocess per tick and no USB traffic at all.
-  let blanked = false;
   const lockWatch = setInterval(async () => {
-    const locked = await sessionLocked();
-    if (locked === blanked) return;
-    blanked = locked;
-    await device.setBlanked?.(locked);
-    if (!locked) void repaint();
+    await painter.setBlanked(await sessionLocked());
   }, TICK_MS);
 
-  const tick = setInterval(() => {
-    if (!blanked) void repaint();
-  }, TICK_MS);
+  const tick = setInterval(() => void repaint(), TICK_MS);
   const servicePoll = setInterval(async () => {
     service = await anchor.status();
     await refreshPortfolio(true);

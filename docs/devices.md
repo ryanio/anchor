@@ -114,6 +114,12 @@ every other desktop component uses and it does not care which locker is installe
 adapter both clears the keys and takes the backlight to zero: brightness alone leaves the image
 faintly readable in a dark room and fully readable to a phone camera.
 
+Blanking once is not enough: nothing may paint while the session is locked. Every repaint in the
+daemon (the tick, a service poll, a fetch landing, a Hyprland event, a key press) goes through
+`Painter` in `devices/src/painter.ts`, which drops them all while locked, waits out a frame already
+on the wire before it blanks, and paints one fresh frame on unlock. On the ESP32 a COMMIT restores
+the configured backlight, so a single stray frame is a lit portfolio on an empty desk.
+
 ### The font is the user's
 
 `monospace`, never a named family. The Omarchy shell's `Style.qml` defaults to `monospace` so every
