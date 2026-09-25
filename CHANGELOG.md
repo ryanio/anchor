@@ -652,6 +652,9 @@ assuming it, so a machine without one shows the command exactly as before.
   service poll, a Hyprland event, a key press or a fetch landing still repainted the panel. On the
   ESP32 that COMMIT turned the backlight back up, and a portfolio page reappeared on a locked desk
   within about 15 s. Nothing paints while locked now, and unlocking paints one fresh frame.
+- **A display that reconnects while the session is locked stays dark.** A reset ESP32 or a wedged
+  Stream Deck is reopened, and the fresh device was never told about the lock, so it sat lit until
+  the next unlock. It is sent the blank again now, after its brightness.
 - **ESP32 delete deletes once per tap, and the keypad stays off the rounded corners.** Delete fired on
   touch and repeated from 400 ms, so a slightly long tap removed two or three characters; it now acts
   on release and repeats only after a hold of about 0.8 s. The keypad moved in to the 20 px safe

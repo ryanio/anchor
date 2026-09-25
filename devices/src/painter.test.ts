@@ -36,7 +36,7 @@ function sentTypes(link: MemoryLink): number[] {
   return types;
 }
 
-async function pulse(): Promise<{ link: MemoryLink; device: Esp32PulseDevice; painter: Painter }> {
+async function connect(): Promise<{ link: MemoryLink; device: Esp32PulseDevice }> {
   const link = new MemoryLink();
   const attached = attach(link, toTokens("Test", { accent: "#7aa2f7" }));
   link.receive(
@@ -51,12 +51,17 @@ async function pulse(): Promise<{ link: MemoryLink; device: Esp32PulseDevice; pa
     }),
   );
   const device = await attached;
+  link.sent.length = 0;
+  return { link, device };
+}
+
+async function pulse(): Promise<{ link: MemoryLink; device: Esp32PulseDevice; painter: Painter }> {
+  const { link, device } = await connect();
   const painter = new Painter(
     () => device,
     async () => frame,
     (error) => assert.fail(String(error)),
   );
-  link.sent.length = 0;
   return { link, device, painter };
 }
 
@@ -107,5 +112,31 @@ describe("a locked session", { skip: noRasteriser }, () => {
     assert.ok(types.includes(MessageType.Commit), "the frame was already under way");
     assert.equal(types.at(-1), MessageType.Blank, "the panel must end dark");
     await device.close();
+  });
+});
+
+describe("a device that reconnects while the session is locked", () => {
+  test("is sent BLANK after its brightness, once, and no frame", async () => {
+    let current = await connect();
+    const painter = new Painter(
+      () => current.device,
+      async () => frame,
+      (error) => assert.fail(String(error)),
+    );
+    await painter.setBlanked(true);
+
+    // What `reconnect` in cli.ts does with the fresh device: set its brightness, then ask for a
+    // repaint. The old device was blanked; this one has only just booted and knows nothing of it.
+    const old = current;
+    current = await connect();
+    await current.device.setBrightness(80);
+    await painter.repaint();
+    assert.deepEqual(sentTypes(current.link), [MessageType.Brightness, MessageType.Blank]);
+
+    // The tick keeps asking every second. One BLANK is enough, and still no frame.
+    await painter.repaint();
+    assert.deepEqual(sentTypes(current.link), [MessageType.Brightness, MessageType.Blank]);
+    await old.device.close();
+    await current.device.close();
   });
 });

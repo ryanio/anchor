@@ -20,6 +20,8 @@ export class Painter {
   #painting = false;
   #queued = false;
   #blanked = false;
+  /** The device that has been told the session is locked. A reconnect replaces it with one that has not. */
+  #blankedDevice: AnchorDevice | null = null;
   #inFlight: Promise<void> = Promise.resolve();
 
   /**
@@ -41,13 +43,31 @@ export class Painter {
   async setBlanked(locked: boolean): Promise<void> {
     if (locked === this.#blanked) return;
     this.#blanked = locked;
-    if (locked) await this.#inFlight;
-    await this.#device().setBlanked?.(locked);
-    if (!locked) await this.repaint();
+    if (!locked) {
+      this.#blankedDevice = null;
+      await this.#device().setBlanked?.(false);
+      await this.repaint();
+      return;
+    }
+    // Claimed before the wait, so a repaint asked for during it does not send an early BLANK.
+    this.#blankedDevice = this.#device();
+    await this.#inFlight;
+    const device = this.#device();
+    this.#blankedDevice = device;
+    await device.setBlanked?.(true);
   }
 
+  /**
+   * Paint a frame, unless the session is locked.
+   *
+   * While locked there is no frame, but a device that reconnected since the lock has just booted and
+   * was never told, so it is sent the BLANK the old one got. Once only: the tick asks every second.
+   */
   async repaint(): Promise<void> {
-    if (this.#blanked) return;
+    if (this.#blanked) {
+      await this.#blankReplacement();
+      return;
+    }
     if (this.#painting) {
       this.#queued = true;
       return;
@@ -62,6 +82,20 @@ export class Painter {
         this.#queued = false;
         void this.repaint();
       }
+    }
+  }
+
+  async #blankReplacement(): Promise<void> {
+    const device = this.#device();
+    if (device === this.#blankedDevice) return;
+    // Claimed first, so the reconnect's repaint and a tick landing together send one BLANK.
+    this.#blankedDevice = device;
+    try {
+      await device.setBlanked?.(true);
+    } catch (error) {
+      // Unclaimed, so the next repaint tries again.
+      if (this.#blankedDevice === device) this.#blankedDevice = null;
+      this.#onError(error);
     }
   }
 
