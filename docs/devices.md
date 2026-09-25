@@ -97,7 +97,9 @@ toward the theme's own foreground until it clears, so the result still belongs t
 `DeviceInput` has a `text` member for devices with a keyboard, and it is deliberately *committed*
 text rather than a keystroke stream — a stream invites dispatching on each one. The panel uses it to
 narrow the rows already on screen. Nothing evaluates it, it never reaches `actions.dispatch`, and a
-test asserts that committing `page other` changes no page.
+test asserts that committing `page other` changes no page. The filter belongs to the page it was typed
+on: a page change clears it, because the Cardputer hides its box once the text is committed and a
+carried filter would narrow the next page with nothing on screen saying so.
 
 If a filter ever becomes a query parameter to the data service, an untrusted device is steering host
 requests. That is a different feature and needs an allowlist; say so rather than letting it happen.

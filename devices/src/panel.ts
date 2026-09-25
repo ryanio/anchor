@@ -1009,6 +1009,9 @@ export class Panel {
     // chose there — and, worse, one whose holders were fetched for the other page's list.
     this.#browseDetail = null;
     this.#browseRows = null;
+    // A filter narrows what was on screen when it was typed. The Cardputer hides its box once the
+    // text is committed, so a filter carried to the next page would narrow it with nothing saying so.
+    this.#filter = "";
     return true;
   }
 

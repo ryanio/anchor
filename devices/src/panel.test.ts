@@ -1090,6 +1090,28 @@ describe("text input", () => {
     assert.match(grid?.kind === "grid" ? (grid.empty ?? "") : "", /page other/, "it is kept as a filter");
   });
 
+  test("a filter stays on the page it was typed on", () => {
+    // The Cardputer hides its filter box once the text is committed, so a filter carried to the next
+    // page narrows that grid with nothing on the glass saying why.
+    const twoPages = parseConfig({
+      pages: [
+        { name: "p", keys: [{ index: 0, label: "Solana", action: "exec true" }] },
+        {
+          name: "q",
+          keys: [
+            { index: 0, label: "Ethereum", action: "exec true" },
+            { index: 1, label: "Base", action: "exec true" },
+          ],
+        },
+      ],
+    });
+    const panel = new Panel(twoPages, TOKENS);
+    panel.handle({ kind: "text", slot: SCREEN_SLOT, value: "sol" });
+    assert.equal(panel.setPage("q"), true);
+    const grid = panel.build(screenDevice(), state()).get(SCREEN_SLOT);
+    assert.deepEqual(grid?.kind === "grid" ? grid.cells.map((c) => c.label) : [], ["Ethereum", "Base"]);
+  });
+
   test("committing text resets the selection to the top of the new grid", () => {
     const panel = new Panel(config, TOKENS);
     panel.handle({ kind: "rotate", slot: SCREEN_SLOT, delta: 1 });

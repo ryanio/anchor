@@ -635,6 +635,9 @@ assuming it, so a machine without one shows the command exactly as before.
   gap, and what to delete when each is fixed.
 
 ### Changed
+- **A Cardputer filter stays on the page it was typed on.** The filter text carried across a
+  page change, so the next page's grid came up narrowed, or empty with `nothing matches`, while the
+  device showed no filter box. Changing page now clears it.
 - **A single wallet that could not be read is labelled.** With one wallet configured and its read
   failed, the panel still named the address "as of now" over an empty total. It now says "0 of 1
   wallet", the same label a partial multi-wallet total already gets.
