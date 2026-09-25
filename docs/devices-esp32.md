@@ -787,6 +787,50 @@ worse, not richer, by a page that turns because somebody set a mug down next to 
 Cardputer, which is the unit already in a hand. That is a judgement about what this device is for,
 not a limit on what it can do.
 
+### The microphone and speaker, not yet heard
+
+`probe/` found an ES8311 codec at 0x18. Waveshare's source for this board, at the vendor commit
+`devices/toolchain.json` pins, says what is wired to it: an SMD microphone, a speaker behind an
+amplifier, and these ESP32 pins.
+
+| Signal | GPIO | Source |
+|---|---|---|
+| I2S MCLK | 16 | `examples/arduino-v2/libraries/Mylibrary/pin_config.h` |
+| I2S BCLK | 9 | same |
+| I2S WS | 45 | same |
+| I2S data out (to the speaker) | 8 | same, `I2S_DO_IO` |
+| I2S data in (from the microphone) | 10 | same, `I2S_DI_IO` |
+| Speaker amplifier enable | 46 | same, `PA` |
+| Codec control | I2C 0x18 on SDA 15, SCL 14 | the bus `probe/` already reads |
+
+That file also defines `DOPIN 10` and `DIPIN 8`, the same two wires named from the codec's end. The
+table above uses the ESP32's end, which is the order `ESP_I2S::setPins` takes and the order their
+`15_ES8311` example passes.
+
+None of this has been measured on our unit. `devices/firmware/esp32/audio/audio.ino` is the check.
+It records a quiet second, then plays 1 kHz while recording, and prints how far the 1 kHz energy
+rose. Sound has to cross the air from the speaker to the microphone for that number to move, so one
+line of serial proves both ends. It then records three seconds of speech and plays them back, the
+part only a person can judge. It runs three cycles, stops, and shows the result on the glass.
+
+```bash
+V=~/dev/anchor/.cache/device/vendor/waveshare/examples/arduino-v2
+FQBN=$(jq -r .esp32.fqbn devices/toolchain.json)
+$ANCHOR_ARDUINO_CLI --config-file .cache/device/arduino/arduino-cli.yaml compile --fqbn "$FQBN" \
+  --library "$V/libraries/GFX_Library_for_Arduino" --library "$V/examples/15_ES8311" \
+  devices/firmware/esp32/audio
+```
+
+On an Apple silicon Mac, add `--build-property runtime.tools.ctags.path=.cache/device/tools/ctags-native/bin`, the
+native ctags `scripts/device-ctags.ts` installs. The codec driver is compiled in place from the
+vendor checkout, so the `15_ES8311` folder has to be present: a checkout that `device bootstrap`
+created sparse holds only the GFX library. Nothing here is part of the product firmware or CI.
+
+The lines to read are `anchor-audio: loopback cycle=... rise_1k_db_l=... rise_1k_db_r=... verdict=`
+and the final `anchor-audio: result=`. The pass line of 15 dB was picked by hand, not measured:
+the first run on a unit is what calibrates it, and a rise well short of it with a clearly audible
+beep would mean the threshold is wrong, not the microphone.
+
 ### What a tap does on the host
 
 `Panel.handle`'s `tap` case used to end `return false;`. Taps were decoded end to end, with passing

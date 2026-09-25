@@ -14,10 +14,13 @@ shows, with their age, and never suggest or perform a transaction.
 ## What the board has, and what is not verified
 
 The probe found an ES8311 audio codec at I2C `0x18` beside the touch controller, IMU, power IC and
-real-time clock. Whether this unit has a microphone and a speaker wired to that codec has not been
-checked. Before any code, open the unit or its schematic, confirm a MEMS microphone and a speaker
-header or amplifier, and record a two-second loopback (I2S in, I2S out) on the glass. The rest of
-this design assumes both exist.
+real-time clock. Waveshare's own source for this board lists a microphone and a speaker on that
+codec, and gives the pins (the table is in
+[the ESP32 notes](devices-esp32.md#the-microphone-and-speaker-not-yet-heard)). That is the vendor's
+word, not a measurement on our unit. `devices/firmware/esp32/audio/audio.ino` is the measurement: a
+1 kHz tone played and recorded at the same time, so the serial log says whether sound crossed from
+speaker to microphone, followed by three seconds of speech played back for a person to judge. The
+rest of this design waits on that sketch passing on a unit.
 
 ## Why a relay, and not a key on the device
 
@@ -62,7 +65,8 @@ buffers stay small, and talking is refused while Wi-Fi setup is open.
 
 ## Build order
 
-1. **Hardware check.** Confirm microphone and speaker, and record a loopback on the glass.
+1. **Hardware check.** Run `audio/audio.ino` on a unit: the loopback verdict on serial, and a
+   person hearing their own voice played back. The sketch is written; it has not run yet.
 2. **Text first.** Relay endpoint that takes the unit's current readings and a typed or preset
    question and returns one sentence. This proves tokens, limits, tools and the reply path with no
    audio at all.

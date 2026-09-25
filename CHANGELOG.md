@@ -22,6 +22,12 @@ only while it is on screen, so the crowded Wi-Fi scan keeps the LVGL pool headro
 hold moved with it: the companion has its own battery chip, and the confirmation draws over any
 screen. `PULSE_COMPANION_HOME=0` restores the ambient readout.
 
+An ESP32 audio check sketch, `devices/firmware/esp32/audio/`, is the first step toward talking to
+the companion. It plays a 1 kHz tone while recording and prints how far the tone rose above a quiet
+second, which proves the speaker and microphone from serial alone, then plays back three seconds of
+speech. The pins come from Waveshare's source at the pinned vendor commit. It has not run on a unit
+yet.
+
 
 Cardputer OpenSea reads now run on a bounded background worker. App exit, token changes, and network
 changes invalidate unfinished work without destroying another task's HTTP objects. ESP32 feed reads
