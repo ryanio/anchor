@@ -721,7 +721,7 @@ describe("a tap steers the rotation", () => {
 describe("browsing trending tokens and collections", () => {
   const config = parseConfig({
     pages: [
-      { name: "desktop", keys: [{ index: 0, label: "One", action: "noop" }] },
+      { name: "desktop", keys: [{ index: 0, label: "One", action: "exec notify-send one" }] },
       { name: "browse-tokens", layout: "screen" },
       { name: "browse-nfts", layout: "screen" },
     ],
@@ -1028,8 +1028,12 @@ describe("browsing trending tokens and collections", () => {
     panel.handle(ENTER);
     panel.setPage("desktop");
     assert.equal(panel.browseDetail, null);
-    // And an Enter arriving after the page change, before its repaint, opens nothing.
-    assert.doesNotThrow(() => panel.handle(ENTER));
+    // And an Enter arriving after the page change, before its repaint, runs nothing. Desktop's key 0
+    // is at the selected index, but it is not on the glass yet, so nobody chose it.
+    spawned.length = 0;
+    panel.handle(ENTER);
+    assert.deepEqual(spawned, []);
+    assert.equal(panel.pageName, "desktop");
     assert.equal(panel.browseDetail, null);
   });
 

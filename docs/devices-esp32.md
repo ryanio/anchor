@@ -826,8 +826,8 @@ later with nothing attached to it — and answers the touch with the cell under 
 
 The sleeve is still answered, three times over. The gutter between two tiles is dead space, so a
 touch between two targets resolves to neither rather than to whichever won a rounding. The page name
-travels with the remembered grid, so a tap landing between a page change and the repaint that
-follows resolves against nothing. And what a cell can reach is `key.action` from `panel.json` and
+travels with the remembered grid, so a tap or an Enter landing between a page change and the
+repaint that follows resolves against nothing. And what a cell can reach is `key.action` from `panel.json` and
 nothing else — never the action a *source* supplied for what the cell happens to be showing, which
 is a string built out of marketplace data. `actions.ts` has no verb that signs, spends or approves,
 so invariant 1 holds here structurally rather than by care.

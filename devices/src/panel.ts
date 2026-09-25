@@ -1203,11 +1203,17 @@ export class Panel {
    * invariant 1 holds structurally here rather than by care.
    *
    * Resolved through the grid's own key list rather than `page.keys[index]`, because a filter makes
-   * those two different lists.
+   * those two different lists. And only through a grid painted for the current page, which is the
+   * check the tap path makes: an Enter landing between a page change and its repaint would otherwise
+   * run the new page's key at `#selected`, a key that is not on the glass yet. Returns whether it
+   * resolved to anything.
    */
-  #chooseCell(index: number, context: actions.ActionContext): void {
-    const key = this.#grid?.keys[index] ?? this.page.keys[index];
+  #chooseCell(index: number, context: actions.ActionContext): boolean {
+    const grid = this.#grid;
+    if (grid === null || grid.page !== this.#pageName) return false;
+    const key = grid.keys[index];
     if (key !== undefined && key.action !== "") actions.dispatch(key.action, context);
+    return true;
   }
 
   /**
@@ -1239,8 +1245,7 @@ export class Panel {
             return true;
           }
           // On a screen device the chosen cell is the action, and the panel knows which cell that is.
-          this.#chooseCell(this.#selected, context);
-          return true;
+          return this.#chooseCell(this.#selected, context);
         }
         // The one press that belongs to no key and no cell. The Cardputer's Esc arrives as this
         // (see `#handleScreenKey`), and backing out of a detail is the only thing it means — a
