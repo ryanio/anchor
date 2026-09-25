@@ -1190,18 +1190,53 @@ describe("keys that show something can open it", () => {
     assert.deepEqual(spawned, [["omarchy", "launch", "browser", "https://opensea.io/item/1"]]);
   });
 
-  test("every key on every shipped page can do something when pressed", () => {
-    // "All buttons should have a click that does something useful" — a key with neither a
-    // configured action nor a source that supplies one is a dead key.
+  test("no shipped key is dead except the ones listed as dead on purpose", () => {
+    // "All buttons should have a click that does something useful": a key with neither a configured
+    // action nor a source that supplies one is a dead key. A few shipped keys are dead today, and
+    // they are named here so that a new one fails this test instead of passing among them.
+    //
+    // The six chain shares are readings only. `chain:N` supplies no action, and giving a chain
+    // share something to open is a product decision that has not been made, so they stay dead.
+    const neverAct = ["chains/0", "chains/1", "chains/2", "chains/3", "chains/4", "chains/5"];
+    // The two sparklines open the wallet's OpenSea profile, so without a configured wallet they
+    // have nothing to open. That is the product as designed, not a gap.
+    const needAWallet = ["portfolio/0", "portfolio/1"];
+
+    // Everything a key could want: a wallet, two linked holdings, a linked piece.
+    const loaded = {
+      ...withLinks,
+      service: { ...withLinks.service, wallet: "0x00a839de7922491683f547a67795204763ff8237" },
+      portfolio: {
+        ...withLinks.portfolio,
+        tokens: [
+          ...withLinks.portfolio.tokens,
+          {
+            symbol: "USDC",
+            usdValue: 1,
+            status: "OK",
+            chain: "base",
+            openseaUrl: "https://opensea.io/token/usdc",
+          },
+        ],
+      },
+    };
+    const noWallet = { ...loaded, service: withLinks.service };
+
     const { config: shipped } = loadConfig(new URL("../config/panel.json", import.meta.url).pathname);
-    for (const page of shipped.pages) {
-      for (const key of page.keys) {
-        const dynamic = key.source === "" ? null : readKeySource(key.source, withLinks)?.action;
-        assert.ok(
-          key.action !== "" || dynamic !== undefined || key.source !== "",
-          `${page.name}/${key.index} does nothing when pressed`,
-        );
-      }
-    }
+    const dead = (state: typeof noWallet): string[] =>
+      shipped.pages
+        .flatMap((page) =>
+          page.keys
+            .filter(
+              (key) =>
+                key.action === "" &&
+                (key.source === "" || readKeySource(key.source, state)?.action === undefined),
+            )
+            .map((key) => `${page.name}/${key.index}`),
+        )
+        .sort();
+
+    assert.deepEqual(dead(loaded), [...neverAct].sort(), "dead even with everything loaded");
+    assert.deepEqual(dead(noWallet), [...neverAct, ...needAWallet].sort(), "dead without a wallet");
   });
 });
