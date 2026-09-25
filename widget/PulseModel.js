@@ -1374,15 +1374,14 @@ function provenance(state, nowMs, settings) {
   const wallets = walletList(state?.health);
   const missing = missingWallets(state).length;
   const parts = [];
-  if (wallets.length === 1) parts.push(shortAddress(wallets[0]));
   // "8 of 9 wallets", not "9 wallets", when one did not answer. The service reports which ones it
   // could not read rather than trimming them, and this is the half that makes reporting it worth
-  // anything: a total silently missing a wallet is exactly the bug the fan-out exists to fix.
-  else if (wallets.length > 1) {
-    parts.push(
-      missing > 0 ? `${wallets.length - missing} of ${wallets.length} wallets` : `${wallets.length} wallets`,
-    );
-  }
+  // anything: a total silently missing a wallet is exactly the bug the fan-out exists to fix. That
+  // holds for a single wallet too, where naming the address would present an empty read as a reading.
+  if (missing > 0 && wallets.length > 0) {
+    parts.push(`${wallets.length - missing} of ${wallets.length} wallet${wallets.length === 1 ? "" : "s"}`);
+  } else if (wallets.length === 1) parts.push(shortAddress(wallets[0]));
+  else if (wallets.length > 1) parts.push(`${wallets.length} wallets`);
 
   const age = ageSeconds(state?.portfolio, nowMs);
   if (age !== null) parts.push(`as of ${relativeAge(age)}`);

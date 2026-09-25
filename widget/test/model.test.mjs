@@ -203,6 +203,19 @@ test("a total missing a wallet says so, in the line that makes the claim", () =>
     updatedAt: NOW,
   });
   assert.match(Model.provenance(whole, NOW), /^3 wallets/);
+
+  // One wallet whose read failed without failing the request: 200, a null total, and the wallet
+  // named in `incomplete`. Naming the address "as of now" would present nothing as a reading.
+  const lone = `0x${"a".repeat(40)}`;
+  const unread = stateWith({
+    health: health({ wallet: lone }),
+    portfolio: {
+      data: { stats: { totalValueUsd: null }, wallets: [], incomplete: [lone] },
+      receivedAt: NOW,
+    },
+    updatedAt: NOW,
+  });
+  assert.match(Model.provenance(unread, NOW), /^0 of 1 wallet\b/);
 });
 
 test("rounding into the next magnitude takes the next magnitude with it", () => {

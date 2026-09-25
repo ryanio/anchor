@@ -635,6 +635,9 @@ assuming it, so a machine without one shows the command exactly as before.
   gap, and what to delete when each is fixed.
 
 ### Changed
+- **A single wallet that could not be read is labelled.** With one wallet configured and its read
+  failed, the panel still named the address "as of now" over an empty total. It now says "0 of 1
+  wallet", the same label a partial multi-wallet total already gets.
 - **A malformed percent-escape in a path is a 400.** `/tokens/%E0` or `/collections/%E0` made
   `decodeURIComponent` throw, and the service answered 502 "URI malformed", which reads as an
   upstream failure. It is the caller's bad request, so it now gets 400 "Malformed request URL."
