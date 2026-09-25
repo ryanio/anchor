@@ -20,6 +20,7 @@ import { generateKeyPairSync, verify } from "node:crypto";
 import { describe, test } from "node:test";
 import { PrivySvmAdapter } from "@opensea/wallet-adapters";
 import { type ApprovedAction, mintApproval } from "./decision.ts";
+import { SET_APPROVAL_FOR_ALL_SELECTOR } from "./evm.ts";
 import { PolicyBoundExecutor } from "./executor.ts";
 import {
   ACCOUNT,
@@ -41,11 +42,12 @@ import {
   transfer,
 } from "./fixtures.ts";
 import { DeclaredIntentSimulator } from "./inert.ts";
-import type { PolicyLimits } from "./policy.ts";
+import { PolicyEngine, type PolicyLimits } from "./policy.ts";
 import {
   auditRemotePolicy,
   connectPrivyAuthority,
   Erc721TransferBuilder,
+  type EvmTransaction,
   PrivyPolicyAuthority,
   PrivySigner,
   PrivySolanaSigner,
@@ -57,6 +59,7 @@ import { canonicalize, PrivyClient, type PrivyPolicyDocument } from "./privy-api
 import {
   COMPUTE_BUDGET_PROGRAM,
   SOLANA_CAIP2,
+  type SolanaCluster,
   SPL_TOKEN_INSTRUCTION,
   SPL_TOKEN_PROGRAM,
   SYSTEM_PROGRAM,
@@ -208,6 +211,23 @@ async function harness(
 /** Calls that are not the startup policy read. */
 function afterConnect(calls: readonly Call[]): Call[] {
   return calls.slice(1);
+}
+
+/**
+ * An approval minted with no policy behind it: what a bug in a policy backend would hand a signer.
+ * Policy never approves a human-only kind, so the signers' own rechecks can only be reached this way.
+ * The request is always built inline by the test that uses this (AGENTS.md invariant 3).
+ */
+function mintDirectly(request: ActionRequest, now: number): ApprovedAction {
+  return mintApproval({
+    approvalId: "minted-by-a-bug",
+    request,
+    simulation: { requestId: request.id, ok: true, deltas: [], simulatedAt: now, source: "test" },
+    ceiling: money(0n, "USD-cents"),
+    expiresAt: now + 60_000,
+    decidedAt: now,
+    policyVersion: "test/1",
+  });
 }
 
 // --- Tests -------------------------------------------------------------------------------------
@@ -373,28 +393,20 @@ describe("setApprovalForAll is refused", () => {
   });
 
   test("the signer refuses it too, even handed a minted approval", async () => {
-    // Policy never mints one, so this mints it directly: what a bug in a policy backend would hand
-    // the signer. Built inline and refused here, never a fixture (AGENTS.md invariant 3).
     const { signer, calls, clock: c } = await harness();
-    const request: ActionRequest = {
-      id: "r1",
-      requestedAt: 0,
-      chain: "ethereum",
-      account: ACCOUNT,
-      kind: "set-approval-for-all",
-      contract: COLLECTION,
-      operator: ATTACKER,
-      approved: true,
-    };
-    const approval = mintApproval({
-      approvalId: "minted-by-a-bug",
-      request,
-      simulation: { requestId: "r1", ok: true, deltas: [], simulatedAt: c.now(), source: "test" },
-      ceiling: money(0n, "USD-cents"),
-      expiresAt: c.now() + 60_000,
-      decidedAt: c.now(),
-      policyVersion: "test/1",
-    });
+    const approval = mintDirectly(
+      {
+        id: "r1",
+        requestedAt: 0,
+        chain: "ethereum",
+        account: ACCOUNT,
+        kind: "set-approval-for-all",
+        contract: COLLECTION,
+        operator: ATTACKER,
+        approved: true,
+      },
+      c.now(),
+    );
     await assert.rejects(() => signer.submit(approval), /set-approval-for-all is never delegated/);
     assert.equal(afterConnect(calls).length, 0, "nothing was sent");
   });
@@ -427,6 +439,67 @@ describe("setApprovalForAll is refused", () => {
     });
     const audit = auditRemotePolicy(document, { limits: limits(), chain: CHAIN });
     assert.ok(audit.findings.some((f) => /setApprovalForAll/.test(f)));
+  });
+});
+
+describe("the EVM signer re-checks what the builder produced", () => {
+  /** A signer on the harness's client and clock whose builder hands over exactly `tx`. */
+  const signerBuilding = (api: PrivyClient, now: () => number, tx: EvmTransaction) =>
+    new PrivySigner({ api, walletId: WALLET_ID, builder: { build: async () => tx }, chainId: CHAIN_ID, now });
+
+  test("a transaction other than the approved one is refused, and nothing is sent", async () => {
+    const { authority, api, calls, clock: c } = await harness();
+    const request = transfer("r1", 100n, COLD_VAULT);
+    const decision = await authority.evaluate(
+      request,
+      await new DeclaredIntentSimulator(c.now).simulate(request),
+    );
+    assert.equal(decision.outcome, "allow");
+    if (decision.outcome !== "allow") return;
+    const honest = await new Erc721TransferBuilder(CHAIN_ID).build(decision.approval);
+
+    // Built inline to be refused (AGENTS.md invariant 3): the selector with empty arguments.
+    const blanket = `${SET_APPROVAL_FOR_ALL_SELECTOR}${"0".repeat(128)}`;
+    const rows: [string, EvmTransaction, RegExp][] = [
+      ["another contract", { ...honest, to: evmAddress(`0x${"5".repeat(40)}`) }, /approved contract/],
+      ["another chain", { ...honest, chainId: 8453 }, /different chain/],
+      ["a blanket operator approval", { ...honest, data: blanket }, /blanket operator approval/],
+    ];
+    for (const [name, tx, refusal] of rows) {
+      const before = calls.length;
+      await assert.rejects(() => signerBuilding(api, c.now, tx).submit(decision.approval), refusal, name);
+      assert.equal(calls.length, before, `${name}: nothing was sent`);
+    }
+
+    // The control: the same approval with the honest transaction is sent, so each refusal above
+    // came from the one field that was changed.
+    const receipt = await signerBuilding(api, c.now, honest).submit(decision.approval);
+    assert.equal(receipt.transactionHash, TX_HASH);
+  });
+
+  test("a value over a wei ceiling is refused, and the ceiling itself is sent", async () => {
+    // The ceiling bounds `value` only when the policy counts in wei; a USD-cents ceiling cannot bound
+    // wei without an exchange rate. So this approval comes from a wei-denominated policy.
+    const { api, calls, clock: c } = await harness();
+    const policy = new PolicyEngine({ limits: limits({ denomination: "wei" }), now: c.now });
+    const request = transfer("r1", 0n, COLD_VAULT, 0, { valuation: money(100n, "wei") });
+    const decision = await policy.evaluate(
+      request,
+      await new DeclaredIntentSimulator(c.now).simulate(request),
+    );
+    assert.equal(decision.outcome, "allow");
+    if (decision.outcome !== "allow") return;
+    assert.deepEqual(decision.approval.ceiling, money(100n, "wei"));
+    const honest = await new Erc721TransferBuilder(CHAIN_ID).build(decision.approval);
+
+    const before = calls.length;
+    await assert.rejects(
+      () => signerBuilding(api, c.now, { ...honest, value: 101n }).submit(decision.approval),
+      /exceeds the approved ceiling/,
+    );
+    assert.equal(calls.length, before, "nothing was sent");
+    const receipt = await signerBuilding(api, c.now, { ...honest, value: 100n }).submit(decision.approval);
+    assert.equal(receipt.transactionHash, TX_HASH);
   });
 });
 
@@ -998,8 +1071,11 @@ describe("auditing a Solana policy", () => {
 
 describe("the Solana signer reads the transaction before it signs it", () => {
   /** A builder that hands over whatever bytes a test wants to see refused. */
-  const builderOf = (serialized: Uint8Array): SolanaTransactionBuilder => ({
-    build: async () => ({ serialized, cluster: "mainnet" as const }),
+  const builderOf = (
+    serialized: Uint8Array,
+    cluster: SolanaCluster = "mainnet",
+  ): SolanaTransactionBuilder => ({
+    build: async () => ({ serialized, cluster }),
   });
 
   /** Serialize a minimal transaction with `account` as the fee payer. */
@@ -1030,7 +1106,7 @@ describe("the Solana signer reads the transaction before it signs it", () => {
   // tests no longer replace `globalThis.fetch` and restore it afterwards. A test that reaches for a
   // global is a test that can leak into the one after it.
 
-  async function solanaHarness(serialized: Uint8Array) {
+  async function solanaHarness(serialized: Uint8Array, builtFor: SolanaCluster = "mainnet") {
     const c = clock();
     const document = solanaPolicyDocument();
     const { impl, calls } = stubFetch((call) => {
@@ -1058,7 +1134,7 @@ describe("the Solana signer reads the transaction before it signs it", () => {
         fetchImpl: impl,
       }),
       walletId: SOL_WALLET_ID,
-      builder: builderOf(serialized),
+      builder: builderOf(serialized, builtFor),
       cluster: "mainnet",
       now: c.now,
     });
@@ -1162,6 +1238,44 @@ describe("the Solana signer reads the transaction before it signs it", () => {
     assert.equal(result.status, "failed");
     if (result.status !== "failed") return;
     assert.match(result.error, /fee payer is not the approved account/);
+  });
+
+  test("a transaction built for another cluster is refused before it is read, and nothing is sent", async () => {
+    // The same bytes reach Privy in the clean-transfer test above; only the cluster differs.
+    const serialized = solanaTx(SPL_TOKEN_PROGRAM, [SPL_TOKEN_INSTRUCTION.transferChecked, 1]);
+    const { executor, signer, calls } = await solanaHarness(serialized, "devnet");
+    const before = calls.length;
+    const result = await executor.execute(solanaTransfer("r1", 1_000n));
+    assert.equal(result.status, "failed");
+    if (result.status !== "failed") return;
+    assert.match(result.error, /different cluster/);
+    assert.equal(signer.guarded.length, 0, "the bytes were never read");
+    assert.equal(calls.length, before, "nothing was sent to Privy");
+  });
+
+  test("the signer refuses a minted human-only approval before building anything", async () => {
+    // The builder would hand over a clean transfer from the approved account, which every later
+    // check passes, so only the signer's own human-only recheck stands between this and Privy.
+    const clean = solanaTx(SPL_TOKEN_PROGRAM, [SPL_TOKEN_INSTRUCTION.transferChecked, 1]);
+    const { signer, calls, clock: c } = await solanaHarness(clean);
+    const approval = mintDirectly(
+      {
+        id: "r1",
+        requestedAt: 0,
+        chain: "solana",
+        account: SOL_ACCOUNT,
+        kind: "approve-delegate",
+        contract: SOL_MINT,
+        tokenAccount: SOL_ACCOUNT,
+        delegate: SOL_ATTACKER,
+        amount: (1n << 64n) - 1n,
+      },
+      c.now(),
+    );
+    const before = calls.length;
+    await assert.rejects(() => signer.submit(approval), /approve-delegate is never delegated/);
+    assert.equal(signer.guarded.length, 0, "no transaction was built");
+    assert.equal(calls.length, before, "nothing was sent to Privy");
   });
 
   test("every guard result is kept for the audit log, including the clean ones", async () => {

@@ -316,6 +316,24 @@ describe("simulation is mandatory", () => {
     assert.equal(denied(decision).reason, "simulation-mismatch");
   });
 
+  test("a transfer that moves more than its declared valuation is a denial", async () => {
+    // The valuation is what the caps charge, so a transfer that moves more is lying about its size.
+    const { policy } = engine();
+    const decision = denied(
+      await policy.evaluate(transfer("r1", 1_000n, COLD_VAULT), {
+        requestId: "r1",
+        ok: true,
+        deltas: [
+          { direction: "out", value: usd(1_001n), counterparty: on(CHAIN, COLD_VAULT), assetType: "erc721" },
+        ],
+        simulatedAt: 0,
+        source: "test",
+      }),
+    );
+    assert.equal(decision.reason, "simulation-mismatch");
+    assert.match(decision.detail, /above the declared valuation of 1000/);
+  });
+
   test("a 'cancel' that quietly moves value is a denial", async () => {
     const { policy } = engine();
     const decision = await policy.evaluate(cancelOwnListing("r1"), {
