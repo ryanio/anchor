@@ -348,9 +348,25 @@ describe("simulation is mandatory", () => {
 
 describe("denominations are never converted", () => {
   test("a request in another unit is denied rather than converted", async () => {
-    const { decide } = engine();
+    // The simulation moves the policy's own unit, so only the request's declared unit disagrees.
+    // DeclaredIntentSimulator would copy the request's unit into its deltas and trip the
+    // simulation's unit check first, which is a different guard.
+    const { policy } = engine();
     const request = buy("r1", 1n, 0, { maxPrice: money(1n, "ETH-wei") });
-    assert.equal(denied(await decide(request)).reason, "denomination-mismatch");
+    const decision = denied(
+      await policy.evaluate(request, {
+        requestId: "r1",
+        ok: true,
+        deltas: [
+          { direction: "out", value: usd(1n), counterparty: on(CHAIN, MARKETPLACE), assetType: "erc20" },
+          { direction: "in", value: usd(0n), counterparty: on(CHAIN, MARKETPLACE), assetType: "erc721" },
+        ],
+        simulatedAt: 0,
+        source: "test",
+      }),
+    );
+    assert.equal(decision.reason, "denomination-mismatch");
+    assert.match(decision.detail, /request is denominated in ETH-wei/);
   });
 
   test("a simulation that moves an unjudgeable unit is denied", async () => {
@@ -437,6 +453,11 @@ describe("status and tiers", () => {
     assert.equal(status.perTransactionCap.amount, 2_500n);
     assert.equal(status.contractAllowlistSize, 1);
     assert.equal(status.withdrawalAllowlistSize, 1);
+    // Sizes, never entries: no allowlisted address appears anywhere in what status returns.
+    const text = JSON.stringify(status, (_key, value) => (typeof value === "bigint" ? String(value) : value));
+    for (const listed of [COLLECTION, COLD_VAULT]) {
+      assert.equal(text.toLowerCase().includes(listed.toLowerCase()), false, `status discloses ${listed}`);
+    }
   });
 
   test("tierLimits tracks the value ladder in docs/autonomy.md", () => {

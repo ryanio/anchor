@@ -242,17 +242,19 @@ describe("the kill switch, through the Executor an agent holds", () => {
 describe("the Executor interface cannot be used to self-approve", () => {
   test("no method accepts a decision, an approval, or a policy", () => {
     // A structural statement of the invariant: every verb the agent holds takes a *request* and
-    // returns a *decision*. Decisions travel outward only. If a future method were added that took
-    // an approval, this test would need editing — which is the point of writing it down.
+    // returns a *decision*. Decisions travel outward only. The list is exhaustive in both places a
+    // new verb could appear, so adding one fails here until someone decides it belongs: on the
+    // interface, `satisfies` refuses a missing or extra key at typecheck; on the class, the
+    // prototype check refuses a public method the list does not name.
+    const verbs = { execute: true, preflight: true, revoke: true, status: true } satisfies Record<
+      keyof Executor,
+      true
+    >;
     const { executor } = harness();
-    const asInterface: Executor = executor;
-
-    assert.deepEqual(
-      ["execute", "preflight", "revoke", "status"]
-        .filter((m) => typeof (asInterface as unknown as Record<string, unknown>)[m] === "function")
-        .sort(),
-      ["execute", "preflight", "revoke", "status"],
-    );
+    const publicMethods = Object.getOwnPropertyNames(Object.getPrototypeOf(executor))
+      .filter((name) => name !== "constructor")
+      .sort();
+    assert.deepEqual(publicMethods, Object.keys(verbs).sort());
 
     const forged = { outcome: "allow" } as unknown as never;
     // @ts-expect-error execute() takes a request. There is no overload that takes a decision.

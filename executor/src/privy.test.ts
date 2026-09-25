@@ -19,7 +19,7 @@ import assert from "node:assert/strict";
 import { generateKeyPairSync, verify } from "node:crypto";
 import { describe, test } from "node:test";
 import { PrivySvmAdapter } from "@opensea/wallet-adapters";
-import type { ApprovedAction } from "./decision.ts";
+import { type ApprovedAction, mintApproval } from "./decision.ts";
 import { PolicyBoundExecutor } from "./executor.ts";
 import {
   ACCOUNT,
@@ -62,7 +62,7 @@ import {
   SYSTEM_PROGRAM,
   toBase64,
 } from "./solana.ts";
-import { evmAddress, type SolanaAddress, solanaAddressBytes } from "./types.ts";
+import { type ActionRequest, evmAddress, money, type SolanaAddress, solanaAddressBytes } from "./types.ts";
 
 const APP_ID = "placeholder-app-id-not-real";
 const APP_SECRET = "placeholder-app-secret-0123456789-not-real";
@@ -373,12 +373,30 @@ describe("setApprovalForAll is refused", () => {
   });
 
   test("the signer refuses it too, even handed a minted approval", async () => {
-    const { signer } = await harness();
-    // A cast past the type system, which is what a compromised caller in-process would have.
-    const approval = {
-      request: { kind: "set-approval-for-all" },
-    } as unknown as ApprovedAction;
-    await assert.rejects(() => signer.submit(approval));
+    // Policy never mints one, so this mints it directly: what a bug in a policy backend would hand
+    // the signer. Built inline and refused here, never a fixture (AGENTS.md invariant 3).
+    const { signer, calls, clock: c } = await harness();
+    const request: ActionRequest = {
+      id: "r1",
+      requestedAt: 0,
+      chain: "ethereum",
+      account: ACCOUNT,
+      kind: "set-approval-for-all",
+      contract: COLLECTION,
+      operator: ATTACKER,
+      approved: true,
+    };
+    const approval = mintApproval({
+      approvalId: "minted-by-a-bug",
+      request,
+      simulation: { requestId: "r1", ok: true, deltas: [], simulatedAt: c.now(), source: "test" },
+      ceiling: money(0n, "USD-cents"),
+      expiresAt: c.now() + 60_000,
+      decidedAt: c.now(),
+      policyVersion: "test/1",
+    });
+    await assert.rejects(() => signer.submit(approval), /set-approval-for-all is never delegated/);
+    assert.equal(afterConnect(calls).length, 0, "nothing was sent");
   });
 
   test("a policy that allowlists the function is refused at startup", async () => {
