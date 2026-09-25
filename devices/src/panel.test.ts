@@ -75,7 +75,7 @@ const CONFIG = parseConfig({
     {
       name: "desktop",
       keys: [
-        { index: 0, label: "One", action: "hypr workspace 1", state: "workspace:1" },
+        { index: 0, label: "One", action: "workspace 1", state: "workspace:1" },
         { index: 1, label: "Go", action: "page other" },
       ],
       dials: [{ index: 0, label: "Vol", control: "volume", press: "volume mute" }],
