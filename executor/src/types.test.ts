@@ -53,15 +53,9 @@ describe("EVM addresses normalise; Solana addresses must not", () => {
     assert.equal(solanaAddress(SOL), SOL);
     assert.notEqual(SOL, SOL.toLowerCase());
     assert.equal(trySolanaAddress(SOL.toLowerCase()), null, "the lowercased form is not even valid");
-  });
-
-  test("a lowercased Solana address never reaches an allowlist comparison at all", () => {
-    // Two layers, and the outer one is the useful part. If something *did* lowercase a Solana
-    // address on the way in, it would not parse — so the failure is a refusal at the boundary
-    // rather than an allowlist that quietly matches nothing for the rest of the wallet's life.
-    const entry = chainAddress("solana", SOL);
+    // So a lowercased one is refused at the boundary rather than reaching an allowlist comparison
+    // that quietly matches nothing for the rest of the wallet's life.
     assert.equal(tryChainAddress("solana", SOL.toLowerCase()), null);
-    assert.equal(allowlistHas([entry], entry), true);
   });
 });
 

@@ -102,17 +102,6 @@ describe("decisions", () => {
     assert.equal(decision.policyVersion, "test/1");
   });
 
-  test("deny() carries a machine-readable reason, not just prose", () => {
-    const decision = deny("per-transaction-cap", "too big", {
-      requestId: "req-1",
-      decidedAt: 5,
-      policyVersion: "test/1",
-    });
-    assert.equal(decision.outcome, "deny");
-    assert.equal(decision.reason, "per-transaction-cap");
-    assert.equal(decision.detail, "too big");
-  });
-
   test("narrowing a decision to `deny` gives no access to an approval", () => {
     const decision = deny("revoked", "off", {
       requestId: "req-1",

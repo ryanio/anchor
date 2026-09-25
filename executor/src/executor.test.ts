@@ -94,13 +94,6 @@ describe("a denial never reaches the signer", () => {
     assert.equal(signer.submitted.length, 0, "nothing was handed to the signer");
   });
 
-  test("a transfer to an unregistered address never reaches the signer", async () => {
-    const { executor, signer } = harness();
-    const result = await executor.execute(transfer("r1", 100n, ATTACKER));
-    assert.equal(result.status, "rejected");
-    assert.equal(signer.submitted.length, 0);
-  });
-
   test("setApprovalForAll never reaches the signer", async () => {
     const { executor, signer } = harness();
     const request: ActionRequest = {
@@ -275,11 +268,12 @@ describe("the Executor interface cannot be used to self-approve", () => {
   });
 
   test("the withdrawal allowlist cannot be widened through the interface at run time", async () => {
-    const { executor, policy } = harness();
+    const { executor, policy, signer } = harness();
     const before = (await policy.status()).withdrawalAllowlistSize;
     // There is no method for it — the closest an agent can do is ask, and be denied.
     const result = await executor.execute(transfer("r1", 100n, ATTACKER));
     assert.equal(result.status, "rejected");
+    assert.equal(signer.submitted.length, 0, "the denied transfer never reached the signer");
     assert.equal((await policy.status()).withdrawalAllowlistSize, before);
     // And the pre-registered destination still works, so the control is a filter, not a wall.
     assert.equal((await executor.execute(transfer("r2", 100n, COLD_VAULT))).status, "submitted");

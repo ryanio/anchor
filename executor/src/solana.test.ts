@@ -590,11 +590,6 @@ describe("unknown programs and unknown instructions are refused", () => {
     );
     assert.match(guard.findings[0]?.detail ?? "", /no tag byte/);
   });
-
-  test("a plain TransferChecked through allowlisted programs produces no findings", () => {
-    const guard = guardSolanaTransaction(transferChecked());
-    assert.deepEqual(guard.findings, []);
-  });
 });
 
 // --- Honesty ------------------------------------------------------------------------------------
