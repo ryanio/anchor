@@ -191,7 +191,8 @@ most: Privy cannot express the rolling caps.
 machine — and checks every signing request against a policy stored with them. That check is what
 makes the model real; everything Anchor does around it is scaffolding.
 
-Zero runtime dependencies, as everywhere else here: `fetch` and `node:crypto`, no `@privy-io/*`.
+One runtime dependency, `@opensea/wallet-adapters`, whose `PrivySvmAdapter` signs and broadcasts for
+`PrivySolanaSigner`. The rest is `fetch` and `node:crypto`, with no `@privy-io/*`.
 
 ### Who enforces what
 
@@ -489,10 +490,10 @@ what the documentation says to send, not that Privy accepts it.
 
 ## Development
 
-Zero runtime dependencies, native Node TypeScript execution, no build step.
+One runtime dependency (`@opensea/wallet-adapters`), native Node TypeScript execution, no build step.
 
 ```bash
-npm install        # dev only: @types/node + typescript
+npm install        # @opensea/wallet-adapters, plus @types/node + typescript for dev
 npm run typecheck
 npm test           # node --test
 ```
