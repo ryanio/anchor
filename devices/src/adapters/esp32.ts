@@ -7,16 +7,10 @@
  * who connects to whom, who proves what to whom, and what the display shows when it stops hearing
  * from us. `docs/devices-esp32.md` is the argument; this file is the consequence.
  *
- * **Anchor is the client. The device listens.** AGENTS.md invariant 6 says nothing Anchor runs
- * binds beyond loopback without a reviewed reason, and a frame server on the LAN would be exactly
- * that. Inverting the usual direction keeps the invariant intact and costs nothing: the host opens
- * one TCP connection outward, paints down it, and reads input back up the same socket. The attack
- * surface moves onto the ESP32, where it is one parser that accepts pixels.
- *
- * **The device is authenticated, and it authenticates us.** A pre-shared key from the OS keyring,
- * over TLS-PSK — measured working on this Node with no dependency, and measured to fail with the
- * wrong key. Off loopback a key is required, not encouraged: `checkTransport` refuses to paint a
- * portfolio onto a plaintext LAN socket.
+ * **This file opens no socket and binds no port.** It paints down whatever `Link` it is handed:
+ * `esp32-serial.ts` supplies a USB CDC port, and tests and `--dry-run` supply a `MemoryLink`.
+ * `checkTransport` holds the rule a network link would have to meet: off loopback, a pairing key is
+ * required before a portfolio goes on the wire.
  *
  * **The device never asks for anything.** It has no vocabulary for a signature, a key or an
  * approval — see `esp32-wire.ts`, where the parser refuses every message type but the three a
@@ -26,9 +20,6 @@
  * is already someone else's.
  */
 
-import { execFile } from "node:child_process";
-import net from "node:net";
-import tls from "node:tls";
 import { rasterize } from "../raster.ts";
 import { toSvg } from "../svg.ts";
 import type { Tokens } from "../tokens.ts";
@@ -72,9 +63,6 @@ export class PairingError extends Error {}
 import { SCREEN_SLOT } from "../panel.ts";
 
 export { SCREEN_SLOT };
-
-/** Default port. Chosen next to the data service's 8787 so one number is easy to remember. */
-export const DEFAULT_PORT = 8788;
 
 export function capabilitiesFor(hello: Hello): DeviceCapabilities {
   const slot: SlotSpec = {
@@ -442,122 +430,6 @@ export function checkTransport(host: string, hasKey: boolean): void {
 }
 
 /**
- * Read a device's pairing key from the OS keyring.
- *
- * Deliberately the same shape as `service/src/keyring.ts` — `execFile`, never a shell, so the value
- * is never subject to word-splitting or shell history, and never an argv anyone can read out of
- * `/proc`. There is no environment-variable escape hatch: unlike an API key this is the only thing
- * standing between a LAN and a live portfolio.
- */
-export function pairingKey(deviceName: string): Promise<Buffer | null> {
-  return new Promise((resolve) => {
-    execFile(
-      "secret-tool",
-      ["lookup", "service", "anchor", "key", `device-${deviceName}`],
-      { timeout: 5000 },
-      (error, stdout) => {
-        if (error) {
-          // secret-tool exits non-zero when the item is simply absent.
-          resolve(null);
-          return;
-        }
-        const value = stdout.trim();
-        resolve(value.length > 0 ? Buffer.from(value, "utf8") : null);
-      },
-    );
-  });
-}
-
-export interface ConnectOptions extends PulseOptions {
-  readonly host: string;
-  readonly port?: number;
-  /** Keyring entry to use. Defaults to the host, so `anchor-pulse.local` looks up `device-...`. */
-  readonly deviceName?: string;
-  /** Provided by tests and by anything that has already read the keyring itself. */
-  readonly key?: Buffer | null;
-  readonly timeoutMs?: number;
-}
-
-/**
- * Ciphersuites offered when a pairing key is present.
- *
- * **Measured on Node 26.8.1** over loopback: `tls` negotiates `ECDHE-PSK-CHACHA20-POLY1305` with a
- * matching key, and a mismatched key fails the handshake with an SSL alert rather than connecting.
- * The control was made to fail before it was trusted, per AGENTS.md. `PSK-AES128-GCM-SHA256` was
- * measured working too and is offered second because it is the suite most certain to exist in an
- * ESP-IDF mbedTLS build; which one an actual device negotiates has *not* been measured, because
- * there is no device.
- */
-export const PSK_CIPHERS = "ECDHE-PSK-CHACHA20-POLY1305:PSK-AES128-GCM-SHA256";
-
-/** TLS 1.3 moves PSK onto the session-ticket path; the plain PSK suites above are 1.2. */
-const PSK_TLS_VERSION = "TLSv1.2" as const;
-
-export const PSK_IDENTITY = "anchor-pulse";
-
-/**
- * Wrap a socket as a `Link`.
- *
- * The handlers are held in one slot each and dispatched from a single listener, so handing the
- * stream from `handshake` to the device replaces the reader rather than adding a second one. Two
- * readers on one socket is not a subtle bug: both accumulate, and the one nobody owns grows for as
- * long as the display is plugged in.
- */
-function socketLink(socket: net.Socket, description: string): Link {
-  let data: ((chunk: Buffer) => void) | null = null;
-  let closed: ((reason: string) => void) | null = null;
-  socket.on("data", (chunk: Buffer) => data?.(chunk));
-  socket.on("close", () => closed?.("link closed"));
-  socket.on("error", (error: Error) => closed?.(error.message));
-  return {
-    description,
-    send: (chunk) =>
-      new Promise<void>((resolve, reject) => {
-        socket.write(chunk, (error) => (error ? reject(error) : resolve()));
-      }),
-    onData: (handler) => {
-      data = handler;
-    },
-    onClose: (handler) => {
-      closed = handler;
-    },
-    close: () => void socket.destroy(),
-  };
-}
-
-function openSocket(options: ConnectOptions, key: Buffer | null): Promise<net.Socket> {
-  const port = options.port ?? DEFAULT_PORT;
-  const timeout = options.timeoutMs ?? 5000;
-  const socket =
-    key === null
-      ? net.connect({ host: options.host, port })
-      : tls.connect({
-          host: options.host,
-          port,
-          ciphers: PSK_CIPHERS,
-          minVersion: PSK_TLS_VERSION,
-          maxVersion: PSK_TLS_VERSION,
-          // A PSK handshake authenticates both ends by possession of the key; there is no
-          // certificate to check and no CA that would mean anything on a desk device.
-          checkServerIdentity: () => undefined,
-          pskCallback: () => ({ psk: key, identity: PSK_IDENTITY }),
-        });
-  return new Promise((resolve, reject) => {
-    socket.setTimeout(timeout, () => {
-      socket.destroy();
-      reject(new NoDeviceError(`${options.host}:${port}: timed out connecting`));
-    });
-    socket.on("error", (error) => reject(new NoDeviceError(`${options.host}:${port}: ${error.message}`)));
-    socket.once(key === null ? "connect" : "secureConnect", () => {
-      // The connect timeout must not become an idle timeout: a painted display is silent for as
-      // long as nothing on the desktop moves, and that is the healthy case.
-      socket.setTimeout(0);
-      resolve(socket);
-    });
-  });
-}
-
-/**
  * Wait for the device to introduce itself.
  *
  * The device speaks first, and until it has, the host knows nothing about the panel — not its size,
@@ -620,19 +492,4 @@ export async function attach(
   const device = new Esp32PulseDevice(link, hello, tokens, options);
   await device.begin();
   return device;
-}
-
-/**
- * Open a pulse display.
- *
- * Nothing here binds a port. The host is the client, the device is the server, and the only socket
- * this process owns is an outbound one — which is what keeps AGENTS.md invariant 6 true of a device
- * that is, unavoidably, on a network.
- */
-export async function open(tokens: Tokens, options: ConnectOptions): Promise<Esp32PulseDevice> {
-  const key = options.key === undefined ? await pairingKey(options.deviceName ?? options.host) : options.key;
-  checkTransport(options.host, key !== null);
-  const socket = await openSocket(options, key);
-  const link = socketLink(socket, `${options.host}:${options.port ?? DEFAULT_PORT}`);
-  return attach(link, tokens, options, options.timeoutMs ?? 5000);
 }

@@ -29,7 +29,7 @@ import { NoDeviceError, open as openStreamDeck } from "./adapters/streamdeck.ts"
  *
  * The adapter and the serial link both existed; nothing connected them, so a working board sat
  * announcing itself to no one. Over a cable there is no socket to bind and no pairing key to hold,
- * which is why this path needs neither — the network transport in `esp32.ts` still keeps both.
+ * which is why this path needs neither.
  */
 /**
  * Try every port that could be this device, and keep the one that answers as it.

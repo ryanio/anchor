@@ -1,8 +1,7 @@
 /**
  * The pulse protocol over a USB cable.
  *
- * `esp32.ts` opens a TCP socket because `docs/devices-esp32.md` designed for a display on a shelf.
- * This file is the same protocol over a `/dev/ttyACM*` character device, and it exists for two
+ * `docs/devices-esp32.md` designed the protocol for a display on a shelf, over TCP. This file is the same protocol over a `/dev/ttyACM*` character device, and it exists for two
  * reasons — one practical, one about the invariant.
  *
  * **Practical.** A pulse display on Wi-Fi needs an SSID, a password, a provisioning flow, a
