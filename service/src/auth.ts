@@ -121,7 +121,7 @@ export class WalletTokenProvider {
     this.#baseUrl = opts.apiBaseUrl ?? DEFAULT_BASE_URL;
   }
 
-  /** True when a PAT is stored, so `/health` can say why account routes are refusing. */
+  /** True when a PAT is stored, for `/health`. */
   async available(): Promise<boolean> {
     return (await this.#getPat()) !== null;
   }

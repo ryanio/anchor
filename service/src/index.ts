@@ -201,7 +201,7 @@ async function main(): Promise<void> {
   const present = await credentials();
   console.error(
     `anchor-service credentials: api key ${present.apiKey ? "present" : "MISSING (--set-api-key)"}, ` +
-      `wallet PAT ${present.pat ? "present" : "MISSING (--set-pat; account routes will refuse)"}`,
+      `wallet PAT ${present.pat ? "present" : "not set (optional, --set-pat)"}`,
   );
   console.error(`anchor-service chains: ${config.chains.join(", ")} (path-scoped reads use the first)`);
   if (config.wallets.length === 0) {
