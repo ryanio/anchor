@@ -1,9 +1,9 @@
 /**
  * A hand-rolled client for the parts of Privy's REST API that Anchor uses.
  *
- * Privy ship a Node SDK. This is not it, and that is deliberate: the repo has zero runtime
- * dependencies on purpose (AGENTS.md), and the three endpoints below need `fetch` and `node:crypto`
- * and nothing else. Privy's own docs use raw `fetch` for the endpoints their SDK has not caught up
+ * Privy ship a Node SDK. This is not it, and that is deliberate: every runtime dependency needs a
+ * human's approval (AGENTS.md), and the three endpoints below need `fetch` and `node:crypto` and
+ * nothing else. Privy's own docs use raw `fetch` for the endpoints their SDK has not caught up
  * with, so a hand-rolled client is not swimming against the current here.
  *
  * ## What was verified, and where
@@ -162,9 +162,6 @@ export class PrivyPolicyViolation extends PrivyApiError {
 
 /** Only codes shaped like an identifier are repeated. A remote string is not a format string. */
 const CODE_RE = /^[a-z][a-z0-9_]{0,63}$/;
-
-/** 64 bytes of base58 — the base58 alphabet, at the two lengths 64 bytes can encode to. */
-const SOLANA_SIGNATURE_RE = /^[1-9A-HJ-NP-Za-km-z]{86,88}$/;
 
 function readErrorCode(body: unknown): string | null {
   if (typeof body !== "object" || body === null) return null;

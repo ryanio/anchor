@@ -304,8 +304,6 @@ export function money(amount: bigint, denomination: string): Money {
   return { amount, denomination };
 }
 
-export const ZERO = (denomination: string): Money => money(0n, denomination);
-
 /**
  * Add two amounts, refusing to mix denominations.
  *

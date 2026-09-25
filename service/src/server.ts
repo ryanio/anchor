@@ -9,7 +9,7 @@
  */
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { combineList, combinePortfolio, fanOut } from "./aggregate.ts";
-import { MissingPatError, WalletTokenError } from "./auth.ts";
+import { WalletTokenError } from "./auth.ts";
 import type { CacheEntry } from "./cache.ts";
 import { isChainIdentifier } from "./chains.ts";
 import type { Config } from "./config.ts";
@@ -183,16 +183,13 @@ export function createApp(config: Config, client: OpenSeaClient, deps: ServerDep
        * says it is current when a third of it is an hour old.
        */
       const fanned = async <T>(read: (wallet: string) => Promise<CacheEntry<T>>) => {
-        // A credential problem is not a partial answer. `MissingApiKeyError`, `MissingPatError` and
-        // `WalletTokenError` are about this request, not about one address, and swallowing them
-        // turns a broken setup into an empty portfolio with a 200 on it.
+        // A credential problem is not a partial answer. `MissingApiKeyError` and `WalletTokenError`
+        // are about this request, not about one address, and swallowing them turns a broken setup
+        // into an empty portfolio with a 200 on it.
         const out = await fanOut(
           wallets,
           read,
-          (err) =>
-            err instanceof MissingApiKeyError ||
-            err instanceof MissingPatError ||
-            err instanceof WalletTokenError,
+          (err) => err instanceof MissingApiKeyError || err instanceof WalletTokenError,
         );
         const entries = out.ok.map((r) => r.value);
         const oldest = entries.reduce<CacheEntry<unknown> | null>(
@@ -492,9 +489,7 @@ export function createApp(config: Config, client: OpenSeaClient, deps: ServerDep
  * next slug, and answering 200 with an error string per row hides it from anything checking res.ok.
  */
 function isCredentialError(err: unknown): boolean {
-  return (
-    err instanceof MissingApiKeyError || err instanceof MissingPatError || err instanceof WalletTokenError
-  );
+  return err instanceof MissingApiKeyError || err instanceof WalletTokenError;
 }
 
 export { HOST };

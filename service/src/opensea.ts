@@ -30,7 +30,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { ChainIdentifier } from "@opensea/api-types";
 import { OpenSeaAPI, type RequestOptions, type TokenRankingSortBy } from "@opensea/sdk";
-import { MissingPatError, WalletTokenError, type WalletTokenProvider } from "./auth.ts";
+import type { WalletTokenProvider } from "./auth.ts";
 import type { Cache, CacheEntry } from "./cache.ts";
 import { toSdkChain } from "./chains.ts";
 import { getApiKey as getApiKeyFromKeyring } from "./keyring.ts";
@@ -436,27 +436,17 @@ export class OpenSeaClient {
   /**
    * Run one SDK call inside a ttl scope and wrap the result in the freshness envelope.
    *
-   * `MissingApiKeyError`, `MissingPatError` and `WalletTokenError` pass through untouched: they
-   * name a missing credential rather than quoting one, and the server turns them into a 401 the
-   * user can act on.
+   * Errors pass through untouched. `MissingApiKeyError` and `WalletTokenError` name a missing
+   * credential rather than quoting one, and the server turns them into a 401 the user can act on.
    */
   async #call<T>(
     ttl: number,
     scope: Scope,
-    what: string,
     fn: (api: ReadOnlyOpenSeaAPI) => Promise<T>,
   ): Promise<CacheEntry<T>> {
     const api = await this.#resolveApi(scope);
     const store: CallScope = { ttl };
-    let data: T;
-    try {
-      data = await callScope.run(store, () => fn(api));
-    } catch (err) {
-      if (err instanceof MissingPatError || err instanceof WalletTokenError) throw err;
-      // Deliberately no "you are probably missing a PAT" hint here. That hint was wrong, and a
-      // confident wrong diagnosis attached to a real failure costs more than no diagnosis.
-      throw err;
-    }
+    const data = await callScope.run(store, () => fn(api));
     const meta = store.meta ?? { fetchedAt: Math.floor(Date.now() / 1000), ageSeconds: 0, stale: false };
     return { data, ...meta };
   }
@@ -475,7 +465,7 @@ export class OpenSeaClient {
     // The SDK's `getNFTsByAccount` has no `collection` filter, though the endpoint documents one,
     // so a collection-scoped request uses `getNFTsByCollection` — which is the same data, filtered
     // server-side by collection rather than by owner.
-    return this.#call(ttl, "account", "/portfolio", (api) =>
+    return this.#call(ttl, "account", (api) =>
       opts.collection === undefined
         ? api.getNFTsByAccount(address, opts.limit ?? 50, opts.next, chain)
         : api.getNFTsByCollection(opts.collection, opts.limit ?? 50, opts.next),
@@ -488,7 +478,7 @@ export class OpenSeaClient {
     ttl: number,
     opts: { eventTypes?: string[]; limit?: number; next?: string } = {},
   ) {
-    return this.#call(ttl, "account", "/activity", (api) =>
+    return this.#call(ttl, "account", (api) =>
       api.getEventsByAccount(address, {
         eventType: opts.eventTypes,
         chain: this.primaryChain,
@@ -503,26 +493,22 @@ export class OpenSeaClient {
 
   /** GET /collections/{slug} */
   collection(slug: string, ttl: number) {
-    return this.#call(ttl, "public", "/collections/:slug", (api) => api.getCollection(slug));
+    return this.#call(ttl, "public", (api) => api.getCollection(slug));
   }
 
   /** Floor price, volume, sales. GET /collections/{slug}/stats */
   collectionStats(slug: string, ttl: number) {
-    return this.#call(ttl, "public", "/collections/:slug/stats", (api) => api.getCollectionStats(slug));
+    return this.#call(ttl, "public", (api) => api.getCollectionStats(slug));
   }
 
   /** GET /listings/collection/{slug}/best */
   bestListings(slug: string, ttl: number, limit = 20) {
-    return this.#call(ttl, "public", "/collections/:slug/listings", (api) =>
-      api.getBestListings(slug, limit),
-    );
+    return this.#call(ttl, "public", (api) => api.getBestListings(slug, limit));
   }
 
   /** GET /offers/collection/{slug} */
   collectionOffers(slug: string, ttl: number, limit = 20) {
-    return this.#call(ttl, "public", "/collections/:slug/offers", (api) =>
-      api.getCollectionOffers(slug, limit),
-    );
+    return this.#call(ttl, "public", (api) => api.getCollectionOffers(slug, limit));
   }
 
   /**
@@ -531,7 +517,7 @@ export class OpenSeaClient {
    * in the first place. GET /collections/trending, GET /collections/top
    */
   trendingCollections(ttl: number, limit = 20, opts: { timeframe?: string; category?: string } = {}) {
-    return this.#call(ttl, "public", "/collections/trending", (api) =>
+    return this.#call(ttl, "public", (api) =>
       api.collections.getTrendingCollections({ limit, chains: [...this.#chains], ...opts }),
     );
   }
@@ -539,16 +525,14 @@ export class OpenSeaClient {
   /** GET /collections/top. `sortBy` is a loose string upstream (no published enum to validate
    * against, unlike `TOKEN_SORT_BY`) — passed through rather than guessed at. */
   topCollections(ttl: number, limit = 20, opts: { sortBy?: string; category?: string } = {}) {
-    return this.#call(ttl, "public", "/collections/top", (api) =>
+    return this.#call(ttl, "public", (api) =>
       api.collections.getTopCollections({ limit, chains: [...this.#chains], ...opts }),
     );
   }
 
   /** Ranked owners of a collection. GET /collections/{slug}/holders */
   collectionHolders(slug: string, ttl: number, opts: { limit?: number; cursor?: string } = {}) {
-    return this.#call(ttl, "public", "/collections/:slug/holders", (api) =>
-      api.collections.getCollectionHolders(slug, opts),
-    );
+    return this.#call(ttl, "public", (api) => api.collections.getCollectionHolders(slug, opts));
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -557,7 +541,7 @@ export class OpenSeaClient {
 
   /** Net worth and P&L across every configured chain. GET /account/{address}/portfolio */
   portfolioStats(address: string, ttl: number, timeframe?: "HOUR" | "DAY" | "WEEK" | "MONTH") {
-    return this.#call(ttl, "account", "/portfolio/value", (api) =>
+    return this.#call(ttl, "account", (api) =>
       api.getPortfolioStats(address, {
         ...(timeframe === undefined ? {} : { timeframe }),
         chains: [...this.#chains],
@@ -572,7 +556,7 @@ export class OpenSeaClient {
    * deprecated and removes in the next major.
    */
   portfolioHistory(address: string, ttl: number, timeframe?: "HOUR" | "DAY" | "WEEK" | "MONTH") {
-    return this.#call(ttl, "account", "/portfolio/history", (api) =>
+    return this.#call(ttl, "account", (api) =>
       api.accounts.getPortfolioHistory(address, {
         ...(timeframe === undefined ? {} : { timeframe }),
         ...({ chains: [...this.#chains] } as object),
@@ -582,7 +566,7 @@ export class OpenSeaClient {
 
   /** Fungible balances across every configured chain. GET /account/{address}/tokens */
   tokenBalances(address: string, ttl: number, opts: { limit?: number; cursor?: string } = {}) {
-    return this.#call(ttl, "account", "/balances", (api) =>
+    return this.#call(ttl, "account", (api) =>
       api.getAccountTokens(address, {
         chains: [...this.#chains],
         limit: opts.limit ?? 50,
@@ -599,27 +583,27 @@ export class OpenSeaClient {
    * set (docs/upstream.md entry 5, closed in `@opensea/sdk` 12.7.0).
    */
   trendingTokens(ttl: number, limit = 20, sort?: TokenSort) {
-    return this.#call(ttl, "account", "/tokens/trending", (api) =>
+    return this.#call(ttl, "account", (api) =>
       api.getTrendingTokens({ limit, chains: [...this.#chains], ...sort }),
     );
   }
 
   /** GET /tokens/top. `sortBy` defaults to one-day volume when omitted. */
   topTokens(ttl: number, limit = 20, sort?: TokenSort) {
-    return this.#call(ttl, "account", "/tokens/top", (api) =>
+    return this.#call(ttl, "account", (api) =>
       api.getTopTokens({ limit, chains: [...this.#chains], ...sort }),
     );
   }
 
   /** One token on the primary chain. GET /chain/{chain}/token/{address} */
   token(address: string, ttl: number) {
-    return this.#call(ttl, "public", "/tokens/:address", (api) => api.getToken(this.primaryChain, address));
+    return this.#call(ttl, "public", (api) => api.getToken(this.primaryChain, address));
   }
 
   /** Price history on the primary chain. GET /chain/{chain}/token/{address}/price_history */
   tokenPriceHistory(address: string, ttl: number, opts: { startTime: string; endTime?: string }) {
     const chain = toSdkChain(this.primaryChain);
-    return this.#call(ttl, "public", "/tokens/:address/price_history", (api) =>
+    return this.#call(ttl, "public", (api) =>
       api.getTokenPriceHistory(chain, address, {
         startTime: opts.startTime,
         ...(opts.endTime === undefined ? {} : { endTime: opts.endTime }),
@@ -642,9 +626,7 @@ export class OpenSeaClient {
     { chain: chainOpt, ...rest }: { limit?: number; cursor?: string; chain?: ChainIdentifier } = {},
   ) {
     const chain = toSdkChain(chainOpt ?? this.primaryChain);
-    return this.#call(ttl, "public", "/tokens/:address/holders", (api) =>
-      api.tokens.getTokenHolders(chain, address, rest),
-    );
+    return this.#call(ttl, "public", (api) => api.tokens.getTokenHolders(chain, address, rest));
   }
 
   /**
@@ -658,9 +640,7 @@ export class OpenSeaClient {
     { chain: chainOpt, ...rest }: { limit?: number; cursor?: string; chain?: ChainIdentifier } = {},
   ) {
     const chain = toSdkChain(chainOpt ?? this.primaryChain);
-    return this.#call(ttl, "public", "/tokens/:address/activity", (api) =>
-      api.tokens.getTokenActivity(chain, address, rest),
-    );
+    return this.#call(ttl, "public", (api) => api.tokens.getTokenActivity(chain, address, rest));
   }
 
   /**
@@ -669,8 +649,6 @@ export class OpenSeaClient {
    */
   tokenActivityStats(address: string, ttl: number, chainOpt?: ChainIdentifier) {
     const chain = toSdkChain(chainOpt ?? this.primaryChain);
-    return this.#call(ttl, "public", "/tokens/:address/activity_stats", (api) =>
-      api.tokens.getTokenActivityStats(chain, address),
-    );
+    return this.#call(ttl, "public", (api) => api.tokens.getTokenActivityStats(chain, address));
   }
 }

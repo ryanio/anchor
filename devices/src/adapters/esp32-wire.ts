@@ -57,8 +57,6 @@ export const MessageType = {
   Pong: 0x31,
 } as const;
 
-export type MessageTypeValue = (typeof MessageType)[keyof typeof MessageType];
-
 /**
  * What the host will parse from a device, and nothing else.
  *

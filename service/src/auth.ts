@@ -68,17 +68,6 @@ const DEFAULT_TTL_SECONDS = 3600;
 const REFRESH_MARGIN_MS = 5 * 60_000;
 const REQUEST_TIMEOUT_MS = 15_000;
 
-export class MissingPatError extends Error {
-  constructor(what: string) {
-    super(
-      `${what} needs an OpenSea wallet token, which Anchor mints from a personal access token. ` +
-        "No PAT is in the keyring. Create one at https://docs.opensea.io/reference/auth and run: " +
-        "anchor-service --set-pat",
-    );
-    this.name = "MissingPatError";
-  }
-}
-
 export class WalletTokenError extends Error {
   constructor(message: string) {
     super(message);
@@ -126,10 +115,7 @@ export class WalletTokenProvider {
     return (await this.#getPat()) !== null;
   }
 
-  /**
-   * A valid wallet JWT, or `null` when no PAT is stored. Callers turn `null` into
-   * {@link MissingPatError} at the point where they know which route the user asked for.
-   */
+  /** A valid wallet JWT, or `null` when no PAT is stored. */
   async token(): Promise<string | null> {
     if (this.#cached && this.#cached.expiresAt - this.#now() > REFRESH_MARGIN_MS) {
       return this.#cached.accessToken;

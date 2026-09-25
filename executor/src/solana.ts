@@ -428,11 +428,6 @@ export function parseSolanaTransaction(raw: Uint8Array): SolanaMessage {
   return readMessage(reader, signatureCount);
 }
 
-/** Parse a bare message, with no signature prefix. */
-export function parseSolanaMessage(raw: Uint8Array): SolanaMessage {
-  return readMessage(new Reader(raw), null);
-}
-
 function readMessage(reader: Reader, signatureCount: number | null): SolanaMessage {
   // The version prefix is a byte with the high bit set; a legacy message starts straight into the
   // header, whose first byte is a signature count and so is always < 128.
