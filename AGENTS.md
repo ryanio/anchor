@@ -71,9 +71,10 @@ A change is done when all of these hold. Not before:
 - **Work on `main` by default.** One agent, one machine, one change at a time: commit to `main`, run
   the gates, push. A branch and a PR for every small change is ceremony that buys nothing when nobody
   else is holding the tree, and it leaves a trail of merged branches to clean up afterwards.
-- **Branch when the work is big, long-running, or risky** — something you would not want half-done on
-  `main`, something that needs review before it lands, or anything touching the executor, policy,
-  signing or keys. Name it `type/short-description` — `feat/`, `fix/`, `docs/`, `refactor/`, `test/`.
+- **Branch only when the work is big or long-running**, something you would not want half-done on
+  `main`. Executor, policy, signing and key changes still need approval (below), then go to `main`
+  like everything else, with no PR. Name a branch `type/short-description`: `feat/`, `fix/`, `docs/`,
+  `refactor/`, `test/`.
 - **One idea per commit**, and per PR when there is one. A change that needs a paragraph to explain
   why it touches six areas should be several changes.
 - **Conventional commit subjects**, imperative mood, explaining *why* in the body. The diff shows what.
