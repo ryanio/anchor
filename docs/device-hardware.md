@@ -147,6 +147,11 @@ Ryan reported the Waveshare unit as laggy to touch. Two unkeyed probe builds wit
 free, a low of 148,140, the LVGL pool 47% used, and battery 100% on USB. The one slow frame in that
 minute (196 ms) is the companion screen being built at boot. It still had no Wi-Fi saved.
 
+Ryan then reported the Wi-Fi list scrolling badly. The unit received the keyed `cc93461` image with
+the scrolling fix (app0 only, hash verified). Its first minute reported 157,592 bytes of internal
+heap free, a low of 148,676, the LVGL pool 48% used, and battery 69% and charging after a spell
+unplugged.
+
 ## Idle soak, 2026-09-23
 
 A read-only serial logger recorded the Waveshare unit on `ad4668c` from 15:09 to 22:29, when both
