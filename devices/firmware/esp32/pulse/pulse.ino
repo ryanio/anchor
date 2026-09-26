@@ -278,10 +278,18 @@ static int32_t stage_top = PANEL_HEIGHT;
 static int32_t stage_bottom = -1;
 static bool waited_this_refresh = false;
 
+/*
+ * Small changes skip the wait. The blanking wait averages about 10 ms a frame, measured on the unit
+ * (a frame went from about 19 ms to about 28 ms when it came in), and it only buys anything for a
+ * write long enough for the scan to catch: at 72 rows or fewer, a key lighting up or a label changing,
+ * the write takes under 2 ms and a tear would be a few rows for one frame.
+ */
+constexpr int32_t SMALL_BLIT_ROWS = 72;
+
 static void blit_stage(void) {
   if (stage_bottom < stage_top) return;
   const uint32_t waited_from = micros();
-  wait_for_blanking();
+  if (stage_bottom - stage_top + 1 > SMALL_BLIT_ROWS) wait_for_blanking();
   const uint32_t blit_from = micros();
   const int32_t rows = stage_bottom - stage_top + 1;
   panel->draw16bitRGBBitmap(0, (int16_t)stage_top, stage + (size_t)stage_top * PANEL_WIDTH,

@@ -212,6 +212,11 @@ the sides (`growHitArea`). The per-row guard was first written as two callbacks 
 the crowded-scan scenario ran out of LVGL pool for a layer buffer; one watcher fits, at an LVGL
 peak of 112,936 bytes with a 17,176-byte largest free block.
 
+The PSRAM frame cost about 10 ms a frame in waiting (frames went from about 19 ms to about 28 ms on
+the unit), so a refresh whose changed rows number 72 or fewer, a key lighting or a label changing,
+now goes out without waiting: that write finishes in under 2 ms, and a tear there would be a few
+rows for one frame. Anything taller still waits for blanking.
+
 ## Historical host transport design
 
 The sections below record the earlier USB/LAN display experiment. They do not describe the supported
