@@ -676,8 +676,8 @@ ChooserView buildChooser(lv_obj_t *parent, const char *title, const char *action
 	lv_obj_set_scroll_dir(view.list, LV_DIR_VER);
 	lv_obj_set_style_bg_color(view.list, hex(colour::ink_dim), LV_PART_SCROLLBAR);
 	lv_obj_set_style_bg_opa(view.list, LV_OPA_COVER, LV_PART_SCROLLBAR);
-	lv_obj_set_style_width(view.list, 6, LV_PART_SCROLLBAR);
-	lv_obj_set_style_radius(view.list, 3, LV_PART_SCROLLBAR);
+	lv_obj_set_style_width(view.list, 4, LV_PART_SCROLLBAR);
+	lv_obj_set_style_radius(view.list, 2, LV_PART_SCROLLBAR);
 
 	const char *const text[3] = {action_0, action_1, action_2};
 	for (int i = 0; i < 3; i++) {

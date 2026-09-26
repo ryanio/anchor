@@ -139,7 +139,8 @@ void render()
 		for (size_t i = 0; i < count; ++i) {
 			// Bound every array field explicitly, including under GCC's fortified snprintf checks.
 			snprintf(text, sizeof(text), "%.11s  %.15s", rows[i].symbol, rows[i].price);
-			snprintf(detail, sizeof(detail), "%.15s | %.9s", rows[i].chain, rows[i].change);
+			snprintf(detail, sizeof(detail), "%.15s  " LV_SYMBOL_BULLET "  %.9s", rows[i].chain,
+			         rows[i].change);
 			Row2 row;
 			row.big = text;
 			row.small = detail;
@@ -176,6 +177,7 @@ void render()
 		price.big = selected.price;
 		price.small = "Price";
 		price.smallFirst = true;
+		price.bigFont = type::hero();
 		line(1, price);
 		Row2 change;
 		change.big = selected.change;
@@ -211,6 +213,7 @@ void render()
 		Row2 total;
 		total.big = portfolioTotal;
 		total.small = text;
+		total.bigFont = type::hero();
 		total.bigTone = portfolioPartial ? Tone::Warn : Tone::Ink;
 		total.smallTone = portfolioPartial ? Tone::Warn : Tone::Quiet;
 		total.smallFirst = true;

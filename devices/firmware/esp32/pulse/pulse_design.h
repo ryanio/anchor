@@ -80,21 +80,24 @@ constexpr int32_t SAFE_H = PANEL_H - 2 * INSET; /* 408 */
  *
  * The values were sampled from the design target rather than typed from memory —
  * `magick review/devices/pulse-amoled.png -crop 368x448+20+20 -colors 12 -format %c histogram:`,
- * where the +20 drops the bezel the review renderer draws — and they have not been changed here.
- * What changed is that they are now called `ink` and `ink_dim` instead of `TEXT` and `MUTED`, which
+ * where the +20 drops the bezel the review renderer draws. On 2026-09-26 the design pass moved four
+ * of them: the ground, surface, raised and edge greys went darker, towards the black an AMOLED does
+ * not light, and `ink_dim` and `ink_faint` went lighter, because `ink_dim` measured 3.0:1 on the old
+ * ground and it carries whole sentences ("Tap me to set it up."), where AA asks 4.5:1. The accents
+ * are unchanged. What changed earlier is that they are now called `ink` and `ink_dim` instead of `TEXT` and `MUTED`, which
  * matters for the one decision this palette keeps getting wrong: `warn` was `bad` for a render,
  * so the word "open" on a network row read as an error when an open network is a perfectly joinable
  * network that happens to carry no encryption. A role named for its meaning is harder to misuse than
  * a role named for its hue.
  */
 namespace colour {
-constexpr uint32_t ground = 0x13141C;    /* behind everything; on an AMOLED this is nearly free */
-constexpr uint32_t surface = 0x1A1B26;   /* the card a reading sits on */
-constexpr uint32_t raised = 0x24283B;    /* a key, a button, a list row — a thing you can press */
-constexpr uint32_t edge = 0x292E42;      /* borders and rules */
+constexpr uint32_t ground = 0x0A0B10;    /* behind everything: near black, which an AMOLED does not light */
+constexpr uint32_t surface = 0x14161F;   /* the card a reading sits on */
+constexpr uint32_t raised = 0x1D2030;    /* a key, a button, a list row — a thing you can press */
+constexpr uint32_t edge = 0x262A3A;      /* borders and rules */
 constexpr uint32_t ink = 0xC0CAF5;       /* what you are meant to read */
-constexpr uint32_t ink_dim = 0x586089;   /* what labels the thing you are meant to read */
-constexpr uint32_t ink_faint = 0x4E556D; /* metadata about the reading, not the reading */
+constexpr uint32_t ink_dim = 0x7A83AE;   /* what labels the thing you are meant to read: 5.3:1 on ground */
+constexpr uint32_t ink_faint = 0x5F6788; /* metadata, at large sizes only: 3.5:1 on ground */
 constexpr uint32_t accent = 0x7AA2F7;    /* in progress, or the thing to press */
 constexpr uint32_t good = 0x9ECE6A;      /* it went up, or it worked */
 constexpr uint32_t bad = 0xF7768E;       /* it went down, or it failed */
@@ -146,9 +149,12 @@ constexpr int32_t xxl = 52; /* around the one thing a screen is about */
 
 /* Three radii, matched to what they round: a key, a field, a card. */
 namespace radius {
-constexpr int32_t sm = 8;
+constexpr int32_t sm = 10;
+/* 12 and not more: the chooser list clips its rows to this radius through a layer this many rows tall
+ * and the list's full width, and at 14 that layer (18,368 bytes) no longer fit the pool during the
+ * crowded Wi-Fi scan, which has about 18 KB to spare. */
 constexpr int32_t md = 12;
-constexpr int32_t lg = 18;
+constexpr int32_t lg = 20;
 }  // namespace radius
 
 /* ------------------------------------------------------------------------------------ the type -- */

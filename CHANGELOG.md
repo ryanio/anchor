@@ -655,6 +655,10 @@ missing length is now accepted, and the size limit is enforced by counting bytes
 
 ### Changed
 
+The ESP32's palette moved towards black for the AMOLED, and its dim text is lighter: it measured
+3.0:1 against the old background, under the 4.5:1 that body text needs, and is 5.3:1 now. Prices and
+the portfolio total use the hero size, and list rows separate the chain and the change with a dot.
+
 The ESP32 responds to touch about three times faster. Each frame waited for the panel's tearing
 signal before every band it drew, which took about 50 ms of a 60-70 ms frame and left touch unread
 for up to 217 ms. It now waits once per frame and reads touch every 15 ms: frames take about 20 ms,
