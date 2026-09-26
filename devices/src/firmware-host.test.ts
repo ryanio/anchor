@@ -61,6 +61,12 @@ const PROGRAMS: readonly HostProgram[] = [
     quiet: true,
   },
   {
+    // What a person types becomes a path segment of an OpenSea request, and the list is the store.
+    name: "the ESP32 wallet list refuses unsafe lookups, duplicates and overflow, and round-trips its store",
+    sources: [join(ESP32, "host", "wallets.cpp")],
+    quiet: true,
+  },
+  {
     name: "ESP32 feed requests invalidate obsolete work without freeing an active worker early",
     sources: [join(ESP32, "host", "feed_request.cpp")],
     includes: [ESP32],

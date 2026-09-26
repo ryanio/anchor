@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include "pulse_design.h"
+#include "pulse_wallets.h"
 #include "pulse_wifi.h"
 
 namespace pulse_settings {
@@ -111,6 +112,7 @@ struct SettingsScreen {
 	lv_obj_t *screen = nullptr;
 	lv_obj_t *returnTo = nullptr;
 	Row face;
+	Row wallets;
 	Row wifi;
 } settings;
 
@@ -125,6 +127,8 @@ void refreshSettings()
 	                                               : "Set up";
 	snprintf(text, sizeof(text), "%s  " LV_SYMBOL_RIGHT, state);
 	lv_label_set_text(settings.wifi.value, text);
+	snprintf(text, sizeof(text), "%u  " LV_SYMBOL_RIGHT, (unsigned)pulse_wallets::count());
+	lv_label_set_text(settings.wallets.value, text);
 }
 
 void onSettingsScreen(lv_event_t *)
@@ -148,6 +152,11 @@ void onSettingsDone(lv_event_t *)
 void onFaceRow(lv_event_t *)
 {
 	openFacePicker(false);
+}
+
+void onWalletsRow(lv_event_t *)
+{
+	pulse_wallets::open();
 }
 
 void onWifiRow(lv_event_t *)
@@ -312,7 +321,8 @@ void openSettings()
 	lv_label_set_text(sub, "This unit only");
 
 	settings.face = makeRow(settings.screen, ROWS_Y, "Face", onFaceRow);
-	settings.wifi = makeRow(settings.screen, ROWS_Y + ROW_H + ROW_GAP, "Wi-Fi", onWifiRow);
+	settings.wallets = makeRow(settings.screen, ROWS_Y + ROW_H + ROW_GAP, "Wallets", onWalletsRow);
+	settings.wifi = makeRow(settings.screen, ROWS_Y + 2 * (ROW_H + ROW_GAP), "Wi-Fi", onWifiRow);
 
 	lv_obj_t *done = makeButton(settings.screen, INSET, PANEL_H - INSET - STATUS_ACTION_H, SAFE_W,
 	                            STATUS_ACTION_H, "Done", type::body());

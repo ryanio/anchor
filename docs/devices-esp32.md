@@ -100,6 +100,25 @@ that has never been asked wears Halo, and setup offers the picker once, after th
 joins. The `settings`, `face-pick` and `face-home` scenarios cover it, and `--faces`, `--settings`
 and `--face NAME` open or seed it in the simulator.
 
+### Wallets
+
+Settings' Wallets row opens the list the portfolio adds up (`pulse/pulse_wallets.{h,cpp}`). "Add"
+takes an OpenSea username, an ENS name or a `0x` address on the keypad. An address is kept as typed;
+a name goes to `/api/v2/accounts/{name}` on the feed's worker, the same one slot every fetch shares,
+and the screen shows "Looking up...", then either keeps the address under the typed name or says
+"Not found on OpenSea." or why it failed. Checked on 2026-09-26: `ryanryanryanryan` resolved, while an
+ENS name resolved only when it was attached to an OpenSea profile (`vitalik.eth` returned 404), so
+ENS support is that and no more. Tapping a wallet asks before removing it.
+
+The list is written to NVS as `anchor-wallets/list`, the key the feed has always read, with the typed
+names beside it as `anchor-wallets/names`, and `feed::reloadWallets()` makes the next tick read it.
+A unit nobody has edited has no `list` key and runs on the compiled-in `ANCHOR_WALLETS`; removing the
+last wallet stores an empty list, which means none rather than falling back. What may be typed as a
+name is letters, digits, `_`, `-` and `.`, with no `..` and no leading or trailing dot, because it
+becomes a path segment of an OpenSea request; `host/wallets.cpp` tests that and the list itself. The
+`wallet-add` and `wallet-unknown` scenarios add a wallet by name and fail to find one, through a
+`type:TEXT` step the simulator's `--taps` now accepts.
+
 A tap steps through what it can say, "Your wallets: $3,125 (6 of 6) / +3.54% today" and then the top
 trending token, using only strings the feed already formatted. Explore opens from its header.
 

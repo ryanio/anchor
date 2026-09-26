@@ -3,6 +3,7 @@
 #include "feed_request.h"
 
 #include "../../common/display_format.h"
+#include "../pulse/pulse_wallets_model.h"
 
 /*
  * Every include here is unconditional, and that is a correction rather than a style choice.
@@ -321,6 +322,15 @@ constexpr const char *PORTFOLIO_URL_FORMAT =
     "https://api.opensea.io/api/v2/account/%s/portfolio?timeframe=DAY";
 
 /*
+ * `/api/v2/accounts/{address_or_username}`, for the Wallets screen: a username resolves to the
+ * account's address, and so does an ENS name that is attached to an OpenSea profile. Checked on
+ * 2026-09-26: `ryanryanryanryan` returned an `address`, `vitalik.eth` and an unknown name returned
+ * 404 "Profile not found". The query is a path segment, which is why `pulse_wallets::querySane` gates
+ * it before it gets here.
+ */
+constexpr const char *ACCOUNT_URL_FORMAT = "https://api.opensea.io/api/v2/accounts/%s";
+
+/*
  * Timing. Every one of these is "how long before the *worker* gives up", never a wait imposed on
  * `loop()`.
  *
@@ -431,6 +441,7 @@ struct RequestJob {
 	char wallets[MAX_WALLETS][WALLET_ADDRESS_MAX + 1];
 	size_t walletsAsked;
 	size_t walletsConfigured;
+	char query[pulse_wallets::QUERY_MAX + 1];
 };
 
 struct RequestResult {
@@ -443,11 +454,22 @@ struct RequestResult {
 	Token tokens[MAX_TOKENS];
 	size_t count;
 	Portfolio portfolio;
+	char address[WALLET_ADDRESS_MAX + 1];
+	bool notFound;
 };
 
 RequestCoordinator requests;
 RequestJob pendingJob{};
 RequestResult readyResult{};
+
+/* The Wallets screen's lookup. All of it is touched only on the loop task, the result arriving by
+ * `applyResult` like every other. */
+char lookupQuery[pulse_wallets::QUERY_MAX + 1] = "";
+bool lookupPending = false;
+Lookup lookupNow = Lookup::Idle;
+char lookupAddress[WALLET_ADDRESS_MAX + 1] = "";
+const char *lookupReason = nullptr;
+bool walletsDirty = false;
 TaskHandle_t worker = nullptr;
 bool workerUnavailable = false;
 bool networkConfigured = false;
@@ -472,12 +494,11 @@ uint32_t lastWalletCheck = 0;
  * writer per namespace, because two credential stores on one device is how a unit ends up replaying
  * something that never worked. This module only ever *reads* both.
  *
- * **Nothing on the device writes `anchor-wallets` yet**, and that is worth stating rather than
- * implying. The Wi-Fi flow types a passphrase on the glass through `pulse_wifi.cpp`, and the same
- * input archetype could take an address list — that is a screen somebody should design on purpose,
- * not a thing to smuggle in here. Until then the override is reachable by writing the namespace
- * (the simulator's NVS is a text file, and `nvs_partition_gen` writes a real one), and the
- * compiled-in list is what a flashed unit runs on.
+ * The Wallets screen (`pulse/pulse_wallets.cpp`) is the one writer, from 2026-09-26: an OpenSea
+ * username, an ENS name or an address typed on the glass, resolved by `lookupStart` below, and kept
+ * as `list` with the typed `names` beside it. It calls `reloadWallets()` after writing, so the next
+ * tick reads the change rather than the next minute's recheck. A unit nobody has edited has no
+ * `list` key and runs on the compiled-in list.
  */
 struct WalletConfig {
 	char values[MAX_WALLETS][WALLET_ADDRESS_MAX + 1];
@@ -549,13 +570,20 @@ void splitWallets(WalletConfig &config, const char *list) {
 }
 
 void readWallets(WalletConfig &config) {
+	/* Absent and empty are different answers. The Wallets screen writes an empty list when the last
+	 * wallet is removed, and that means none, not "go back to the compiled-in list". */
+	constexpr const char *UNSET = "\x01unset";
 	Preferences prefs;
-	String stored;
+	String stored = UNSET;
 	if (prefs.begin("anchor-wallets", true /* read-only */)) {
-		stored = prefs.getString("list", "");
+		stored = prefs.getString("list", UNSET);
 		prefs.end();
 	}
-	if (stored.length() > 0) {
+	if (stored.length() == 0) {
+		splitWallets(config, "");
+		return;
+	}
+	if (stored != UNSET) {
 		splitWallets(config, stored.c_str());
 		if (config.configured > 0) return;
 		/* Written but unusable — fall through to the compiled-in list rather than showing nothing.
@@ -916,6 +944,98 @@ bool fetchPortfolio(const RequestJob &job, Portfolio &out, const char *&err, int
 }
 
 /*
+ * One account lookup, on the worker, with the same client setup as every other request here.
+ *
+ * Only `address` is read, through a filter, and it is kept only if it could be put back into a
+ * portfolio URL. A 404 is not a failure of the unit: it means there is no OpenSea account by that
+ * name, and the screen says exactly that.
+ */
+bool fetchAccount(const Request &request, const char *query, char *address, size_t size,
+                  const char *&err, int &code, bool &notFound) {
+	notFound = false;
+	if (!requestWanted(request) || WiFi.status() != WL_CONNECTED) {
+		err = "the network dropped mid-fetch";
+		return false;
+	}
+	if (!pulse_wallets::querySane(query)) {
+		err = "that name cannot be looked up";
+		return false;
+	}
+	char url[160];
+	const int written = snprintf(url, sizeof(url), ACCOUNT_URL_FORMAT, query);
+	if (written < 0 || (size_t)written >= sizeof(url)) {
+		err = "that name does not fit in a request";
+		return false;
+	}
+
+	WiFiClientSecure client;
+	client.setCACertBundle(x509CrtBundleStart, (size_t)(x509CrtBundleEnd - x509CrtBundleStart));
+	client.setHandshakeTimeout(HANDSHAKE_TIMEOUT_S);
+	client.setTimeout(READ_TIMEOUT_MS / 1000);
+
+	HTTPClient http;
+	if (!http.begin(client, url)) {
+		err = "could not open the request";
+		return false;
+	}
+	http.setConnectTimeout(CONNECT_TIMEOUT_MS);
+	http.setTimeout(READ_TIMEOUT_MS);
+	http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+	http.setRedirectLimit(3);
+	http.useHTTP10(true);
+	http.addHeader("Accept", "application/json");
+	http.addHeader("X-API-KEY", OPENSEA_API_KEY);
+
+	code = http.GET();
+	if (!requestWanted(request)) {
+		err = "the request was cancelled";
+		http.end();
+		return false;
+	}
+	if (code == 404) {
+		notFound = true;
+		err = "no OpenSea account by that name";
+		http.end();
+		return false;
+	}
+	if (code != HTTP_CODE_OK) {
+		err = reasonForHttp(code);
+		http.end();
+		return false;
+	}
+	if (http.getSize() > MAX_RESPONSE_BYTES) {
+		err = "the response is larger than this unit will read";
+		http.end();
+		return false;
+	}
+
+	JsonDocument filter;
+	filter["address"] = true;
+	JsonDocument doc;
+	BoundedBodyStream body(http.getStream(), request);
+	const DeserializationError parsed =
+	    deserializeJson(doc, body, DeserializationOption::Filter(filter),
+	                    DeserializationOption::NestingLimit(4));
+	http.end();
+	if (body.cancelled()) {
+		err = "the request was cancelled";
+		return false;
+	}
+	if (body.overflowed() || body.expired() || parsed) {
+		err = "the account did not parse";
+		return false;
+	}
+	const char *found = doc["address"] | "";
+	if (!addressLooksSane(found, strlen(found))) {
+		err = "the account had no usable address";
+		return false;
+	}
+	snprintf(address, size, "%s", found);
+	err = nullptr;
+	return true;
+}
+
+/*
  * The worker, asleep until `tick()` says so.
  *
  * `ulTaskNotifyTake(pdTRUE, portMAX_DELAY)` means this task consumes no CPU between fetches —
@@ -943,6 +1063,9 @@ void workerTask(void *) {
 				result.ok = fetchOnce(job.request, result.tokens, result.count, err, result.httpCode);
 			} else if (job.request.kind == RequestKind::Portfolio) {
 				result.ok = fetchPortfolio(job, result.portfolio, err, result.httpCode);
+			} else if (job.request.kind == RequestKind::Lookup) {
+				result.ok = fetchAccount(job.request, job.query, result.address, sizeof(result.address),
+				                         err, result.httpCode, result.notFound);
 			}
 			result.reason = err;
 		}
@@ -969,6 +1092,15 @@ void applyResult(const RequestResult &result) {
 			failReason = nullptr;
 		} else {
 			failReason = result.reason != nullptr ? result.reason : "the fetch failed";
+		}
+	} else if (result.request.kind == RequestKind::Lookup) {
+		if (result.ok) {
+			lookupNow = Lookup::Found;
+			snprintf(lookupAddress, sizeof(lookupAddress), "%s", result.address);
+			lookupReason = nullptr;
+		} else {
+			lookupNow = result.notFound ? Lookup::NotFound : Lookup::Failed;
+			lookupReason = result.reason != nullptr ? result.reason : "the lookup failed";
 		}
 	} else if (result.request.kind == RequestKind::Portfolio) {
 		portfolioFetching = false;
@@ -1005,10 +1137,11 @@ bool startRequest(RequestKind kind) {
 		job.walletsAsked = walletConfig.asked;
 		job.walletsConfigured = walletConfig.configured;
 		memcpy(job.wallets, walletConfig.values, sizeof(job.wallets));
+		snprintf(job.query, sizeof(job.query), "%s", lookupQuery);
 		pendingJob = job;
 		if (kind == RequestKind::Trending) {
 			fetching = true;
-		} else {
+		} else if (kind == RequestKind::Portfolio) {
 			portfolioFetching = true;
 		}
 	}
@@ -1061,7 +1194,8 @@ void tick(bool configured, bool connected, bool radioBusy, uint32_t revision) {
 	const uint32_t now = millis();
 
 	bool walletsChanged = false;
-	if (now - lastWalletCheck >= WALLET_RECHECK_MS) {
+	if (walletsDirty || now - lastWalletCheck >= WALLET_RECHECK_MS) {
+		walletsDirty = false;
 		lastWalletCheck = now;
 		walletsChanged = refreshWallets();
 		if (walletsChanged) {
@@ -1096,7 +1230,24 @@ void tick(bool configured, bool connected, bool radioBusy, uint32_t revision) {
 	}
 
 	consumeResult();
+	if (lookupPending && (worker == nullptr || workerUnavailable || !configured || !connected)) {
+		lookupPending = false;
+		lookupNow = Lookup::Failed;
+		lookupReason = workerUnavailable || worker == nullptr ? "could not start background requests"
+		                                                      : "the unit is not online";
+	}
 	if (worker == nullptr || workerUnavailable || !configured || !connected || radioBusy) return;
+
+	/* A lookup goes first: somebody is waiting on the screen for it, and nobody is waiting on the
+	 * next poll. */
+	if (lookupPending) {
+		bool slotBusy = false;
+		portENTER_CRITICAL(&publishLock);
+		slotBusy = requests.busy();
+		portEXIT_CRITICAL(&publishLock);
+		if (!slotBusy && startRequest(RequestKind::Lookup)) lookupPending = false;
+		return;
+	}
 
 	bool busy = false;
 	bool failing = false;
@@ -1262,6 +1413,63 @@ Snapshot snapshot() {
 		out.reason = out.everSucceeded ? "up to date" : "waiting for the first fetch";
 	}
 	return out;
+#endif
+}
+
+bool lookupStart(const char *query) {
+#if !ANCHOR_FEED_LIVE
+	(void)query;
+	return false;
+#else
+	if (!pulse_wallets::querySane(query)) return false;
+	snprintf(lookupQuery, sizeof(lookupQuery), "%s", query);
+	lookupPending = true;
+	lookupNow = Lookup::Busy;
+	lookupAddress[0] = '\0';
+	lookupReason = nullptr;
+	return true;
+#endif
+}
+
+Lookup lookupState(char *address, size_t n, const char **reason) {
+#if !ANCHOR_FEED_LIVE
+	(void)address;
+	(void)n;
+	if (reason != nullptr) *reason = "this unit has no OpenSea key";
+	return Lookup::Idle;
+#else
+	if (lookupNow == Lookup::Found && address != nullptr && n > 0) {
+		snprintf(address, n, "%s", lookupAddress);
+	}
+	if (reason != nullptr) *reason = lookupReason;
+	return lookupNow;
+#endif
+}
+
+void lookupCancel() {
+#if ANCHOR_FEED_LIVE
+	lookupPending = false;
+	lookupNow = Lookup::Idle;
+	lookupReason = nullptr;
+#endif
+}
+
+void reloadWallets() {
+#if ANCHOR_FEED_LIVE
+	walletsDirty = true;
+#endif
+}
+
+size_t walletList(char (*out)[65], size_t max) {
+#if !ANCHOR_FEED_LIVE
+	(void)out;
+	(void)max;
+	return 0;
+#else
+	static_assert(WALLET_ADDRESS_MAX == 64, "walletList hands out 65-byte rows");
+	size_t n = walletConfig.asked < max ? walletConfig.asked : max;
+	for (size_t i = 0; i < n; i++) snprintf(out[i], 65, "%s", walletConfig.values[i]);
+	return n;
 #endif
 }
 

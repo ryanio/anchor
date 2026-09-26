@@ -29,6 +29,7 @@
  * is worse than not photographing it at all.
  */
 
+#include "../../pulse/pulse_wallets_model.h"
 #include "../../app/feed.h"
 #include "../../../common/display_format.h"
 
@@ -304,6 +305,46 @@ void simScenario(const char *name) {
 }
 
 void begin() {}
+
+/*
+ * Lookups answer from a fixture after a short pause, so the Wallets screen's "looking up" state is
+ * drawn at least once: `ryanryanryanryan` is found, anything else is not.
+ */
+namespace {
+char sim_query[64] = "";
+uint32_t sim_lookup_at = 0;
+bool sim_lookup_live = false;
+}  // namespace
+
+bool lookupStart(const char *query) {
+  if (!pulse_wallets::querySane(query)) return false;
+  snprintf(sim_query, sizeof(sim_query), "%s", query);
+  sim_lookup_at = millis();
+  sim_lookup_live = true;
+  return true;
+}
+
+Lookup lookupState(char *address, size_t n, const char **reason) {
+  if (reason != nullptr) *reason = nullptr;
+  if (!sim_lookup_live) return Lookup::Idle;
+  if (millis() - sim_lookup_at < 400) return Lookup::Busy;
+  if (strcmp(sim_query, "ryanryanryanryan") == 0) {
+    if (address != nullptr && n > 0) snprintf(address, n, "0xfba662e1a8e91a350702cf3b87d0c2d2fb4ba57f");
+    return Lookup::Found;
+  }
+  if (reason != nullptr) *reason = "no OpenSea account by that name";
+  return Lookup::NotFound;
+}
+
+void lookupCancel() { sim_lookup_live = false; }
+
+void reloadWallets() {}
+
+size_t walletList(char (*out)[65], size_t max) {
+  if (max == 0) return 0;
+  snprintf(out[0], 65, "0x1da1a0e5f6a72b24c9ebd331cd265b7e0e140db3");
+  return 1;
+}
 
 void tick(bool, bool, bool, uint32_t) {}
 

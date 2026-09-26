@@ -68,6 +68,9 @@ struct Step {
   /* 0 is `pulse_touch_sim.cpp`'s default tap. Anything else is a hold, which is how a gesture
    * defined by duration — `pulse_wifi`'s 1.4 s way back into setup — gets driven at all. */
   uint32_t hold_ms = 0;
+  /* `type:TEXT` in `--taps`: put TEXT in the visible text field, as if it had been keyed in. The
+   * keypad's own taps are covered by the keypad scenarios; this is for flows that start after it. */
+  std::string type;
 };
 
 std::vector<Step> script;
@@ -283,6 +286,16 @@ void capture() {
   printf("  wrote %s\n", path);
 }
 
+lv_obj_t *visibleTextarea(lv_obj_t *obj) {
+  if (obj == nullptr || lv_obj_has_flag(obj, LV_OBJ_FLAG_HIDDEN)) return nullptr;
+  if (lv_obj_check_type(obj, &lv_textarea_class)) return obj;
+  for (uint32_t i = 0; i < lv_obj_get_child_count(obj); ++i) {
+    lv_obj_t *found = visibleTextarea(lv_obj_get_child(obj, i));
+    if (found != nullptr) return found;
+  }
+  return nullptr;
+}
+
 void parseTaps(const char *spec) {
   std::string text(spec);
   size_t at = 0;
@@ -293,7 +306,11 @@ void parseTaps(const char *spec) {
     const std::string one = text.substr(at, end == std::string::npos ? std::string::npos : end - at);
     int x = 0;
     int y = 0;
-    if (sscanf(one.c_str(), "%d,%d", &x, &y) == 2) {
+    if (one.rfind("type:", 0) == 0) {
+      Step step;
+      step.type = one.substr(5);
+      script.push_back(step);
+    } else if (sscanf(one.c_str(), "%d,%d", &x, &y) == 2) {
       Step step;
       step.touch = true;
       step.x = (int16_t)x;
@@ -588,6 +605,10 @@ int main(int argc, char **argv) {
         const Step &step = script[next_step];
         if (!step.feed.empty()) {
           feed::simScenario(step.feed.c_str());
+        } else if (!step.type.empty()) {
+          lv_obj_t *field = visibleTextarea(lv_screen_active());
+          printf("  type \"%s\"%s\n", step.type.c_str(), field == nullptr ? " (no field showing)" : "");
+          if (field != nullptr) lv_textarea_set_text(field, step.type.c_str());
         } else if (step.touch) {
           printf("  touch (%d,%d)%s", (int)step.x, (int)step.y, step.hold_ms == 0 ? "\n" : "");
           if (step.hold_ms != 0) printf(" held %ums\n", (unsigned)step.hold_ms);

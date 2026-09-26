@@ -280,6 +280,32 @@ void tick(bool networkConfigured, bool connected, bool radioBusy, uint32_t netwo
 Snapshot snapshot();
 
 /*
+ * Turning what somebody typed into an address, for the Wallets screen.
+ *
+ * `lookupStart` queues `/api/v2/accounts/{query}` on the worker, which resolves an OpenSea username,
+ * or an ENS name when that name is attached to an OpenSea profile. It refuses a query that could not
+ * be a path segment (see `pulse_wallets::querySane`) and returns false for it, and it refuses while
+ * the feed is disabled. The request takes the one worker slot like any fetch, so it waits for a
+ * trending or portfolio request already in flight.
+ *
+ * `lookupState` says where it got to. `Found` fills `address`; every other state leaves it alone and
+ * `reason` is a compiled-in sentence, as for the snapshot. `lookupCancel` drops interest in the
+ * answer, which a screen does when it closes.
+ */
+enum class Lookup : uint8_t { Idle, Busy, Found, NotFound, Failed };
+bool lookupStart(const char *query);
+Lookup lookupState(char *address, size_t n, const char **reason);
+void lookupCancel();
+
+/* Read the wallet list from NVS on the next tick rather than within a minute, after the Wallets
+ * screen has written it. */
+void reloadWallets();
+
+/* The addresses the feed is adding up right now, NVS or compiled in, up to `max`. The Wallets
+ * screen starts from this on a unit nobody has edited yet. */
+size_t walletList(char (*out)[65], size_t max);
+
+/*
  * The parser, as a pure function over a stream — the part with the judgement in it.
  *
  * Exposed for the same reason every `readX` in `devices/src/state/discovery.ts` is exported: a

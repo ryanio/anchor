@@ -14,6 +14,11 @@ becomes `## [0.1.0] - YYYY-MM-DD` at the moment the tag is pushed, and not befor
 
 ### Added
 
+The ESP32 manages its own wallets. Settings has a Wallets screen that adds one by OpenSea username,
+ENS name (when it is attached to an OpenSea profile) or `0x` address typed on the keypad, looked up
+on the unit, and removes one with a tap. The list is kept on the unit and replaces the built-in
+wallet as soon as it is edited.
+
 The ESP32 companion has four faces to choose from, two serious and two fun: Halo (the new default, a
 glowing ring), Visor (a small robot), Pixel (eight-bit) and Buddy (the round face, redrawn). Each
 draws every mood, painted with real curves on a canvas in PSRAM. A gear on the home screen opens a

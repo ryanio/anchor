@@ -6,7 +6,7 @@
 
 namespace feed {
 
-enum class RequestKind : uint8_t { None, Trending, Portfolio };
+enum class RequestKind : uint8_t { None, Trending, Portfolio, Lookup };
 
 struct RequestContext {
   bool configured = false;

@@ -946,6 +946,21 @@ function simEsp32(root: string, paths: DevicePaths, manifest: Toolchain, runner:
       extra: ["--expect-visible-prefix", "Visor"],
       labels: ["Settings", "Face"],
     },
+    // Settings, Wallets, Add, a username, and the keypad's Add key: the name is looked up and the
+    // wallet joins the one the build came with, under the name that was typed.
+    {
+      name: "wallet-add",
+      taps: "46,46 184,206 269,400 type:ryanryanryanryan 310,400",
+      extra: ["--wait", "--wait", "--expect-visible-prefix", "0xfba6"],
+      labels: ["Wallets", "ryanryanryanryan", "2 wallets, added up on home"],
+    },
+    // A name OpenSea does not know is said to be unknown, and nothing is added.
+    {
+      name: "wallet-unknown",
+      taps: "46,46 184,206 269,400 type:nosuchname 310,400",
+      extra: ["--wait", "--wait"],
+      labels: ["Add a wallet", "Not found on OpenSea."],
+    },
     // Done from there goes home, which is rebuilt wearing the chosen face and still reading.
     {
       name: "face-home",
