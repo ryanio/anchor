@@ -531,7 +531,9 @@ void drawList(Slot &s)
 	// How many rows fit, and whether a strip at the bottom has to say where in the list they are.
 	// The strip is Font0 rather than a row of its own: a whole 15 pixel row spent on "4 of 23" is a
 	// row of the actual list, and on a panel with six of them that is a sixth of the screen.
-	constexpr int STRIP_H = 9;
+	// 12 rather than 9 since the strip also carries an "[ok] opens" keycap, whose border needs 11 rows;
+	// on this panel's list slot six rows still fit above it.
+	constexpr int STRIP_H = 12;
 	int visible = (s.h - 1) / rowH;
 	const bool windowed = s.total > visible;
 	if (windowed) {
@@ -611,8 +613,12 @@ void drawList(Slot &s)
 		g.fillRect(s.x, y, s.w, STRIP_H, palette[GROUND]);
 		g.drawFastHLine(s.x, y, s.w, palette[LINE]);
 		g.setFont(&fonts::Font0);
-		ui::clip(strip, right, y + 1, s.w / 2, palette[INK_DIM], palette[GROUND],
+		ui::clip(strip, right, y + 3, s.w / 2, palette[INK_DIM], palette[GROUND],
 		         textdatum_t::top_right);
+		if (s.selected >= 0) {
+			ui::clip("[ok] opens", s.x + 3, y + 3, s.w / 2, palette[INK_DIM], palette[GROUND],
+			         textdatum_t::top_left);
+		}
 	}
 	g.clearClipRect();
 }
