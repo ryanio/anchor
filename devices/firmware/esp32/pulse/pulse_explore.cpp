@@ -16,6 +16,12 @@ struct Row {
 	bool positive = false;
 };
 enum class Page { List, Token, Portfolio };
+/* Under a two-line subtitle, and under the portfolio's one-line one. Both lists end at 360, above
+ * the action row. */
+constexpr int32_t LIST_Y = 112;
+constexpr int32_t LIST_H = 248;
+constexpr int32_t LIST_Y_TALL = 88;
+constexpr int32_t LIST_H_TALL = 272;
 Page page = Page::List;
 Row rows[CAPACITY], selected, pressed;
 size_t count = 0;
@@ -133,6 +139,11 @@ void render()
 	visibleRows = 0;
 	char text[112];
 	char detail[112];
+	/* The portfolio's subtitle is one line where the others can wrap to two, so its list starts
+	 * higher, which is what lets the hero total and both figures under it fit without a scroll. */
+	const bool tall = page == Page::Portfolio;
+	lv_obj_set_y(chooser.list, tall ? LIST_Y_TALL : LIST_Y);
+	lv_obj_set_height(chooser.list, tall ? LIST_H_TALL : LIST_H);
 	if (page == Page::List) {
 		lv_label_set_text(chooser.title, "Explore");
 		lv_label_set_text(chooser.subtitle, listStatus);
@@ -223,11 +234,13 @@ void render()
 		change.small = "24h change";
 		change.bigTone = changeTone(portfolioChange, portfolioPositive);
 		change.smallFirst = true;
+		change.bigFont = type::heading();
 		line(1, change);
 		Row2 nfts;
 		nfts.big = portfolioNfts;
 		nfts.small = "NFT value";
 		nfts.smallFirst = true;
+		nfts.bigFont = type::heading();
 		line(2, nfts);
 	}
 	for (size_t i = 0; i < CAPACITY; ++i) {
@@ -297,8 +310,8 @@ void begin(Action openWifi)
 	chooser = buildChooser(screen, "Explore", "Back", "Portfolio", "Wi-Fi");
 	// Two lines for connection state or a specific failure, without truncating it.
 	lv_label_set_long_mode(chooser.subtitle, LV_LABEL_LONG_WRAP);
-	lv_obj_set_y(chooser.list, 112);
-	lv_obj_set_height(chooser.list, 248);
+	lv_obj_set_y(chooser.list, LIST_Y);
+	lv_obj_set_height(chooser.list, LIST_H);
 	for (size_t i = 0; i < CAPACITY; ++i) {
 		rowButtons[i] = lv_button_create(chooser.list);
 		styleChooserRow(rowButtons[i]);
