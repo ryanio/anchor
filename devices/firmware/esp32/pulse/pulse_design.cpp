@@ -888,6 +888,31 @@ Tone batteryTone(const BatteryCopy &copy)
 
 }  // namespace
 
+namespace {
+
+/*
+ * The icon sits just left of the words, wherever the words end up.
+ *
+ * The text is right-aligned in the chip, so it hugs the panel edge the chip is anchored to, and the
+ * icon used to stay at the chip's left edge. A reading as short as "87%" then had most of the text
+ * area's 87 px between the battery and its number, and Ryan reported the two as too far apart. So
+ * after each change of text the icon moves to `BATTERY_ICON_GAP` from where the text starts.
+ */
+constexpr int32_t BATTERY_ICON_GAP = space::xs + 2;
+
+void placeBatteryIcon(const BatteryView &view, const char *text)
+{
+	const int32_t textW =
+	    lv_text_get_width(text, (uint32_t)strlen(text), type::caption(), 0);
+	int32_t x = BATTERY_W - textW - BATTERY_ICON_GAP - BATTERY_CAP_W - BATTERY_SHELL_W;
+	if (x < 0) x = 0;
+	lv_obj_set_x(view.shell, x);
+	lv_obj_set_x(view.cap, x + BATTERY_SHELL_W);
+	lv_obj_set_x(view.fill, x + BATTERY_FILL_INSET);
+}
+
+}  // namespace
+
 BatteryView buildBattery(lv_obj_t *parent, int32_t x, int32_t y)
 {
 	BatteryView view;
@@ -997,6 +1022,7 @@ void applyBattery(const BatteryView &view, const BatteryCopy &copy)
 		snprintf(text, sizeof(text), "--");
 	}
 	lv_label_set_text(view.text, text);
+	placeBatteryIcon(view, text);
 }
 
 }  // namespace pulse_design
