@@ -236,43 +236,94 @@ static void wait_for_scan_gap(void) {
 }
 
 /*
- * Once per refresh, not once per rectangle.
+ * Wait for the start of the panel's blanking interval, when the tearing line goes high.
  *
- * A refresh arrives as several flushes: one per 96-row band of the draw buffer, and one per separate
- * invalidated area. Waiting for the tearing line before every one of them was measured on the glass
- * at about 50 ms of each 60-70 ms frame, against 10 ms spent actually pushing pixels, and touch is
- * read by a timer on this same loop, so a finger went unread for up to 215 ms while a screen drew.
- * That was the lag reported as "laggy when touching it".
- *
- * The first flush still starts in a scan gap, which is where a tear would show on a full repaint.
- * The later bands follow straight on. The italic-looking text this wait was first blamed for turned
- * out to be odd-column windows, which the `LV_EVENT_INVALIDATE_AREA` handler in `setup()` fixes.
+ * In vertical-blank mode (`0x35 0x00`, set in `enable_tearing()`) the line is high while the
+ * controller is between scans. Already high means the scan has not restarted yet, so there is
+ * nothing to wait for. The 20 ms bound is "the line is dead", as for `wait_for_scan_gap()`.
  */
+static void wait_for_blanking(void) {
+  if (digitalRead(TE_PIN)) return;
+  const uint32_t until = millis() + 20u;
+  while (millis() < until) {
+    if (digitalRead(TE_PIN)) return;
+  }
+}
+
+/*
+ * The frame is assembled in PSRAM and sent to the panel once, at the start of a blanking interval.
+ *
+ * A refresh arrives as several flushes, one per 96-row band of the draw buffer and one per separate
+ * invalidated area, with rendering in between. Two ways of sending them have been measured here:
+ *
+ *   - Waiting for the tearing line before every band kept the panel from scanning over a half-written
+ *     region, but cost about 50 ms of a 60-70 ms frame and left touch unread for up to 217 ms,
+ *     reported as "laggy when touching it".
+ *   - Waiting only before the first band was fast, but the later bands went out while the panel was
+ *     scanning them. On the keypad, whose page change repaints about 270 rows, the Back key on the
+ *     bottom row came out with a torn, pixelated line through it.
+ *
+ * So each band is copied into `stage`, a full-screen image in PSRAM, and on the refresh's last
+ * flush the rows that changed go out in one write, full width, starting as the panel enters its
+ * blanking interval. One write of at most 448 rows at the measured ~10 ms beats the ~17 ms scan to
+ * the bottom, so the scan never overtakes it. Full-width rows also start on column 0, which keeps
+ * the even-column rule below true by construction.
+ *
+ * Without the PSRAM image (the allocation failed), each band goes straight out as before, with one
+ * wait per refresh: some tearing, but never the old lag.
+ */
+static uint16_t *stage = nullptr;
+static int32_t stage_top = PANEL_HEIGHT;
+static int32_t stage_bottom = -1;
 static bool waited_this_refresh = false;
 
+static void blit_stage(void) {
+  if (stage_bottom < stage_top) return;
+  const uint32_t waited_from = micros();
+  wait_for_blanking();
+  const uint32_t blit_from = micros();
+  const int32_t rows = stage_bottom - stage_top + 1;
+  panel->draw16bitRGBBitmap(0, (int16_t)stage_top, stage + (size_t)stage_top * PANEL_WIDTH,
+                            (int16_t)PANEL_WIDTH, (int16_t)rows);
+  pulse_perf::noteFlush(blit_from - waited_from, micros() - blit_from);
+  stage_top = PANEL_HEIGHT;
+  stage_bottom = -1;
+}
+
 static void flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map) {
+  const bool last = lv_display_flush_is_last(disp);
   if (panel_ready) {
     const int32_t w = area->x2 - area->x1 + 1;
     const int32_t h = area->y2 - area->y1 + 1;
-    const uint32_t waited_from = micros();
-    if (!waited_this_refresh) {
-      wait_for_scan_gap();
-      waited_this_refresh = true;
+    if (stage != nullptr) {
+      const uint16_t *from = (const uint16_t *)px_map;
+      for (int32_t row = 0; row < h; row++) {
+        memcpy(stage + (size_t)(area->y1 + row) * PANEL_WIDTH + area->x1, from + (size_t)row * w,
+               (size_t)w * 2u);
+      }
+      if (area->y1 < stage_top) stage_top = area->y1;
+      if (area->y2 > stage_bottom) stage_bottom = area->y2;
+      if (last) blit_stage();
+    } else {
+      const uint32_t waited_from = micros();
+      if (!waited_this_refresh) {
+        wait_for_scan_gap();
+        waited_this_refresh = true;
+      }
+      const uint32_t blit_from = micros();
+      panel->draw16bitRGBBitmap((int16_t)area->x1, (int16_t)area->y1, (uint16_t *)px_map, (int16_t)w,
+                                (int16_t)h);
+      pulse_perf::noteFlush(blit_from - waited_from, micros() - blit_from);
     }
-    const uint32_t blit_from = micros();
-    panel->draw16bitRGBBitmap((int16_t)area->x1, (int16_t)area->y1, (uint16_t *)px_map, (int16_t)w,
-                              (int16_t)h);
-    const uint32_t done = micros();
-    pulse_perf::noteFlush(blit_from - waited_from, done - blit_from);
   }
+  if (last) waited_this_refresh = false;
   /*
    * The backlight stays down until there is a whole frame to show — the same rule `app/app.ino`
    * holds about never presenting a partly-painted frame on boot, and it applies more here: LVGL's
    * first refresh arrives as several rectangles, so a panel lit before the last one shows a screen
    * being assembled.
    */
-  if (lv_display_flush_is_last(disp)) waited_this_refresh = false;
-  if (!presented && lv_display_flush_is_last(disp)) {
+  if (!presented && last) {
     presented = true;
     set_backlight(brightness_percent);
   }
@@ -665,6 +716,10 @@ void setup() {
    * buffer beats a fast quarter-height one: a shorter buffer means more flushes per refresh, and
    * every flush is another chance to catch the panel mid-scan.
    */
+  /* The full-screen image the flush assembles a frame in; see `flush_cb`. Black, like the panel
+   * `fillScreen(0)` left, so the first partial refresh has nothing stale around it. */
+  stage = (uint16_t *)heap_caps_calloc((size_t)PANEL_WIDTH * PANEL_HEIGHT, sizeof(uint16_t),
+                                       MALLOC_CAP_SPIRAM);
   draw_buffer = (uint8_t *)heap_caps_malloc(DRAW_BUFFER_BYTES, MALLOC_CAP_INTERNAL);
   draw_buffer_in_psram = false;
   draw_buffer_bytes = DRAW_BUFFER_BYTES;

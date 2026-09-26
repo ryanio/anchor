@@ -771,6 +771,7 @@ void fail(const char *reason)
 
 void onNetworkPicked(lv_event_t *event)
 {
+	if (!listTapAllowed()) return;
 	lv_obj_t *row = (lv_obj_t *)lv_event_get_target(event);
 	const int index = (int)(intptr_t)lv_obj_get_user_data(row);
 	if (index < 0 || index >= network_count) return;
@@ -795,6 +796,7 @@ void onNetworkPicked(lv_event_t *event)
 void onForgetPicked(lv_event_t *event)
 {
 	(void)event;
+	if (!listTapAllowed()) return;
 	state = State::ConfirmForget;
 	snprintf(result_info_text, sizeof(result_info_text), "This unit will go offline.");
 	showResult();

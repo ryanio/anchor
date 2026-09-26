@@ -5,6 +5,14 @@
 #include <stdio.h>
 #include <string.h>
 
+/* `lv_hit_test_info_t` is only declared in the public headers; its fields are in the private one.
+ * The board's builder puts LVGL's `src/` on the include path and the simulator puts its root. */
+#if __has_include("core/lv_obj_event_private.h")
+#include "core/lv_obj_event_private.h"
+#else
+#include "src/core/lv_obj_event_private.h"
+#endif
+
 namespace pulse_design {
 
 namespace {
@@ -309,6 +317,43 @@ lv_obj_t *makeFlowLabel(lv_obj_t *parent, const lv_font_t *font, uint32_t rgb, i
 	return label;
 }
 
+/*
+ * A button answers a little outside what it draws, mostly above and below.
+ *
+ * Ryan reported the buttons along the top and bottom of the panel as hard to hit. Those are the ones
+ * within about 20 px of the glass edge (Explore at y=24, Cancel at y=14, the chooser's row ending at
+ * y=428), where a fingertip is wider than the margin and a capacitive panel's reading of it is least
+ * sure. The extra is 12 px vertically and only 4 px sideways, half the narrowest gap between two
+ * buttons in a row (`CHOOSER_ACTION_GAP`), so neighbours never claim each other's presses.
+ *
+ * LVGL's own `ext_click_area` grows all four sides by one amount, so it sets the outer bound and the
+ * hit-test event trims the sides back.
+ */
+constexpr int32_t BUTTON_HIT_GROW_X = 4;
+constexpr int32_t BUTTON_HIT_GROW_Y = 12;
+
+void onGrownHitTest(lv_event_t *event)
+{
+	lv_hit_test_info_t *info = (lv_hit_test_info_t *)lv_event_get_param(event);
+	lv_obj_t *obj = (lv_obj_t *)lv_event_get_current_target(event);
+	const intptr_t packed = (intptr_t)lv_event_get_user_data(event);
+	const int32_t grow_x = (int32_t)(packed >> 8);
+	const int32_t grow_y = (int32_t)(packed & 0xFF);
+	lv_area_t area;
+	lv_obj_get_coords(obj, &area);
+	info->res = info->point->x >= area.x1 - grow_x && info->point->x <= area.x2 + grow_x &&
+	            info->point->y >= area.y1 - grow_y && info->point->y <= area.y2 + grow_y;
+}
+
+void growHitArea(lv_obj_t *obj, int32_t grow_x, int32_t grow_y)
+{
+	if (obj == nullptr) return;
+	lv_obj_set_ext_click_area(obj, grow_x > grow_y ? grow_x : grow_y);
+	lv_obj_add_flag(obj, LV_OBJ_FLAG_ADV_HITTEST);
+	lv_obj_add_event_cb(obj, onGrownHitTest, LV_EVENT_HIT_TEST,
+	                    (void *)(intptr_t)((grow_x << 8) | (grow_y & 0xFF)));
+}
+
 lv_obj_t *makeButton(lv_obj_t *parent, int32_t x, int32_t y, int32_t w, int32_t h, const char *text,
                      const lv_font_t *font, lv_obj_t **label_out)
 {
@@ -332,6 +377,7 @@ lv_obj_t *makeButton(lv_obj_t *parent, int32_t x, int32_t y, int32_t w, int32_t 
 	lv_obj_set_style_text_color(label, hex(colour::ink), LV_PART_MAIN);
 	lv_obj_center(label);
 	if (label_out != nullptr) *label_out = label;
+	growHitArea(button, BUTTON_HIT_GROW_X, BUTTON_HIT_GROW_Y);
 	return button;
 }
 
@@ -580,6 +626,9 @@ void applyStatus(const StatusView &view, const StatusCopy &copy)
 
 /* -------------------------------------------------------------------------------- the chooser --- */
 
+void onListScroll(lv_event_t *event);
+void watchContacts();
+
 ChooserView buildChooser(lv_obj_t *parent, const char *title, const char *action_0,
                          const char *action_1, const char *action_2)
 {
@@ -603,6 +652,8 @@ ChooserView buildChooser(lv_obj_t *parent, const char *title, const char *action
 	lv_label_set_text(view.subtitle, "");
 
 	view.list = lv_list_create(view.page);
+	lv_obj_add_event_cb(view.list, onListScroll, LV_EVENT_SCROLL, nullptr);
+	watchContacts();
 	lv_obj_set_pos(view.list, INSET, CHOOSER_LIST_Y);
 	lv_obj_set_size(view.list, SAFE_W, CHOOSER_LIST_HEIGHT);
 	lv_obj_set_style_bg_color(view.list, hex(colour::surface), LV_PART_MAIN);
@@ -655,6 +706,54 @@ void styleChooserRow(lv_obj_t *row)
 	lv_obj_set_style_bg_color(row, hex(colour::accent), LV_PART_MAIN | LV_STATE_PRESSED);
 	lv_obj_set_style_text_color(row, hex(colour::ground), LV_PART_MAIN | LV_STATE_PRESSED);
 	delayPressHighlight(row);
+}
+
+/*
+ * A row does not fire when the press was really part of a scroll.
+ *
+ * LVGL already refuses a click once a press has scrolled the list, but two cases get through, and
+ * both were reported as "when im scrolling it accidentally taps on a network". A touch that lands
+ * while the list is still coasting from a flick stops the coast and is then an ordinary tap on
+ * whichever row slid under the finger. And a press that the scroll handler never claimed (it moved
+ * less than LVGL's 10 px threshold before the lift) still ran while the list was moving under it.
+ * So a row's click is refused when a list scrolled within `COASTING_MS` before the press, or at
+ * any point after it.
+ *
+ * One callback on the input device and one per list, not two per row: a 32-network scan built 64
+ * extra event descriptors in the LVGL pool, and the crowded-scan scenario ran out of room for a
+ * layer buffer it had fitted before.
+ */
+constexpr uint32_t COASTING_MS = 120;
+
+uint32_t lastListScrollMs = 0;
+uint32_t contactStartedMs = 0;
+bool contactStoppedCoast = false;
+
+void onListScroll(lv_event_t *)
+{
+	lastListScrollMs = lv_tick_get();
+}
+
+void onContactStarted(lv_event_t *)
+{
+	contactStartedMs = lv_tick_get();
+	contactStoppedCoast = lastListScrollMs != 0 && contactStartedMs - lastListScrollMs < COASTING_MS;
+}
+
+void watchContacts()
+{
+	static bool watching = false;
+	if (watching) return;
+	lv_indev_t *indev = lv_indev_get_next(nullptr);
+	if (indev == nullptr) return;
+	lv_indev_add_event_cb(indev, onContactStarted, LV_EVENT_PRESSED, nullptr);
+	watching = true;
+}
+
+bool listTapAllowed()
+{
+	const bool scrolledSincePress = lastListScrollMs != 0 && lastListScrollMs >= contactStartedMs;
+	return !contactStoppedCoast && !scrolledSincePress;
 }
 
 /*

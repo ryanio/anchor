@@ -245,7 +245,7 @@ void onRow(lv_event_t *event)
 		pressedAge = listAge;
 		pressedAt = listAt;
 		pressedValid = true;
-	} else if (lv_event_get_code(event) == LV_EVENT_CLICKED && pressedValid) {
+	} else if (lv_event_get_code(event) == LV_EVENT_CLICKED && pressedValid && listTapAllowed()) {
 		selected = pressed;
 		selectedAge = pressedAge;
 		selectedAt = pressedAt;

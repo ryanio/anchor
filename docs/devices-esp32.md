@@ -154,6 +154,19 @@ window. And LVGL marks the row under a finger pressed as soon as it lands, while
 becomes a scroll after 10 px, so list rows now show their pressed colours after 90 ms
 (`delayPressHighlight` in `pulse_design.cpp`), and a scroll that starts sooner never shows them.
 
+Three more reports followed on the same build. Tapping a letter put a torn, pixelated line through
+the keypad's Back key: waiting for the tearing line only before a frame's first band let the later
+bands go out while the panel scanned them. Each band is now copied into a full-screen image in
+PSRAM (330 KB of the 8 MB), and the changed rows go to the panel in one full-width write at the
+start of a blanking interval, which a ~10 ms write finishes ahead of the ~17 ms scan. A tap could
+still land on a network while scrolling, when the touch stopped a coasting list or the list moved
+under a press too short for LVGL's scroll threshold; `listTapAllowed()` refuses those, from one
+callback on the input device and one per list. And the buttons along the top and bottom edges were
+hard to hit, so every `makeButton` button answers 12 px above and below what it draws and 4 px to
+the sides (`growHitArea`). The per-row guard was first written as two callbacks on every row, and
+the crowded-scan scenario ran out of LVGL pool for a layer buffer; one watcher fits, at an LVGL
+peak of 112,936 bytes with a 17,176-byte largest free block.
+
 ## Historical host transport design
 
 The sections below record the earlier USB/LAN display experiment. They do not describe the supported

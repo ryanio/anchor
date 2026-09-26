@@ -652,6 +652,11 @@ Scrolling the ESP32's Wi-Fi and Explore lists carries a flick instead of stoppin
 no longer lights up the row it started on. The touch driver held the finger still while confirming
 a lift, which cancelled most of the fling speed, and rows showed their pressed colour before a swipe
 had moved far enough to count as a scroll.
+
+On the ESP32, the keypad no longer tears when a key is pressed: each frame is assembled in PSRAM and
+sent to the panel in one write at the start of a blanking interval. A touch that stops a coasting
+list, or a press while the list moves, no longer picks a network. Buttons near the top and bottom
+edges answer a little above and below what they draw.
 - **Every shipped device key does something when pressed.** The six chain shares on the `chains`
   page did nothing; they now open the wallet's OpenSea profile, as the portfolio sparklines do. With
   no wallet configured, both open `~/.config/anchor/config.json` in the editor, where a wallet is

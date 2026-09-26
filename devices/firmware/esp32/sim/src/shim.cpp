@@ -140,6 +140,11 @@ void *heap_caps_malloc(size_t bytes, uint32_t caps) {
   return malloc(bytes);
 }
 
+void *heap_caps_calloc(size_t count, size_t size, uint32_t caps) {
+  if ((caps & MALLOC_CAP_SPIRAM) != 0 && !psram_present) return nullptr;
+  return calloc(count, size);
+}
+
 size_t heap_caps_get_free_size(uint32_t caps) {
   (void)caps;
   return 267000;  // roughly what this part reports with the USB stack up

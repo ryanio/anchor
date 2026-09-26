@@ -367,6 +367,13 @@ void styleChooserRow(lv_obj_t *row);
 /* Delay a list row's pressed colours so a swipe scrolls without flashing the row it started on. */
 void delayPressHighlight(lv_obj_t *row);
 
+/* False when the current press stopped a coasting list or a list scrolled during it. A list row's
+ * click handler returns early on false. Chooser lists built by `buildChooser` are watched. */
+bool listTapAllowed();
+
+/* Let `obj` answer presses up to `grow_x` px beside it and `grow_y` px above and below it. */
+void growHitArea(lv_obj_t *obj, int32_t grow_x, int32_t grow_y);
+
 /*
  * **Input**: a heading with a cancel button, a line of context, one field with a reveal button, and
  * the keypad.
