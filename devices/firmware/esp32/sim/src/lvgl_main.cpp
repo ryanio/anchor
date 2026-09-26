@@ -43,6 +43,7 @@
 
 #include "pulse_companion.h"
 #include "pulse_power.h"
+#include "pulse_settings.h"
 #include "pulse_ui.h"
 #include "pulse_wifi.h"
 
@@ -423,6 +424,9 @@ int main(int argc, char **argv) {
   bool wifi_wired = false;
   bool open_wifi = false;
   bool open_companion = false;
+  bool open_settings = false;
+  bool open_faces = false;
+  const char *face_name = nullptr;
   bool power_wired = false;
 
   for (int i = 1; i < argc; i++) {
@@ -480,6 +484,12 @@ int main(int argc, char **argv) {
       allow_corners = true;
     } else if (strcmp(arg, "--companion") == 0) {
       open_companion = true;
+    } else if (strcmp(arg, "--settings") == 0) {
+      open_settings = true;
+    } else if (strcmp(arg, "--faces") == 0) {
+      open_faces = true;
+    } else if (strcmp(arg, "--face") == 0 && more) {
+      face_name = argv[++i];
     } else if (strcmp(arg, "--open-wifi") == 0) {
       wifi_wired = true;
       open_wifi = true;
@@ -528,6 +538,13 @@ int main(int argc, char **argv) {
   }
 
   Serial.simConnect(true);
+  if (face_name != nullptr) {
+    /* The store `pulse_settings` reads at boot, so a run can start already wearing a face. */
+    Preferences prefs;
+    prefs.begin("anchor-ui", false);
+    prefs.putString("face", face_name);
+    prefs.end();
+  }
   setup();
   lv_log_register_print_cb([](lv_log_level_t, const char *message) {
     fputs(message, stderr);
@@ -545,6 +562,8 @@ int main(int argc, char **argv) {
   // registers gestures twice and tests a different boot from the actual device.
   if (open_wifi) pulse_wifi::open();
   if (open_companion) pulse_companion::open();
+  if (open_settings) pulse_settings::openSettings();
+  if (open_faces) pulse_settings::openFacePicker(true);
   if (power_wired) printf("sim: %s\n", pulse_power::describe());
 
   if (!quiet) {

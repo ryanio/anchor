@@ -127,6 +127,10 @@ const char *status();
  */
 void attachOpenGesture(lv_obj_t *target);
 
+/* Runs after somebody dismisses the "Connected" page of a join, once setup has closed. The first-run
+ * face picker hangs off this, so it appears once the unit has a network rather than before. */
+void afterJoin(void (*action)());
+
 }  // namespace pulse_wifi
 
 #endif /* ANCHOR_PULSE_WIFI_H */

@@ -53,6 +53,7 @@
 #endif
 #include "pulse_perf.h"
 #include "pulse_power.h"
+#include "pulse_settings.h"
 #include "pulse_ui.h"
 #include "pulse_wifi.h"
 
@@ -840,6 +841,11 @@ void setup() {
   pulse_explore::begin(pulse_wifi::open);
   pulse_ui::onExplore(pulse_explore::open);
   pulse_companion::begin(pulse_explore::open, pulse_wifi::open);
+  pulse_settings::begin(pulse_wifi::open);
+  /* A face is offered once, after the first network joins, and never again once one is chosen. */
+  pulse_wifi::afterJoin([] {
+    if (!pulse_settings::faceChosen()) pulse_settings::openFacePicker(true);
+  });
 #if PULSE_COMPANION_HOME
   /* The same hold-for-Wi-Fi the ambient screen has, on the glass behind the character. */
   pulse_wifi::attachOpenGesture(pulse_companion::surface());

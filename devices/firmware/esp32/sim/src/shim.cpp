@@ -145,6 +145,10 @@ void *heap_caps_calloc(size_t count, size_t size, uint32_t caps) {
   return calloc(count, size);
 }
 
+void heap_caps_free(void *pointer) {
+  free(pointer);
+}
+
 size_t heap_caps_get_free_size(uint32_t caps) {
   (void)caps;
   return 267000;  // roughly what this part reports with the USB stack up

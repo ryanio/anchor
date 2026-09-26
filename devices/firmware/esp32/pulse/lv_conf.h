@@ -718,7 +718,7 @@
     #define LV_USE_CALENDAR_CHINESE 0
 #endif  /*LV_USE_CALENDAR*/
 
-#define LV_USE_CANVAS     0
+#define LV_USE_CANVAS     1   /* ANCHOR: the companion faces are painted, see pulse_face.h */
 
 #define LV_USE_CHART      0
 

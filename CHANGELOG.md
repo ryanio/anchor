@@ -14,6 +14,12 @@ becomes `## [0.1.0] - YYYY-MM-DD` at the moment the tag is pushed, and not befor
 
 ### Added
 
+The ESP32 companion has four faces to choose from, two serious and two fun: Halo (the new default, a
+glowing ring), Visor (a small robot), Pixel (eight-bit) and Buddy (the round face, redrawn). Each
+draws every mood, painted with real curves on a canvas in PSRAM. A gear on the home screen opens a
+new Settings screen, whose face picker previews every mood before one is chosen; setup offers the
+picker once, after the first network joins.
+
 A companion character is the ESP32's home screen: a glowing face that blinks, breathes, looks happy
 (blushing, with the odd hop) or worried (with a sweat drop) with the portfolio's day, sleepy when
 offline, curious while fetching, lost with no Wi-Fi, and says the portfolio total or the top

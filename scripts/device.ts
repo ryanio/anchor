@@ -937,6 +937,21 @@ function simEsp32(root: string, paths: DevicePaths, manifest: Toolchain, runner:
       extra: ["--companion", "--lead", "3000"],
       labels: ["STONK is trending", "$0.2400, -4.58% today"],
     },
+    // The gear on the home screen opens Settings.
+    { name: "settings", taps: "46,46", labels: ["Settings", "Face", "Wi-Fi", "Done"] },
+    // Settings, Face, the right arrow once, and "Use this": the choice is saved and Settings says so.
+    {
+      name: "face-pick",
+      taps: "46,46 184,126 330,170 269,400",
+      extra: ["--expect-visible-prefix", "Visor"],
+      labels: ["Settings", "Face"],
+    },
+    // Done from there goes home, which is rebuilt wearing the chosen face and still reading.
+    {
+      name: "face-home",
+      taps: "46,46 184,126 330,170 269,400 184,400",
+      labels: ["Explore", "Your wallets: $3,125 (6 of 6)"],
+    },
     {
       name: "wifi-crowded",
       networks: Array.from(

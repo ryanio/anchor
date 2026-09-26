@@ -156,6 +156,8 @@ if [ "$needs_build" = "1" ]; then
 		"$sketch/pulse_explore.cpp" \
 		"$sketch/pulse_keypad.cpp" \
 		"$sketch/pulse_companion.cpp" \
+		"$sketch/pulse_face.cpp" \
+		"$sketch/pulse_settings.cpp" \
 		"$sketch/pulse_power.cpp" \
 		"$sketch/pulse_ui.cpp" \
 		"$sketch/pulse_wifi.cpp" \

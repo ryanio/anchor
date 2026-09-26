@@ -58,11 +58,10 @@ startup banner and memory readings do not establish touch quality, frame rate, o
 
 ## The companion
 
-`pulse/pulse_companion.{h,cpp}` draws a character on its own screen, and that screen is home: a
-glowing rounded body with two eyes and a mouth that blinks, breathes, and reacts to the readings.
-Open eyes carry a catch-light, a happy face blushes and hops now and then, a worried one has smaller
-lowered eyes and a sweat drop, a sleepy one lets a "z" drift up, a lost one a "?", and a tap gives a
-moment of delight before it returns to what the readings say. It was inspired by
+`pulse/pulse_companion.{h,cpp}` draws a character on its own screen, and that screen is home. It
+blinks, breathes, looks around while it waits, hops now and then when happy, lets a "z" drift up when
+sleepy and a "?" when lost, and a tap gives a moment of delight before it returns to what the
+readings say. It was inspired by
 character-led devices like Meta's Muse Charm and is our own drawing. There is no AI in it. The mood
 and wording are in `pulse/pulse_companion_model.h`, tested by `host/companion.cpp`:
 
@@ -73,6 +72,33 @@ and wording are in `pulse/pulse_companion_model.h`, tested by `host/companion.cp
 | Curious | asking OpenSea with nothing to show yet |
 | Happy / Worried | the portfolio's 24h change is up / down, or the top trending token's when there is no portfolio |
 | Content | anything else |
+
+### Faces
+
+Ryan found the first face goofy and asked for a choice of faces, some serious and some fun. There are
+four, in `pulse/pulse_face.{h,cpp}`, and every one draws every mood:
+
+| Face | Character | How the moods read |
+|---|---|---|
+| Halo (default) | a thin glowing ring and two capsule eyes | the ring takes the mood's colour; arches when happy, brows and a frown when worried |
+| Visor | a small robot, LED eyes behind a band of dark glass | eyes become arcs, slanted bars, dim lines or blinking amber dots; a sweep crosses the glass while it waits |
+| Pixel | eight-bit sprites on a 14 by 14 grid with the unlit cells faintly visible | eye and mouth sprites per mood, in the mood's colour |
+| Buddy | the original round body, drawn properly | small eyes with catch-lights, blush when happy, a sweat drop when worried |
+
+A face is painted, not assembled: one LVGL canvas whose pixels (240 by 224, about 105 KB) live in
+PSRAM, drawn each frame with real arcs, lines and rounded rectangles. The first face was a dozen
+rounded objects with crescents standing in for curves, because arcs were not compiled in, and every
+feature was an object in the LVGL pool. `LV_USE_CANVAS` is now on and the pool holds one object per
+face. Blinks and glances animate a `Pose` and repaint; a slow phase that only Halo's glow and Visor's
+sweep use repaints on every sixteenth step unless the mood is one that sweeps.
+
+The gear at the top left of home opens Settings (`pulse/pulse_settings.{h,cpp}`), whose Face row opens
+the picker: one face at a time, cycling through all six moods on its own so a choice is made on a bad
+day's face as well as a good one's, arrows or a swipe to step, and "Use this" to keep it. The choice
+is stored in NVS as a name (`anchor-ui/face`), so reordering the faces never changes anybody's. A unit
+that has never been asked wears Halo, and setup offers the picker once, after the first network
+joins. The `settings`, `face-pick` and `face-home` scenarios cover it, and `--faces`, `--settings`
+and `--face NAME` open or seed it in the simulator.
 
 A tap steps through what it can say, "Your wallets: $3,125 (6 of 6) / +3.54% today" and then the top
 trending token, using only strings the feed already formatted. Explore opens from its header.
@@ -97,9 +123,9 @@ Two constraints came out of building it:
   before the companion, so the next thing added to it should be measured against this scenario. Removing that deletion makes
   `companion-crowded` segfault again, which is the control for the fix.
 
-Curves are crescents, a dark circle with a body-coloured circle laid over it, because arcs are not
-compiled in and a one-sided border on a circle draws as a shallow dash. The body is one flat colour
-for the same reason.
+The first face drew curves as crescents, a dark circle with a body-coloured circle laid over it,
+because arcs were not compiled in. The painted faces replaced that; with them and the Settings
+screen the crowded scan peaks at 113,000 bytes with a 17,112-byte largest free block.
 
 ## Health line for long runs
 

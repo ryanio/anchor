@@ -909,11 +909,14 @@ void onRetry(lv_event_t *event)
 	}
 }
 
+void (*after_join)() = nullptr;
+
 void onDismiss(lv_event_t *event)
 {
 	(void)event;
 	if (state == State::Joined) {
 		close();
+		if (after_join != nullptr) after_join();
 		return;
 	}
 	state = State::Picking;
@@ -1176,6 +1179,11 @@ void close()
 	} else if (!have_saved) {
 		setStatus("wi-fi: no network saved on this unit");
 	}
+}
+
+void afterJoin(void (*action)())
+{
+	after_join = action;
 }
 
 bool connected()
