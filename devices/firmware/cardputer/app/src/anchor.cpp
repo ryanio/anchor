@@ -923,7 +923,7 @@ void buildOverview(Slot &s)
 	takeText(s.badge, sizeof(s.badge), BROWSE_FACETS[0]);
 	// The keys this device actually has, on the surface they act on. A Cardputer handed to somebody
 	// at a venue comes with no manual, and neither tab nor backspace is a gesture anyone guesses.
-	takeText(s.caption, sizeof(s.caption), "tab: Holders, Activity. del: back");
+	takeText(s.caption, sizeof(s.caption), "[tab] Holders, Activity  [del] back");
 
 	// The same four readings `tokenOverviewLines` draws host side, in the same order. A second
 	// opinion about what a token's summary is would be how one of the two quietly starts reporting a

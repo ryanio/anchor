@@ -663,6 +663,10 @@ the scan pauses the background join instead of failing against it, a scan that c
 and a network with several access points is listed once. Setup no longer shows the saved network
 as "wifi <name>" while not on it, and the Anchor strip keeps "Wi-Fi not found: Setup" through the
 retries instead of dropping back to "joining".
+
+Cardputer hints draw the key they name as a keycap, a small bordered label, using what the key
+prints: `[ok]` rather than enter, `[del]`, `[esc]`, `[tab]`, `[fn]`, and capital letters (Flint
+`5b4dc06`). Flint's `docs/KEYBOARD.md` records every legend on the ADV keyboard.
 - **Every shipped device key does something when pressed.** The six chain shares on the `chains`
   page did nothing; they now open the wallet's OpenSea profile, as the portfolio sparklines do. With
   no wallet configured, both open `~/.config/anchor/config.json` in the editor, where a wallet is

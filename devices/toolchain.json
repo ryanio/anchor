@@ -16,7 +16,7 @@
   "cardputer": {
     "submodule": {
       "path": "devices/firmware/cardputer/flint",
-      "commit": "d8ff2a478972b85fed082ae91d47197da81b94c0"
+      "commit": "5b4dc0615f8a27cb541ac21ad87f7bdb5506e31b"
     },
     "project": "devices/firmware/cardputer",
     "boardEnvironment": "cardputer-adv-anchor",

@@ -39,7 +39,12 @@ IDF refuses a scan while the station is connecting and aborts a scan when a conn
 of range Flint's retry loop is connecting for most of every cycle. Flint `d8ff2a4` pauses the join
 for a scan, holds the retry loop while one is wanted or running, resumes the join straight after,
 says "the scan did not run" when a scan cannot start within 3 s, and lists a network that answers
-from several access points once. On 2026-09-23 the unit's saved network was out of range and Flint logged `NO_AP_FOUND` on
+from several access points once.
+
+Ryan asked the same day for hints to look like the keys they name, and pointed out that the ADV has
+no enter key: the return key prints `ok`. Flint `5b4dc06` draws any `[key]` in text as a keycap, and
+every hint on the unit, including Anchor's token caption (`[tab] Holders, Activity  [del] back`),
+names the key by its printed legend. The legends are listed in Flint's `docs/KEYBOARD.md`. On 2026-09-23 the unit's saved network was out of range and Flint logged `NO_AP_FOUND` on
 every retry. The label counts in minutes
 because a changed label repaints the whole screen, so it repaints at most once a minute. The wording
 comes from `firmware/common/freshness.h`, which the ESP32 uses too. In the simulator,
