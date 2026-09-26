@@ -138,6 +138,15 @@ caught speech. Ryan heard the beep and reported that the recorded voice played b
 The unit was then restored to the `2f04061` companion image (hash verified) and booted to it. Its
 first health line reported the battery at 3% and charging, after a night unplugged.
 
+## Touch lag fix, 2026-09-25
+
+Ryan reported the Waveshare unit as laggy to touch. Two unkeyed probe builds with
+`PULSE_PERF_LOG=1` measured it before and after the fix; the figures are in
+[the ESP32 notes](devices-esp32.md#touch-lag-measured-2026-09-25). The unit then received the keyed
+`73b5e4a` image (app0 only, hash verified). Its first minute reported 157,652 bytes of internal heap
+free, a low of 148,140, the LVGL pool 47% used, and battery 100% on USB. The one slow frame in that
+minute (196 ms) is the companion screen being built at boot. It still had no Wi-Fi saved.
+
 ## Idle soak, 2026-09-23
 
 A read-only serial logger recorded the Waveshare unit on `ad4668c` from 15:09 to 22:29, when both
