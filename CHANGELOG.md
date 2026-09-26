@@ -640,6 +640,13 @@ assuming it, so a machine without one shows the command exactly as before.
 - [docs/upstream.md](docs/upstream.md) — every workaround that exists only because of an upstream
   gap, and what to delete when each is fixed.
 
+### Fixed
+
+The trending list loads again on both handhelds. From 2026-09-26 OpenSea's `/tokens/trending`
+answered without a `Content-Length`, and both firmwares refused any response that did not state its
+size, so every trending fetch failed while the portfolio, which still sends one, kept working. A
+missing length is now accepted, and the size limit is enforced by counting bytes as they are read.
+
 ### Changed
 
 The ESP32 responds to touch about three times faster. Each frame waited for the panel's tearing

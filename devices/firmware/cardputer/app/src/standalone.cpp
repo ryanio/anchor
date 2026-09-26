@@ -218,9 +218,11 @@ constexpr uint32_t BODY_BUDGET_MS = 10000;
 // discarded as it streams rather than allocated, but the fields a filter *keeps* are allocated, and
 // a response with an 8MB `name` in it would be kept. The largest real body measured here is the
 // 8-row trending list at about 6KB; 64KB is ten times the largest of the three and small enough that
-// reading one cannot exhaust a heap with a TLS session already in it. `useHTTP10(true)` guarantees
-// the Content-Length this is checked against, and a response that declines to say how big it is is
-// refused.
+// reading one cannot exhaust a heap with a TLS session already in it. It is checked against
+// Content-Length when there is one, and `BoundedBodyStream` counts bytes as they arrive, which is
+// the check that always applies. A missing length used to be refused, on the belief that
+// `useHTTP10(true)` guarantees one; from 2026-09-26 Cloudflare served `/tokens/trending` over
+// HTTP/1.0 with no length, running to the close, and the trending list stopped loading.
 constexpr int MAX_RESPONSE_BYTES = 64 * 1024;
 
 // Compiled-in sentences only — never an HTTP body, never a header, never a token name.
@@ -273,8 +275,26 @@ public:
 		setTimeout(READ_TIMEOUT_MS);
 	}
 
-	int available() override { return allowed() ? source.available() : 0; }
-	int read() override { return allowed() ? source.read() : -1; }
+	int available() override
+	{
+		if (!allowed()) {
+			return 0;
+		}
+		const int ready = source.available();
+		const int left = MAX_RESPONSE_BYTES - (int)bytesRead;
+		return ready < left ? ready : left;
+	}
+	int read() override
+	{
+		if (!allowed()) {
+			return -1;
+		}
+		const int byte = source.read();
+		if (byte >= 0) {
+			bytesRead++;
+		}
+		return byte;
+	}
 	int peek() override { return allowed() ? source.peek() : -1; }
 	void flush() override { source.flush(); }
 	size_t write(uint8_t byte) override
@@ -284,13 +304,15 @@ public:
 	}
 	bool expired() const { return millis() - started >= BODY_BUDGET_MS; }
 	bool cancelled() const { return !requestWanted(ticket); }
+	bool overflowed() const { return bytesRead >= (size_t)MAX_RESPONSE_BYTES; }
 
 private:
 	Stream &source;
 	anchor_request::Gate::Ticket ticket;
 	uint32_t started;
+	size_t bytesRead = 0;
 
-	bool allowed() const { return !expired() && !cancelled(); }
+	bool allowed() const { return !expired() && !cancelled() && !overflowed(); }
 };
 
 // Everything blocking in this module happens here on the persistent worker task. Connect, handshake
@@ -338,10 +360,8 @@ bool request(const char *url, JsonDocument &filter, JsonDocument &doc,
 		return false;
 	}
 
-	const int size = http.getSize();
-	if (size < 0 || size > MAX_RESPONSE_BYTES) {
-		err = size < 0 ? "the response would not say how big it is"
-		               : "the response is larger than this unit will read";
+	if (http.getSize() > MAX_RESPONSE_BYTES) {
+		err = "the response is larger than this unit will read";
 		http.end();
 		return false;
 	}
@@ -356,6 +376,10 @@ bool request(const char *url, JsonDocument &filter, JsonDocument &doc,
 	http.end();
 	if (body.cancelled()) {
 		err = "the request was cancelled";
+		return false;
+	}
+	if (body.overflowed()) {
+		err = "the response is larger than this unit will read";
 		return false;
 	}
 	if (body.expired()) {

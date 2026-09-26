@@ -360,8 +360,14 @@ constexpr uint32_t BODY_BUDGET_MS = 10000;
  * The filter above means a huge payload is mostly discarded as it streams, but the strings the
  * filter *keeps* are allocated, and a hostile response with an 8 MB `name` would be kept. 128 KB is
  * about forty times the largest real `/tokens/trending?limit=8` body and small enough that reading
- * one cannot exhaust internal heap with a TLS session up. `useHTTP10(true)` below guarantees a
- * `Content-Length` to check it against; a response that declines to say how big it is is refused.
+ * one cannot exhaust internal heap with a TLS session up.
+ *
+ * It is enforced twice: against `Content-Length` before reading, when there is one, and by
+ * `BoundedBodyStream` counting bytes as they are read, which is the one that always applies. The
+ * header was once required, on the belief that `useHTTP10(true)` guarantees one. It does not:
+ * from 2026-09-26 Cloudflare answered `/tokens/trending` over HTTP/1.0 with no length at all, the
+ * body running until the connection closed, and every trending fetch failed with "the response
+ * would not say how big it is" while the portfolio, which still sends a length, kept working.
  */
 constexpr int MAX_RESPONSE_BYTES = 128 * 1024;
 
@@ -617,8 +623,18 @@ public:
 		setTimeout(READ_TIMEOUT_MS);
 	}
 
-	int available() override { return allowed() ? source_.available() : 0; }
-	int read() override { return allowed() ? source_.read() : -1; }
+	int available() override {
+		if (!allowed()) return 0;
+		const int ready = source_.available();
+		const int left = MAX_RESPONSE_BYTES - (int)read_;
+		return ready < left ? ready : left;
+	}
+	int read() override {
+		if (!allowed()) return -1;
+		const int byte = source_.read();
+		if (byte >= 0) read_++;
+		return byte;
+	}
 	int peek() override { return allowed() ? source_.peek() : -1; }
 	void flush() override { source_.flush(); }
 	size_t write(uint8_t byte) override {
@@ -627,13 +643,15 @@ public:
 	}
 	bool expired() const { return millis() - started_ >= BODY_BUDGET_MS; }
 	bool cancelled() const { return !requestWanted(request_); }
+	bool overflowed() const { return read_ >= (size_t)MAX_RESPONSE_BYTES; }
 
 private:
 	Stream &source_;
 	Request request_;
 	uint32_t started_;
+	size_t read_ = 0;
 
-	bool allowed() const { return !expired() && !cancelled(); }
+	bool allowed() const { return !expired() && !cancelled() && !overflowed(); }
 };
 
 /*
@@ -682,10 +700,8 @@ bool fetchOnce(const Request &request, Token *out, size_t &count, const char *&e
 		return false;
 	}
 
-	const int size = http.getSize();
-	if (size < 0 || size > MAX_RESPONSE_BYTES) {
-		err = size < 0 ? "the response would not say how big it is"
-		               : "the response is larger than this unit will read";
+	if (http.getSize() > MAX_RESPONSE_BYTES) {
+		err = "the response is larger than this unit will read";
 		http.end();
 		return false;
 	}
@@ -696,6 +712,10 @@ bool fetchOnce(const Request &request, Token *out, size_t &count, const char *&e
 	http.end();
 	if (body.cancelled()) {
 		err = "the request was cancelled";
+		return false;
+	}
+	if (body.overflowed()) {
+		err = "the response is larger than this unit will read";
 		return false;
 	}
 	if (body.expired()) {
@@ -761,10 +781,8 @@ bool fetchPortfolioOnce(const Request &request, const char *address, Figures &ou
 		return false;
 	}
 
-	const int size = http.getSize();
-	if (size < 0 || size > MAX_RESPONSE_BYTES) {
-		err = size < 0 ? "the response would not say how big it is"
-		               : "the response is larger than this unit will read";
+	if (http.getSize() > MAX_RESPONSE_BYTES) {
+		err = "the response is larger than this unit will read";
 		http.end();
 		return false;
 	}
@@ -775,6 +793,10 @@ bool fetchPortfolioOnce(const Request &request, const char *address, Figures &ou
 	http.end();
 	if (body.cancelled()) {
 		err = "the request was cancelled";
+		return false;
+	}
+	if (body.overflowed()) {
+		err = "the response is larger than this unit will read";
 		return false;
 	}
 	if (body.expired()) {
