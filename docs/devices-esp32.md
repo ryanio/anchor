@@ -145,6 +145,15 @@ text that looked italic, which turned out to be odd-column windows (see
 [the even-column section](#every-flushed-rectangle-starts-on-an-even-column-or-the-text-comes-out-italic));
 the even-column snap is what fixes that, and it is unchanged.
 
+Ryan then reported the Wi-Fi list: a swipe lit up the row it started on, stuttered, and barely
+carried. Two causes, neither of them drawing speed. LVGL computes a fling from a running average of
+the last few reads' movement, halved each read, and `pulse_touch.cpp` held the last coordinate still
+for the 40 ms it waits before believing a lift, so the average fell to a quarter or an eighth of
+the finger's speed before the release. The driver now carries the last step forward through that
+window. And LVGL marks the row under a finger pressed as soon as it lands, while a swipe only
+becomes a scroll after 10 px, so list rows now show their pressed colours after 90 ms
+(`delayPressHighlight` in `pulse_design.cpp`), and a scroll that starts sooner never shows them.
+
 ## Historical host transport design
 
 The sections below record the earlier USB/LAN display experiment. They do not describe the supported

@@ -654,6 +654,35 @@ void styleChooserRow(lv_obj_t *row)
 	lv_obj_set_style_pad_right(row, space::md + 6, LV_PART_MAIN);
 	lv_obj_set_style_bg_color(row, hex(colour::accent), LV_PART_MAIN | LV_STATE_PRESSED);
 	lv_obj_set_style_text_color(row, hex(colour::ground), LV_PART_MAIN | LV_STATE_PRESSED);
+	delayPressHighlight(row);
+}
+
+/*
+ * A row in a scrolling list lights up only once a finger has rested on it.
+ *
+ * LVGL marks the row under a finger pressed the moment it lands, and a swipe only becomes a scroll
+ * after 10 px of travel, so every swipe flashed the row it started on before the list moved: reported
+ * as "it highlights a row first and then it kinda glitchy". The pressed colours now wait
+ * `PRESS_HIGHLIGHT_DELAY_MS`, and a scroll that starts sooner clears the pressed state before they
+ * appear. The release side needs a transition of its own: LVGL only replaces a pending transition
+ * with a newer one, so without it the delayed highlight would still land after the finger had gone.
+ */
+constexpr uint32_t PRESS_HIGHLIGHT_DELAY_MS = 90;
+
+void delayPressHighlight(lv_obj_t *row)
+{
+	static const lv_style_prop_t props[] = {LV_STYLE_BG_COLOR, LV_STYLE_TEXT_COLOR, LV_STYLE_PROP_INV};
+	static lv_style_transition_dsc_t pressIn;
+	static lv_style_transition_dsc_t pressOut;
+	static bool ready = false;
+	if (!ready) {
+		lv_style_transition_dsc_init(&pressIn, props, lv_anim_path_linear, 60, PRESS_HIGHLIGHT_DELAY_MS,
+		                             nullptr);
+		lv_style_transition_dsc_init(&pressOut, props, lv_anim_path_linear, 60, 0, nullptr);
+		ready = true;
+	}
+	lv_obj_set_style_transition(row, &pressIn, LV_PART_MAIN | LV_STATE_PRESSED);
+	lv_obj_set_style_transition(row, &pressOut, LV_PART_MAIN);
 }
 
 /* ---------------------------------------------------------------------------------- the input --- */

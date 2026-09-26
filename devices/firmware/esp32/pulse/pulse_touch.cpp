@@ -104,11 +104,25 @@ void begin()
  */
 constexpr uint32_t LIFT_SETTLE_MS = 40;
 
+/*
+ * While a lift is being settled, the finger keeps moving at its last speed rather than standing still.
+ *
+ * LVGL's fling is a running average of the last few reads' movement, halved at every read
+ * (`scroll_throw_vect` in `lv_indev.c`). Holding the last coordinate through the settle window fed it
+ * two or three reads of zero movement at 15 ms each, which cut a flick to a quarter or an eighth of
+ * its speed before the release arrived: the Wi-Fi list barely moved after a swipe, reported from the
+ * desk as "doesn't scroll smoothly or a lot". Carrying the last step forward keeps the speed the
+ * finger actually had. A finger that was holding still has a zero step, so a press-and-hold is
+ * unchanged, and a dropout that turns out to be spurious is corrected by the next real sample.
+ */
+
 bool read(int16_t *x, int16_t *y)
 {
 	static bool down = false;
 	static int16_t last_x = 0;
 	static int16_t last_y = 0;
+	static int16_t step_x = 0;
+	static int16_t step_y = 0;
 	static uint32_t quiet_since = 0;
 
 	const int fingers = readReg(REG_FINGERS);
@@ -120,12 +134,16 @@ bool read(int16_t *x, int16_t *y)
 		if (!down) return false;
 		if (quiet_since == 0) quiet_since = millis();
 		if (millis() - quiet_since < LIFT_SETTLE_MS) {
+			last_x = (int16_t)(last_x + step_x);
+			last_y = (int16_t)(last_y + step_y);
 			if (x != nullptr) *x = last_x;
 			if (y != nullptr) *y = last_y;
 			return true;
 		}
 		down = false;
 		quiet_since = 0;
+		step_x = 0;
+		step_y = 0;
 		return false;
 	}
 
@@ -146,10 +164,21 @@ bool read(int16_t *x, int16_t *y)
 	const int16_t raw_x = (int16_t)(((xh & 0x0F) << 8) | xl);
 	const int16_t raw_y = (int16_t)(((yh & 0x0F) << 8) | yl);
 	seen = true;
+	const int16_t now_x = mapX(raw_x);
+	const int16_t now_y = mapY(raw_y);
+	/* The controller can report the same sample to two reads in a row; keep the last real step
+	 * rather than letting a repeat zero it. A new contact starts with no step. */
+	if (!down) {
+		step_x = 0;
+		step_y = 0;
+	} else if (now_x != last_x || now_y != last_y) {
+		step_x = (int16_t)(now_x - last_x);
+		step_y = (int16_t)(now_y - last_y);
+	}
 	down = true;
 	quiet_since = 0;
-	last_x = mapX(raw_x);
-	last_y = mapY(raw_y);
+	last_x = now_x;
+	last_y = now_y;
 	if (x != nullptr) *x = last_x;
 	if (y != nullptr) *y = last_y;
 	return true;

@@ -647,6 +647,11 @@ signal before every band it drew, which took about 50 ms of a 60-70 ms frame and
 for up to 217 ms. It now waits once per frame and reads touch every 15 ms: frames take about 20 ms,
 and the longest gap between touch reads is about 70 ms. The health line is followed by a
 once-a-minute frame timing line.
+
+Scrolling the ESP32's Wi-Fi and Explore lists carries a flick instead of stopping short, and a swipe
+no longer lights up the row it started on. The touch driver held the finger still while confirming
+a lift, which cancelled most of the fling speed, and rows showed their pressed colour before a swipe
+had moved far enough to count as a scroll.
 - **Every shipped device key does something when pressed.** The six chain shares on the `chains`
   page did nothing; they now open the wallet's OpenSea profile, as the portfolio sparklines do. With
   no wallet configured, both open `~/.config/anchor/config.json` in the editor, where a wallet is

@@ -364,6 +364,9 @@ ChooserView buildChooser(lv_obj_t *parent, const char *title, const char *action
 /* Style one row of a chooser's list. Called per row because the list is rebuilt from data. */
 void styleChooserRow(lv_obj_t *row);
 
+/* Delay a list row's pressed colours so a swipe scrolls without flashing the row it started on. */
+void delayPressHighlight(lv_obj_t *row);
+
 /*
  * **Input**: a heading with a cancel button, a line of context, one field with a reveal button, and
  * the keypad.
