@@ -657,6 +657,12 @@ On the ESP32, the keypad no longer tears when a key is pressed: each frame is as
 sent to the panel in one write at the start of a blanking interval. A touch that stops a coasting
 list, or a press while the list moves, no longer picks a network. Buttons near the top and bottom
 edges answer a little above and below what they draw.
+
+On the Cardputer, a Wi-Fi rescan works while the saved network is out of range (Flint `d8ff2a4`):
+the scan pauses the background join instead of failing against it, a scan that cannot run says so,
+and a network with several access points is listed once. Setup no longer shows the saved network
+as "wifi <name>" while not on it, and the Anchor strip keeps "Wi-Fi not found: Setup" through the
+retries instead of dropping back to "joining".
 - **Every shipped device key does something when pressed.** The six chain shares on the `chains`
   page did nothing; they now open the wallet's OpenSea profile, as the portfolio sparklines do. With
   no wallet configured, both open `~/.config/anchor/config.json` in the editor, where a wallet is

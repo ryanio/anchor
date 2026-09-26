@@ -105,6 +105,10 @@ uint32_t fetchedAt = 0;
 // again, because between retries the network layer flips back to Joining every few seconds and a
 // sentence that followed it would flicker.
 bool joinFailing = false;
+// Which network the failure was for. Every join retry advances the network revision, so clearing
+// the flag on a revision change put "joining the saved network" back on the strip for most of each
+// retry cycle. It clears when the unit gets online, or when a different network is chosen.
+char failedSsid[33] = "";
 uint32_t lastAttempt = 0;
 bool listFailed = false;
 const char *listReason = nullptr;
@@ -824,11 +828,14 @@ void tick()
 		joinFailing = false;
 	} else if (net::state() == net::Wifi::Failed) {
 		joinFailing = true;
+		snprintf(failedSsid, sizeof(failedSsid), "%s", net::ssid());
+	}
+	if (joinFailing && strcmp(net::ssid(), failedSsid) != 0) {
+		joinFailing = false;
 	}
 	const uint32_t revision = net::revision();
 	if (revision != networkRevision) {
 		networkRevision = revision;
-		joinFailing = false;
 		listFetching = false;
 		lastAttempt = 0;
 		lastRequest = 0;

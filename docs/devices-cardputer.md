@@ -25,9 +25,21 @@ says how old they are: "live, just now" while the unit is fetching normally, and
 warning colour, followed by the reason, while it cannot refresh. After the first minute the stale
 label carries the age, as in "stale, 4m ago". An open token carries the age of
 its own reading, which stops advancing if the token leaves the list. Once a join to the saved network has failed, the reason reads "Wi-Fi not found: Setup" until the
-unit is online again, rather than "joining the saved network" forever. Flint reports `Failed` only
-between retries and `Joining` during each one, so the sentence is sticky to avoid flickering between
-the two. On 2026-09-23 the unit's saved network was out of range and Flint logged `NO_AP_FOUND` on
+unit is online again, or a different network is chosen, rather than "joining the saved network"
+forever. Flint reports `Failed` only between retries and `Joining` during each one, so the sentence
+is sticky to avoid flickering between the two. It was first cleared on every network revision too,
+and every retry advances the revision, so it was sticky for a moment per cycle and "joining" came
+back; it now remembers which network failed instead.
+
+On 2026-09-26, in a different apartment, Ryan reported the unit as saying it was connected to the
+old network, and a rescan in Setup coming back empty until it had been pressed several times. The
+first was wording: Setup's status printed `wifi  <saved name>` in white in every state, above
+"joining". It reads `saved  <name>` until the unit is actually on it. The second was the radio: the
+IDF refuses a scan while the station is connecting and aborts a scan when a connect starts, and out
+of range Flint's retry loop is connecting for most of every cycle. Flint `d8ff2a4` pauses the join
+for a scan, holds the retry loop while one is wanted or running, resumes the join straight after,
+says "the scan did not run" when a scan cannot start within 3 s, and lists a network that answers
+from several access points once. On 2026-09-23 the unit's saved network was out of range and Flint logged `NO_AP_FOUND` on
 every retry. The label counts in minutes
 because a changed label repaints the whole screen, so it repaints at most once a minute. The wording
 comes from `firmware/common/freshness.h`, which the ESP32 uses too. In the simulator,
