@@ -51,6 +51,7 @@
 #ifndef PULSE_COMPANION_HOME
 #define PULSE_COMPANION_HOME 1
 #endif
+#include "pulse_perf.h"
 #include "pulse_power.h"
 #include "pulse_ui.h"
 #include "pulse_wifi.h"
@@ -165,6 +166,7 @@ static size_t draw_buffer_bytes = 0;
 static int draw_buffer_lines = 0;
 static lv_display_t *display = nullptr;
 static lv_indev_t *pointer = nullptr;
+static constexpr uint32_t TOUCH_READ_MS = 15;
 static bool presented = false;
 
 /*
@@ -233,13 +235,35 @@ static void wait_for_scan_gap(void) {
   }
 }
 
+/*
+ * Once per refresh, not once per rectangle.
+ *
+ * A refresh arrives as several flushes: one per 96-row band of the draw buffer, and one per separate
+ * invalidated area. Waiting for the tearing line before every one of them was measured on the glass
+ * at about 50 ms of each 60-70 ms frame, against 10 ms spent actually pushing pixels, and touch is
+ * read by a timer on this same loop, so a finger went unread for up to 215 ms while a screen drew.
+ * That was the lag reported as "laggy when touching it".
+ *
+ * The first flush still starts in a scan gap, which is where a tear would show on a full repaint.
+ * The later bands follow straight on. The italic-looking text this wait was first blamed for turned
+ * out to be odd-column windows, which the `LV_EVENT_INVALIDATE_AREA` handler in `setup()` fixes.
+ */
+static bool waited_this_refresh = false;
+
 static void flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map) {
   if (panel_ready) {
     const int32_t w = area->x2 - area->x1 + 1;
     const int32_t h = area->y2 - area->y1 + 1;
-    wait_for_scan_gap();
+    const uint32_t waited_from = micros();
+    if (!waited_this_refresh) {
+      wait_for_scan_gap();
+      waited_this_refresh = true;
+    }
+    const uint32_t blit_from = micros();
     panel->draw16bitRGBBitmap((int16_t)area->x1, (int16_t)area->y1, (uint16_t *)px_map, (int16_t)w,
                               (int16_t)h);
+    const uint32_t done = micros();
+    pulse_perf::noteFlush(blit_from - waited_from, done - blit_from);
   }
   /*
    * The backlight stays down until there is a whole frame to show — the same rule `app/app.ino`
@@ -247,6 +271,7 @@ static void flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map)
    * first refresh arrives as several rectangles, so a panel lit before the last one shows a screen
    * being assembled.
    */
+  if (lv_display_flush_is_last(disp)) waited_this_refresh = false;
   if (!presented && lv_display_flush_is_last(disp)) {
     presented = true;
     set_backlight(brightness_percent);
@@ -269,6 +294,7 @@ static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data) {
   (void)indev;
   static int16_t last_x = 0;
   static int16_t last_y = 0;
+  pulse_perf::noteInputRead(millis());
   int16_t x = 0;
   int16_t y = 0;
   if (pulse_touch::read(&x, &y)) {
@@ -353,6 +379,7 @@ static uint32_t last_feed_draw_ms = 0;
 static constexpr uint32_t HEALTH_MS = 60000;
 static uint32_t last_health_ms = 0;
 
+
 static const char *status_name(feed::Status status) {
   switch (status) {
     case feed::Status::Disabled: return "disabled";
@@ -382,6 +409,7 @@ static void report_health() {
       (unsigned long)snap.workerStackFreeBytes, snap.lastHttpCode, status_name(snap.status),
       status_name(snap.portfolioStatus), (int)battery.percent,
       battery.usb ? (battery.charging ? " usb charging" : " usb") : "");
+  pulse_perf::printMinute(HEALTH_MS);
 }
 
 /*
@@ -695,6 +723,7 @@ void setup() {
         area->x2 |= 1;
       },
       LV_EVENT_INVALIDATE_AREA, nullptr);
+  pulse_perf::attach(display);
 
   /*
    * Touch before the screen, because `pulse_touch::begin()` is where `sensors::begin()` runs and
@@ -706,6 +735,10 @@ void setup() {
   lv_indev_set_type(pointer, LV_INDEV_TYPE_POINTER);
   lv_indev_set_read_cb(pointer, touch_read_cb);
   lv_indev_set_display(pointer, display);
+  /* LVGL reads an indev on its own timer, which defaults to the 33 ms refresh period. A finger down
+   * is noticed on average half a period late, so read it every 15 ms: five single-register I2C reads
+   * at 400 kHz, well under a millisecond each time. */
+  lv_timer_set_period(lv_indev_get_read_timer(pointer), TOUCH_READ_MS);
 
   booted_at_ms = millis();
 
@@ -770,6 +803,7 @@ void setup() {
 /* ---------------------------------------------------------------------------------- loop ------- */
 
 void loop() {
+  const uint32_t pass_from = micros();
   /*
    * `lv_timer_handler()` is the whole runtime: it runs animations, reads the indev and refreshes
    * whatever is invalidated, and it returns the milliseconds until it next wants to be called.
@@ -809,10 +843,13 @@ void loop() {
     refresh_age();
   }
 
+  pulse_perf::noteLoop(micros() - pass_from);
+
   if (millis() - last_health_ms >= HEALTH_MS) {
     last_health_ms = millis();
     report_health();
   }
+  pulse_perf::tick(millis());
 
   delay(idle_for > 20u ? 20u : (idle_for < 1u ? 1u : idle_for));
 }

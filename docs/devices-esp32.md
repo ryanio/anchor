@@ -117,6 +117,34 @@ simulator's `health` scenario runs past the first minute and requires the line
 (`--expect-serial`). The simulator's heap figures are fixed stand-ins, so only the board's numbers
 mean anything.
 
+A second line follows it with the same minute's frame timing:
+
+```
+anchor-pulse-lvgl: frames fps=27 frame_ms_avg=19 frame_ms_max=49 te_wait_ms=216 blit_ms=271 busy=54% input_gap_ms_max=66 loop_ms_max=51
+```
+
+`frame_ms` runs from a refresh starting to its last flush returning, counted only for refreshes that
+drew something. `te_wait_ms` and `blit_ms` are the totals spent waiting for the tearing line and
+pushing pixels. `input_gap_ms_max` is the longest time between two touch reads, which is what a
+finger feels as lag, because touch is read by a timer on the same loop that draws. Building with
+`PULSE_PERF_LOG=1` (for example `--build-property "compiler.cpp.extra_flags=-DPULSE_PERF_LOG=1"`)
+prints the same figures every two seconds, as `anchor-pulse-lvgl: perf`, for an investigation with a
+finger on the glass.
+
+### Touch lag, measured, 2026-09-25
+
+Ryan reported the unit as laggy to touch. The two-second log showed why: a frame took 61 to 69 ms,
+about 50 ms of it waiting for the tearing line and 10 ms pushing pixels, and touch went unread for
+131 to 217 ms at a time while a screen drew. The flush waited for a tearing edge before every
+96-row band and every separate rectangle, so a frame paid for the wait several times.
+
+The flush now waits once per refresh, before its first rectangle, and LVGL reads the touch
+controller every 15 ms instead of every 33. On the same unit afterwards: frames averaged 17 to 22 ms
+at 27 per second while animating, and the longest touch gap was 52 to 75 ms. That wait was added for
+text that looked italic, which turned out to be odd-column windows (see
+[the even-column section](#every-flushed-rectangle-starts-on-an-even-column-or-the-text-comes-out-italic));
+the even-column snap is what fixes that, and it is unchanged.
+
 ## Historical host transport design
 
 The sections below record the earlier USB/LAN display experiment. They do not describe the supported

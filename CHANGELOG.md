@@ -641,6 +641,12 @@ assuming it, so a machine without one shows the command exactly as before.
   gap, and what to delete when each is fixed.
 
 ### Changed
+
+The ESP32 responds to touch about three times faster. Each frame waited for the panel's tearing
+signal before every band it drew, which took about 50 ms of a 60-70 ms frame and left touch unread
+for up to 217 ms. It now waits once per frame and reads touch every 15 ms: frames take about 20 ms,
+and the longest gap between touch reads is about 70 ms. The health line is followed by a
+once-a-minute frame timing line.
 - **Every shipped device key does something when pressed.** The six chain shares on the `chains`
   page did nothing; they now open the wallet's OpenSea profile, as the portfolio sparklines do. With
   no wallet configured, both open `~/.config/anchor/config.json` in the editor, where a wallet is
